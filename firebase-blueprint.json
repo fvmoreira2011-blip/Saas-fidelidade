@@ -1,0 +1,80 @@
+{
+  "entities": {
+    "AppUser": {
+      "title": "AppUser",
+      "description": "A user of the application",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "description": "Email of the user" },
+        "approved": { "type": "boolean", "description": "Whether the user is approved by admin" },
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "Role of the user" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user registered" }
+      },
+      "required": ["email", "approved", "role", "createdAt"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "A customer in the loyalty program",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Full name of the customer" },
+        "phone": { "type": "string", "description": "Phone number with country code" },
+        "points": { "type": "integer", "description": "Current loyalty points" },
+        "lastPurchaseDate": { "type": "string", "format": "date-time", "description": "Date of the last purchase" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the customer was registered" }
+      },
+      "required": ["name", "phone", "points", "createdAt"]
+    },
+    "Purchase": {
+      "title": "Purchase",
+      "description": "A purchase record",
+      "type": "object",
+      "properties": {
+        "customerId": { "type": "string", "description": "ID of the customer" },
+        "amount": { "type": "number", "description": "Value of the purchase" },
+        "date": { "type": "string", "format": "date-time", "description": "Date of the purchase" },
+        "pointsEarned": { "type": "integer", "description": "Points earned in this purchase" }
+      },
+      "required": ["customerId", "amount", "date", "pointsEarned"]
+    },
+    "LoyaltyRule": {
+      "title": "LoyaltyRule",
+      "description": "Global configuration for the loyalty program",
+      "type": "object",
+      "properties": {
+        "purchasesForPrize": { "type": "integer", "description": "Number of purchases required for a prize" },
+        "minPurchaseValue": { "type": "number", "description": "Minimum purchase value to earn points" },
+        "maxDaysBetweenPurchases": { "type": "integer", "description": "Maximum days between purchases to keep points" },
+        "rewardTiers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "points": { "type": "integer" },
+              "prize": { "type": "string" }
+            },
+            "required": ["points", "prize"]
+          }
+        }
+      },
+      "required": ["purchasesForPrize", "minPurchaseValue", "maxDaysBetweenPurchases"]
+    },
+    "Goal": {
+      "title": "Goal",
+      "description": "Monthly revenue goal",
+      "type": "object",
+      "properties": {
+        "month": { "type": "string", "description": "Month in YYYY-MM format" },
+        "value": { "type": "number", "description": "Revenue goal value" }
+      },
+      "required": ["month", "value"]
+    }
+  },
+  "firestore": {
+    "customers": { "schema": "Customer", "description": "Collection of customers" },
+    "purchases": { "schema": "Purchase", "description": "Collection of purchase records" },
+    "users": { "schema": "AppUser", "description": "Collection of application users" },
+    "config": { "schema": "LoyaltyRule", "description": "Global configuration (singleton)" },
+    "goals": { "schema": "Goal", "description": "Collection of monthly revenue goals" }
+  }
+}

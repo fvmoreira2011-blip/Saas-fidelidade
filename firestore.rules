@@ -1,0 +1,113 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (request.auth.token.email.lower() == "fvmoreira2011@gmail.com" ||
+         request.auth.token.email.lower() == "superadmin@fidelidadevarejo.com" ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin')));
+    }
+
+    function isApproved() {
+      return isAuthenticated() &&
+        (isAdmin() || 
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.approved == true));
+    }
+
+    function isValidUser(data) {
+      return data.email is string &&
+             data.approved is bool &&
+             data.role in ['admin', 'user', 'superadmin'] &&
+             (data.createdAt is string || !('createdAt' in data));
+    }
+
+    function isValidCustomer(data) {
+      return data.name is string &&
+             data.phone is string &&
+             data.points is number &&
+             (data.lastPurchaseDate is string || !('lastPurchaseDate' in data)) &&
+             (data.createdAt is string || !('createdAt' in data));
+    }
+
+    function isValidPurchase(data) {
+      return data.customerId is string &&
+             data.customerName is string &&
+             data.amount is number &&
+             data.date is string &&
+             data.pointsEarned is number;
+    }
+
+    function isValidConfig(data) {
+      return data is map;
+    }
+
+    function isValidGoal(data) {
+      return data.month is string &&
+             data.value is number;
+    }
+
+    // Regra para teste de conexão
+    match /test/connection {
+      allow read: if isAuthenticated();
+    }
+
+    match /users/{userId} {
+      // Allow unauthenticated read for the identification flow (CNPJ/Phone search)
+      // and allow authenticated read for profile fetching.
+      allow read: if true;
+      
+      // Allow admins to create any user, and allow users to create their own profile
+      allow create: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
+      
+      // Allow users to update their own profile, and allow admins to update any profile
+      allow update: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
+      
+      // Allow migration (deleting old random-ID docs)
+      allow delete: if isAdmin() || isAuthenticated();
+    }
+
+    match /customers/{customerId} {
+      // Allow public read for the ConsumerApp login flow
+      allow read: if true;
+      allow create: if isApproved() && isValidCustomer(request.resource.data);
+      allow update: if isApproved() && isValidCustomer(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /purchases/{purchaseId} {
+      allow read: if isApproved();
+      allow create: if isApproved() && isValidPurchase(request.resource.data);
+      allow update: if isApproved() && isValidPurchase(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /config/{configId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidConfig(request.resource.data);
+    }
+
+    match /configs/{configId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidConfig(request.resource.data);
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow write: if isApproved();
+      allow delete: if isAdmin();
+    }
+
+    match /goals/{goalId} {
+      allow read: if isApproved();
+      allow write: if isAdmin() && isValidGoal(request.resource.data);
+    }
+  }
+}
