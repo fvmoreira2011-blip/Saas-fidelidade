@@ -101,8 +101,8 @@ service cloud.firestore {
 
     match /notifications/{notificationId} {
       allow read: if true;
-      allow write: if isApproved();
-      allow delete: if isAdmin();
+      allow create: if isApproved();
+      allow update, delete: if true;
     }
 
     match /goals/{goalId} {

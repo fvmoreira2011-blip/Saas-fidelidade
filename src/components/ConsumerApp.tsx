@@ -86,7 +86,10 @@ export default function ConsumerApp() {
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
 
-  const unreadCount = useMemo(() => notifications.filter(n => !n.read).length, [notifications]);
+  const unreadCount = useMemo(() => 
+    notifications.filter(n => !n.read && !deletedIds.has(n.id)).length, 
+    [notifications, deletedIds]
+  );
 
   // Mark as read when entering alerts view
   useEffect(() => {
@@ -106,16 +109,22 @@ export default function ConsumerApp() {
   }, [activeView, unreadCount, notifications]);
 
   const handleDeleteNotification = async (id: string) => {
-    setDeletedIds(prev => new Set(prev).add(id));
+    setDeletedIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
     try {
       await deleteDoc(doc(db, 'notifications', id));
     } catch (error) {
       console.error("Error deleting notification:", error);
+      // Revert if failed
       setDeletedIds(prev => {
         const next = new Set(prev);
         next.delete(id);
         return next;
       });
+      alert("Não foi possível excluir a notificação. Tente novamente.");
     }
   };
 
