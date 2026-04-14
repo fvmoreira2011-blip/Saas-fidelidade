@@ -926,24 +926,29 @@ function AppContent() {
     return <ContractCancelledScreen />;
   }
 
-  if (mode === 'consumer') {
-    return <ConsumerApp />;
-  }
-
-  if (loading) {
+  if (loading || !isAuthReady) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-black">
+        <div className="flex flex-col items-center gap-6">
+          <div className="w-12 h-12 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
+          <p className="text-white font-black uppercase tracking-widest text-xs animate-pulse">
+            Carregando Sistema...
+          </p>
+        </div>
       </div>
     );
   }
 
-  if (isSuperAdminPanelActive) {
-    return <SuperAdminPanel onBack={() => setIsSuperAdminPanelActive(false)} isSuperAdmin={isSuperAdmin} appUser={appUser!} />;
+  if (mode === 'consumer') {
+    return <ConsumerApp />;
   }
 
   if (!user) {
     return <LoginScreen />;
+  }
+
+  if (isSuperAdminPanelActive) {
+    return <SuperAdminPanel onBack={() => setIsSuperAdminPanelActive(false)} isSuperAdmin={isSuperAdmin} appUser={appUser!} />;
   }
 
   if (appUser && !appUser.approved && !isAdminUser) {
@@ -998,8 +1003,8 @@ function AppContent() {
   return (
     <div className={cn("min-h-screen flex flex-col lg:flex-row", isSuperAdminPanelActive ? "bg-black text-white" : "bg-white text-gray-900")} style={themeStyle}>
       {/* Sidebar for Desktop */}
-      <aside className={cn("hidden lg:flex flex-col w-72 sticky top-0 h-screen p-6 z-20 bg-black border-r border-white/10")}>
-        <div className="flex flex-col items-center gap-4 mb-10">
+      <aside className={cn("hidden lg:flex flex-col w-72 sticky top-0 h-screen p-6 z-20 bg-black border-r border-white/10 items-start")}>
+        <div className="flex flex-col items-start gap-4 mb-10 w-full">
           <div className={cn("w-24 h-24 overflow-hidden shadow-lg rounded-xl border-2 border-white/10")}>
             <img 
               src={currentLogo} 
@@ -1010,7 +1015,7 @@ function AppContent() {
               }}
             />
           </div>
-          <div className="text-center">
+          <div className="text-left w-full">
             <h1 className={cn("text-xs font-bold uppercase tracking-widest leading-relaxed text-white")}>
               {currentCompanyName}
             </h1>
@@ -1030,7 +1035,7 @@ function AppContent() {
           </div>
         </div>
         
-        <nav className="flex flex-col gap-2 flex-1">
+        <nav className="flex flex-col gap-2 flex-1 w-full">
           {isSuperAdmin ? (
             <>
               <SidebarButton active={activeTab === 'super_admin_profile'} onClick={() => handleTabChange('super_admin_profile')} icon={<UserCircle size={20} />} label="Meu Perfil" isSuperAdmin={true} />
@@ -1159,21 +1164,29 @@ function AppContent() {
               exit={{ opacity: 0, x: '100%' }}
               className="lg:hidden fixed inset-0 bg-gray-900 z-40 p-6 pt-24 overflow-y-auto"
             >
-              <nav className="flex flex-col gap-4">
-                <SidebarButton active={activeTab === 'dashboard'} onClick={() => { handleTabChange('dashboard'); setIsMobileMenuOpen(false); }} icon={<FileText size={20} />} label="Dashboard" />
-                <SidebarButton active={activeTab === 'notificar'} onClick={() => { handleTabChange('notificar'); setIsMobileMenuOpen(false); }} icon={<Bell size={20} />} label="Notificar" />
-                <SidebarButton active={activeTab === 'score'} onClick={() => { handleTabChange('score'); setIsMobileMenuOpen(false); }} icon={<PlusCircle size={20} />} label="Pontuar" />
-                <SidebarButton active={activeTab === 'customers'} onClick={() => { handleTabChange('customers'); setIsMobileMenuOpen(false); }} icon={<Users size={20} />} label="Clientes" />
-                <SidebarButton active={activeTab === 'rewarded_customers'} onClick={() => { handleTabChange('rewarded_customers'); setIsMobileMenuOpen(false); }} icon={<Award size={20} />} label="Premiados" />
-                <SidebarButton active={activeTab === 'rewards'} onClick={() => { handleTabChange('rewards'); setIsMobileMenuOpen(false); }} icon={<Trophy size={20} />} label="Premiação" />
-                <SidebarButton active={activeTab === 'seasonal_dates'} onClick={() => { handleTabChange('seasonal_dates'); setIsMobileMenuOpen(false); }} icon={<Calendar size={20} />} label="Datas Sazonais" />
-                <SidebarButton active={activeTab === 'ltv'} onClick={() => { handleTabChange('ltv'); setIsMobileMenuOpen(false); }} icon={<TrendingUp size={20} />} label="LTV" />
-                <SidebarButton active={activeTab === 'goals'} onClick={() => { handleTabChange('goals'); setIsMobileMenuOpen(false); }} icon={<Target size={20} />} label="Metas Gerais" />
-                <SidebarButton active={activeTab === 'promotion'} onClick={() => { handleTabChange('promotion'); setIsMobileMenuOpen(false); }} icon={<MessageSquare size={20} />} label="Envio WhatsApp" />
-                <SidebarButton active={activeTab === 'strategic_analysis'} onClick={() => { handleTabChange('strategic_analysis'); setIsMobileMenuOpen(false); }} icon={<BarChart3 size={20} />} label="Análise Estratégica" />
-                {isAdminUser && (
+              <nav className="flex flex-col gap-4" translate="no">
+                {isSuperAdmin ? (
                   <>
-                    <SidebarButton active={activeTab === 'reset'} onClick={() => { handleTabChange('reset'); setIsMobileMenuOpen(false); }} icon={<RotateCcw size={20} />} label="Zerar Sistema" />
+                    <SidebarButton active={activeTab === 'super_admin_profile'} onClick={() => { handleTabChange('super_admin_profile'); setIsMobileMenuOpen(false); }} icon={<UserCircle size={20} />} label="Meu Perfil" isSuperAdmin={true} />
+                    <SidebarButton active={activeTab === 'super_admin_management'} onClick={() => { handleTabChange('super_admin_management'); setIsMobileMenuOpen(false); }} icon={<ShieldCheck size={20} />} label="Gestão Admins" isSuperAdmin={true} />
+                    <SidebarButton active={activeTab === 'painel_master'} onClick={() => { handleTabChange('painel_master'); setIsMobileMenuOpen(false); }} icon={<Users size={20} />} label="Gestão de clientes" isSuperAdmin={true} />
+                  </>
+                ) : (
+                  <>
+                    <SidebarButton active={activeTab === 'dashboard'} onClick={() => { handleTabChange('dashboard'); setIsMobileMenuOpen(false); }} icon={<FileText size={20} />} label="Dashboard" />
+                    <SidebarButton active={activeTab === 'notificar'} onClick={() => { handleTabChange('notificar'); setIsMobileMenuOpen(false); }} icon={<Bell size={20} />} label="Notificar" />
+                    <SidebarButton active={activeTab === 'score'} onClick={() => { handleTabChange('score'); setIsMobileMenuOpen(false); }} icon={<PlusCircle size={20} />} label="Pontuar" />
+                    <SidebarButton active={activeTab === 'customers'} onClick={() => { handleTabChange('customers'); setIsMobileMenuOpen(false); }} icon={<Users size={20} />} label="Clientes" />
+                    <SidebarButton active={activeTab === 'rewarded_customers'} onClick={() => { handleTabChange('rewarded_customers'); setIsMobileMenuOpen(false); }} icon={<Award size={20} />} label="Premiados" />
+                    <SidebarButton active={activeTab === 'rewards'} onClick={() => { handleTabChange('rewards'); setIsMobileMenuOpen(false); }} icon={<Trophy size={20} />} label="Premiação" />
+                    <SidebarButton active={activeTab === 'seasonal_dates'} onClick={() => { handleTabChange('seasonal_dates'); setIsMobileMenuOpen(false); }} icon={<Calendar size={20} />} label="Datas Sazonais" />
+                    <SidebarButton active={activeTab === 'ltv'} onClick={() => { handleTabChange('ltv'); setIsMobileMenuOpen(false); }} icon={<TrendingUp size={20} />} label="LTV" />
+                    <SidebarButton active={activeTab === 'goals'} onClick={() => { handleTabChange('goals'); setIsMobileMenuOpen(false); }} icon={<Target size={20} />} label="Metas Gerais" />
+                    <SidebarButton active={activeTab === 'promotion'} onClick={() => { handleTabChange('promotion'); setIsMobileMenuOpen(false); }} icon={<MessageSquare size={20} />} label="Envio WhatsApp" />
+                    <SidebarButton active={activeTab === 'strategic_analysis'} onClick={() => { handleTabChange('strategic_analysis'); setIsMobileMenuOpen(false); }} icon={<BarChart3 size={20} />} label="Análise Estratégica" />
+                    {isAdminUser && (
+                      <SidebarButton active={activeTab === 'reset'} onClick={() => { handleTabChange('reset'); setIsMobileMenuOpen(false); }} icon={<RotateCcw size={20} />} label="Zerar Sistema" />
+                    )}
                   </>
                 )}
                 {isSuperAdmin && (
@@ -1340,11 +1353,12 @@ function SidebarButton({ active, onClick, icon, label, isSuperAdmin }: { active:
     <button 
       onClick={onClick}
       className={cn(
-        "flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold text-sm",
+        "flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold text-sm w-full text-left",
         active 
           ? "bg-green-500 text-white shadow-lg shadow-green-500/20" 
           : "text-gray-400 hover:text-white hover:bg-white/10"
       )}
+      translate="no"
     >
       <span className={cn("transition-colors", active ? "text-white" : "text-gray-400 group-hover:text-white")}>
         {icon}
