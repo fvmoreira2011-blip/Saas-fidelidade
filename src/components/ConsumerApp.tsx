@@ -26,7 +26,8 @@ import {
   Wallet,
   Bell,
   X,
-  Trash2
+  Trash2,
+  Key
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
@@ -59,6 +60,7 @@ interface StoreConfig {
     points: number;
     prize: string;
   }[];
+  redemptionCode?: string;
 }
 
 interface Notification {
@@ -79,6 +81,9 @@ export default function ConsumerApp() {
   const [customerRecords, setCustomerRecords] = useState<CustomerRecord[]>([]);
   const [stores, setStores] = useState<Record<string, StoreConfig>>({});
   const [selectedStore, setSelectedStore] = useState<string | null>(null);
+  const [redeemingTier, setRedeemingTier] = useState<any>(null);
+  const [redemptionCodeInput, setRedemptionCodeInput] = useState('');
+  const [isRedeeming, setIsRedeeming] = useState(false);
   const [activeView, setActiveView] = useState<'wallet' | 'alerts'>('wallet');
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
@@ -261,21 +266,36 @@ export default function ConsumerApp() {
       console.log(`Encontrados ${records.length} registros para o telefone.`);
 
       if (records.length > 0) {
-        setCustomerRecords(records);
-        setIsAuthenticated(true);
-        localStorage.setItem('consumer_phone', finalPhone);
-        
         // Fetch store configs for each record
         const storeIds = Array.from(new Set(records.map(r => r.companyId)));
         const storeData: Record<string, StoreConfig> = {};
+        const validRecords: CustomerRecord[] = [];
         
         for (const id of storeIds) {
           const storeDoc = await getDoc(doc(db, 'configs', id));
           if (storeDoc.exists()) {
-            storeData[id] = { id, ...storeDoc.data() } as StoreConfig;
+            const data = storeDoc.data() as StoreConfig;
+            // Filter out "Tentaculos" program as requested
+            const companyName = data.companyProfile?.companyName?.toLowerCase() || '';
+            const campaignName = data.campaignName?.toLowerCase() || '';
+            if (companyName.includes('tentaculos') || campaignName.includes('tentaculos')) {
+              continue;
+            }
+            storeData[id] = { id, ...data } as StoreConfig;
           }
         }
+
+        // Only keep records for which we have a valid (non-filtered) store
+        records.forEach(r => {
+          if (storeData[r.companyId]) {
+            validRecords.push(r);
+          }
+        });
+
+        setCustomerRecords(validRecords);
         setStores(storeData);
+        setIsAuthenticated(true);
+        localStorage.setItem('consumer_phone', finalPhone);
       } else {
         alert('Nenhum cadastro encontrado com este número.');
       }
@@ -385,7 +405,7 @@ export default function ConsumerApp() {
       <header className="bg-white px-6 py-8 sticky top-0 z-10 border-b border-gray-100 flex items-center justify-between">
         <div>
           <h2 className="text-xl font-black text-gray-900 tracking-tight">Meus Pontos</h2>
-          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Olá, {customerRecords[0]?.name.split(' ')[0]}</p>
+          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Olá, {customerRecords[0]?.name?.split(' ')[0] || 'Cliente'}</p>
         </div>
         <button 
           onClick={handleLogout}
@@ -601,9 +621,12 @@ export default function ConsumerApp() {
                           </div>
                         </div>
                         {isUnlocked && (
-                          <div className="bg-green-500 text-white px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest">
-                            Disponível
-                          </div>
+                          <button 
+                            onClick={() => setRedeemingTier({ ...tier, companyId: selectedStore })}
+                            className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg shadow-green-500/20 active:scale-95 transition-all"
+                          >
+                            Resgatar
+                          </button>
                         )}
                       </div>
                     );
@@ -657,6 +680,79 @@ export default function ConsumerApp() {
           <span className="text-[8px] font-black uppercase tracking-widest">WebApp</span>
         </button>
       </div>
+
+      {/* Redemption Code Modal */}
+      <AnimatePresence>
+        {redeemingTier && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-md flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="w-full max-w-sm bg-white rounded-[2.5rem] p-8 space-y-6 text-center shadow-2xl"
+            >
+              <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
+                <Key className="text-green-600" size={40} />
+              </div>
+              
+              <div className="space-y-2">
+                <h3 className="text-xl font-black text-gray-900 tracking-tight">Código de Resgate</h3>
+                <p className="text-sm text-gray-500 font-medium leading-relaxed">
+                  Para resgatar o prêmio <span className="text-green-600 font-bold">"{redeemingTier.prize}"</span>, peça o código ao atendente da loja.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <input 
+                  type="text"
+                  value={redemptionCodeInput}
+                  onChange={(e) => setRedemptionCodeInput(e.target.value.toUpperCase())}
+                  placeholder="DIGITE O CÓDIGO"
+                  maxLength={6}
+                  className="w-full bg-gray-50 border-2 border-gray-100 rounded-2xl px-6 py-4 text-center text-2xl font-black tracking-[0.5em] text-gray-900 outline-none focus:border-green-500 transition-all placeholder:text-gray-300 placeholder:tracking-normal placeholder:text-sm"
+                />
+
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => {
+                      setRedeemingTier(null);
+                      setRedemptionCodeInput('');
+                    }}
+                    className="flex-1 px-6 py-4 bg-gray-100 text-gray-500 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-gray-200 transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    onClick={async () => {
+                      const store = stores[redeemingTier.companyId];
+                      if (redemptionCodeInput.toUpperCase() === store.redemptionCode?.toUpperCase()) {
+                        setIsRedeeming(true);
+                        // Here you would normally update the database to deduct points
+                        // For now, we'll just show success and clear state
+                        alert("Resgate validado com sucesso! Mostre esta tela ao atendente para receber seu prêmio.");
+                        setRedeemingTier(null);
+                        setRedemptionCodeInput('');
+                        setIsRedeeming(false);
+                      } else {
+                        alert("Código inválido. Tente novamente.");
+                      }
+                    }}
+                    disabled={redemptionCodeInput.length !== 6 || isRedeeming}
+                    className="flex-[2] px-6 py-4 bg-green-500 text-white rounded-2xl text-xs font-black uppercase tracking-widest shadow-lg shadow-green-500/20 hover:bg-green-600 disabled:opacity-50 transition-all"
+                  >
+                    {isRedeeming ? 'Validando...' : 'Confirmar'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

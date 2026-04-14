@@ -214,6 +214,7 @@ interface LoyaltyRule {
   openaiApiKey?: string;
   geminiApiKey?: string;
   aiPrompt?: string;
+  redemptionCode?: string;
 }
 
 interface AppUser {
@@ -249,6 +250,148 @@ interface AppUser {
   activationDate?: string;
   paymentMethod?: string;
   roleInCompany?: string;
+  redemptionCode?: string;
+}
+
+function RedemptionCodesTab() {
+  const [configs, setConfigs] = useState<LoyaltyRule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [newCode, setNewCode] = useState('');
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
+
+  useEffect(() => {
+    const q = query(collection(db, 'configs'));
+    const unsub = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as any));
+      setConfigs(data);
+      setLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
+  const handleUpdateCode = async (id: string) => {
+    if (!newCode || newCode.length !== 6) {
+      alert("O código deve ter exatamente 6 caracteres.");
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'configs', id), { redemptionCode: newCode.toUpperCase() });
+      setEditingId(null);
+      setNewCode('');
+    } catch (error) {
+      console.error("Error updating code:", error);
+    }
+  };
+
+  const handleDeleteConfig = async (id: string, name: string) => {
+    if (!window.confirm(`Tem certeza que deseja excluir permanentemente o programa "${name}"? Esta ação não pode ser desfeita.`)) return;
+    
+    setIsDeleting(id);
+    try {
+      await deleteDoc(doc(db, 'configs', id));
+      alert('Programa excluído com sucesso.');
+    } catch (error) {
+      console.error('Error deleting config:', error);
+      alert('Erro ao excluir programa. Verifique suas permissões.');
+    } finally {
+      setIsDeleting(null);
+    }
+  };
+
+  if (loading) return <div className="p-8 text-center text-white">Carregando...</div>;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-black text-white tracking-tighter uppercase">Códigos de Resgate</h2>
+      </div>
+
+      <div className="bg-white/5 border border-white/10 rounded-3xl overflow-hidden">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="border-b border-white/10 bg-white/5">
+              <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Empresa</th>
+              <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Código Atual</th>
+              <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Ações</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/10">
+            {configs.map((config: any) => (
+              <tr key={config.id} className="hover:bg-white/5 transition-colors group">
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-white/10 rounded-lg flex items-center justify-center overflow-hidden border border-white/10">
+                      {(config.companyProfile?.logoURL || config.companyProfile?.photoURL) ? (
+                        <img src={config.companyProfile?.logoURL || config.companyProfile?.photoURL} alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <Trophy className="text-green-500" size={20} />
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-white font-bold">{config.companyProfile?.companyName || 'Sem Nome'}</p>
+                      <p className="text-[10px] text-gray-500 font-medium">{config.id}</p>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-6 py-4">
+                  {editingId === config.id ? (
+                    <input 
+                      type="text"
+                      value={newCode}
+                      onChange={(e) => setNewCode(e.target.value.toUpperCase())}
+                      maxLength={6}
+                      className="bg-white/10 border border-white/20 rounded-lg px-3 py-1 text-white font-mono outline-none focus:border-primary"
+                    />
+                  ) : (
+                    <span className="text-primary font-mono font-black text-lg tracking-widest">{config.redemptionCode || '---'}</span>
+                  )}
+                </td>
+                <td className="px-6 py-4">
+                  <div className="flex items-center gap-2">
+                    {editingId === config.id ? (
+                      <>
+                        <button onClick={() => handleUpdateCode(config.id)} className="p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all">
+                          <Check size={16} />
+                        </button>
+                        <button onClick={() => { setEditingId(null); setNewCode(''); }} className="p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all">
+                          <X size={16} />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => { setEditingId(config.id); setNewCode(config.redemptionCode || ''); }} className="p-2 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all">
+                          <Edit2 size={16} />
+                        </button>
+                        <button 
+                          onClick={() => {
+                            const generated = generateRedemptionCode();
+                            updateDoc(doc(db, 'configs', config.id), { redemptionCode: generated });
+                          }} 
+                          className="p-2 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all"
+                          title="Gerar Aleatório"
+                        >
+                          <RotateCcw size={16} />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteConfig(config.id, config.companyProfile?.companyName || 'Sem nome')}
+                          disabled={isDeleting === config.id}
+                          className="p-2 bg-red-500/10 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all opacity-0 group-hover:opacity-100 disabled:opacity-50"
+                          title="Excluir Programa"
+                        >
+                          {isDeleting === config.id ? <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" /> : <Trash2 size={16} />}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 const DEFAULT_RULES: LoyaltyRule = {
@@ -630,12 +773,21 @@ export default function App() {
   );
 }
 
+const generateRedemptionCode = () => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+};
+
 function AppContent() {
   const [user, setUser] = useState<User | null>(null);
   const [appUser, setAppUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<'business' | 'consumer'>('business');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'score' | 'customers' | 'rewarded_customers' | 'rewards' | 'seasonal_dates' | 'ltv' | 'goals' | 'promotion' | 'reset' | 'admin' | 'company_profile' | 'plans' | 'super_admin_profile' | 'super_admin_management' | 'painel_master' | 'notificar'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'score' | 'customers' | 'rewarded_customers' | 'rewards' | 'seasonal_dates' | 'ltv' | 'goals' | 'promotion' | 'reset' | 'admin' | 'company_profile' | 'plans' | 'super_admin_profile' | 'super_admin_management' | 'painel_master' | 'notificar' | 'redemption_codes'>('dashboard');
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -832,6 +984,14 @@ function AppContent() {
     const unsubRules = onSnapshot(doc(db, 'configs', companyId), (snapshot: any) => {
       if (snapshot.exists()) {
         const data = snapshot.data() as LoyaltyRule;
+        
+        // Check for missing redemption code and generate if admin
+        if (!data.redemptionCode && isAdminUser) {
+          const newCode = generateRedemptionCode();
+          updateDoc(snapshot.ref, { redemptionCode: newCode });
+          return; // Let the next snapshot handle it
+        }
+
         // Auto-merge national holidays from Google Calendar defaults if missing
         const currentDates = data.seasonalDates || [];
         const nationalDefaults = DEFAULT_RULES.seasonalDates?.filter(d => d.type === 'national') || [];
@@ -841,13 +1001,19 @@ function AppContent() {
 
         if (missingNationals.length > 0 && isAdminUser) {
           const updatedDates = [...currentDates, ...missingNationals].sort((a, b) => a.date.localeCompare(b.date));
-          setDoc(snapshot.ref, { ...data, seasonalDates: updatedDates }, { merge: true });
-        } else {
-          setRules(data);
+          updateDoc(snapshot.ref, { seasonalDates: updatedDates });
+          return; // Let the next snapshot handle it
         }
-      } else {
+        
+        setRules(data);
+      } else if (isAdminUser) {
         // Initialize default rules if not exist
-        setDoc(snapshot.ref, { ...DEFAULT_RULES, companyId }).catch(err => handleFirestoreError(err, OperationType.WRITE, `configs/${companyId}`));
+        const initialRules = { 
+          ...DEFAULT_RULES, 
+          companyId,
+          redemptionCode: generateRedemptionCode()
+        };
+        setDoc(snapshot.ref, initialRules).catch(err => handleFirestoreError(err, OperationType.WRITE, `configs/${companyId}`));
       }
     }, (error) => handleFirestoreError(error, OperationType.GET, `configs/${companyId}`));
 
@@ -926,7 +1092,7 @@ function AppContent() {
     return <ContractCancelledScreen />;
   }
 
-  if (loading || !isAuthReady) {
+  if (loading || !isAuthReady || (user && !appUser)) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-black">
         <div className="flex flex-col items-center gap-6">
@@ -1040,6 +1206,7 @@ function AppContent() {
             <>
               <SidebarButton active={activeTab === 'super_admin_profile'} onClick={() => handleTabChange('super_admin_profile')} icon={<UserCircle size={20} />} label="Meu Perfil" isSuperAdmin={true} />
               <SidebarButton active={activeTab === 'super_admin_management'} onClick={() => handleTabChange('super_admin_management')} icon={<ShieldCheck size={20} />} label="Gestão Admins" isSuperAdmin={true} />
+              <SidebarButton active={activeTab === 'redemption_codes'} onClick={() => handleTabChange('redemption_codes')} icon={<Key size={20} />} label="Códigos Resgate" isSuperAdmin={true} />
               <SidebarButton active={activeTab === 'painel_master'} onClick={() => handleTabChange('painel_master')} icon={<Users size={20} />} label="Gestão de clientes" isSuperAdmin={true} />
             </>
           ) : (
@@ -1241,6 +1408,7 @@ function AppContent() {
             {/* Super Admin Tabs */}
             {activeTab === 'super_admin_profile' && isSuperAdmin && appUser && <div key="super_admin_profile"><SuperAdminProfileTab appUser={appUser} /></div>}
             {activeTab === 'super_admin_management' && isSuperAdmin && <div key="super_admin_management"><SuperAdminManagementTab /></div>}
+            {activeTab === 'redemption_codes' && isSuperAdmin && <div key="redemption_codes"><RedemptionCodesTab /></div>}
             {activeTab === 'painel_master' && isSuperAdmin && <div key="painel_master"><SuperAdminPanel onBack={() => setActiveTab('super_admin_profile')} isSuperAdmin={isSuperAdmin} appUser={appUser!} /></div>}
           </AnimatePresence>
         </main>
@@ -1268,7 +1436,7 @@ function AppContent() {
                     {/* Logo */}
                     <div className="mb-12">
                       <img 
-                        src={rules.companyProfile?.logoURL || FALLBACK_LOGO} 
+                        src={currentLogo} 
                         alt="Logo" 
                         className="h-32 object-contain"
                         referrerPolicy="no-referrer"
@@ -4528,7 +4696,7 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-black text-gray-900 tracking-tight">Olá, {appUser?.displayName?.split(' ')[0] || rules.companyProfile?.responsible?.split(' ')[0] || 'Usuário'}</h2>
+          <h2 className="text-2xl font-black text-gray-900 tracking-tight">Olá, {appUser?.displayName?.split(' ')[0] || rules.companyProfile?.responsible?.split(' ')[0] || 'Administrador'}</h2>
           <p className="text-sm text-gray-500 mt-1">Bem-vindo ao seu Dashboard • {todayFormatted}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -5444,6 +5612,24 @@ function RewardsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; isA
           </button>
         )}
       </div>
+
+      {/* Redemption Code Display (Read-only for Client) */}
+      <Card className="p-6 bg-gray-900 border-gray-800 shadow-xl overflow-hidden relative">
+        <div className="absolute top-0 right-0 p-4 opacity-10 text-white">
+          <Key size={80} />
+        </div>
+        <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <p className="text-[10px] font-black text-green-500 uppercase tracking-[0.2em] mb-1">Código de Resgate do Estabelecimento</p>
+            <h3 className="text-white text-sm font-medium opacity-70">Este código deve ser inserido pelo cliente no momento do resgate do prêmio.</h3>
+          </div>
+          <div className="bg-white/10 border border-white/20 px-6 py-3 rounded-2xl flex items-center gap-4">
+            <span className="text-white font-mono font-black text-2xl tracking-[0.3em]">{rules.redemptionCode || '---'}</span>
+            <div className="w-px h-8 bg-white/10" />
+            <Key className="text-green-500" size={24} />
+          </div>
+        </div>
+      </Card>
 
       <Card className="p-6 bg-white border-gray-100 shadow-sm">
         <form onSubmit={handleSaveAttempt} className="space-y-6">
