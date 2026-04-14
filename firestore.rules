@@ -96,7 +96,8 @@ service cloud.firestore {
 
     match /configs/{configId} {
       allow read: if true;
-      allow write: if isAdmin() && isValidConfig(request.resource.data);
+      allow create, update: if isAdmin() && isValidConfig(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /notifications/{notificationId} {

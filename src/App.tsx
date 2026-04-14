@@ -259,6 +259,16 @@ function RedemptionCodesTab() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [newCode, setNewCode] = useState('');
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [unlockedCodes, setUnlockedCodes] = useState<Set<string>>(new Set());
+
+  const toggleLock = (id: string) => {
+    setUnlockedCodes(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const q = query(collection(db, 'configs'));
@@ -360,19 +370,49 @@ function RedemptionCodesTab() {
                       </>
                     ) : (
                       <>
-                        <button onClick={() => { setEditingId(config.id); setNewCode(config.redemptionCode || ''); }} className="p-2 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all">
-                          <Edit2 size={16} />
-                        </button>
                         <button 
-                          onClick={() => {
-                            const generated = generateRedemptionCode();
-                            updateDoc(doc(db, 'configs', config.id), { redemptionCode: generated });
+                          onClick={() => { 
+                            // This would ideally open a modal to edit the client profile
+                            // For now, let's use the existing impersonation logic or similar
+                            localStorage.setItem('impersonatedClientId', config.id);
+                            window.location.reload();
                           }} 
                           className="p-2 bg-white/10 text-white rounded-lg hover:bg-white/20 transition-all"
-                          title="Gerar Aleatório"
+                          title="Editar Cliente"
                         >
-                          <RotateCcw size={16} />
+                          <Edit2 size={16} />
                         </button>
+                        
+                        <div className="flex items-center bg-white/5 rounded-lg border border-white/10 overflow-hidden">
+                          <button 
+                            onClick={() => toggleLock(config.id)}
+                            className={cn(
+                              "p-2 transition-all",
+                              unlockedCodes.has(config.id) ? "text-green-500 bg-green-500/10" : "text-gray-500 hover:text-white"
+                            )}
+                            title={unlockedCodes.has(config.id) ? "Bloquear Geração" : "Desbloquear Geração"}
+                          >
+                            {unlockedCodes.has(config.id) ? <Unlock size={16} /> : <Lock size={16} />}
+                          </button>
+                          
+                          <button 
+                            onClick={() => {
+                              if (!unlockedCodes.has(config.id)) return;
+                              const generated = generateRedemptionCode();
+                              updateDoc(doc(db, 'configs', config.id), { redemptionCode: generated });
+                              toggleLock(config.id); // Re-lock after generation
+                            }} 
+                            disabled={!unlockedCodes.has(config.id)}
+                            className={cn(
+                              "p-2 transition-all border-l border-white/10",
+                              unlockedCodes.has(config.id) ? "text-white hover:bg-white/10" : "text-gray-700 cursor-not-allowed"
+                            )}
+                            title="Gerar Aleatório"
+                          >
+                            <RotateCcw size={16} />
+                          </button>
+                        </div>
+
                         <button 
                           onClick={() => handleDeleteConfig(config.id, config.companyProfile?.companyName || 'Sem nome')}
                           disabled={isDeleting === config.id}
@@ -832,7 +872,10 @@ function AppContent() {
   
   // Set initial selectedCompanyId
   useEffect(() => {
-    if (appUser && !selectedCompanyId) {
+    const impersonatedId = localStorage.getItem('impersonatedClientId');
+    if (impersonatedId) {
+      setSelectedCompanyId(impersonatedId);
+    } else if (appUser) {
       setSelectedCompanyId(appUser.uid);
     }
   }, [appUser]);
@@ -1048,6 +1091,11 @@ function AppContent() {
       unsubCustomers();
       unsubPurchases();
       unsubGoals();
+      // Reset states to prevent data leakage between clients
+      setRules(DEFAULT_RULES);
+      setCustomers([]);
+      setPurchases([]);
+      setGoals([]);
     };
   }, [user?.uid, appUser?.approved, isAdminUser, selectedCompanyId]);
 
@@ -1169,9 +1217,9 @@ function AppContent() {
   return (
     <div className={cn("min-h-screen flex flex-col lg:flex-row", isSuperAdminPanelActive ? "bg-black text-white" : "bg-white text-gray-900")} style={themeStyle}>
       {/* Sidebar for Desktop */}
-      <aside className={cn("hidden lg:flex flex-col w-72 sticky top-0 h-screen p-6 z-20 bg-black border-r border-white/10 items-center")}>
-        <div className="flex flex-col items-center gap-4 mb-10 w-full">
-          <div className={cn("w-24 h-24 overflow-hidden shadow-lg rounded-xl border-2 border-white/10")}>
+      <aside className={cn("hidden lg:flex flex-col w-72 sticky top-0 h-screen p-6 z-20 bg-black border-r border-white/10")}>
+        <div className="flex items-center gap-4 mb-10 w-full px-2">
+          <div className={cn("w-14 h-14 overflow-hidden shadow-lg rounded-xl border-2 border-white/10 shrink-0")}>
             <img 
               src={currentLogo} 
               alt="Logo" 
@@ -1181,19 +1229,19 @@ function AppContent() {
               }}
             />
           </div>
-          <div className="text-center w-full">
-            <h1 className={cn("text-xs font-bold uppercase tracking-widest leading-relaxed text-white")}>
+          <div className="text-left min-w-0">
+            <h1 className={cn("text-sm font-bold uppercase tracking-tight leading-tight text-white truncate")}>
               {currentCompanyName}
             </h1>
             {!isSuperAdmin && (
-              <p className="text-[10px] text-green-500 font-black uppercase tracking-widest mt-1">
+              <p className="text-[10px] text-green-500 font-black uppercase tracking-widest mt-1 truncate">
                 {rules.campaignName}
               </p>
             )}
             {!isSuperAdmin && (
               <button 
                 onClick={() => handleTabChange('company_profile')}
-                className="mt-4 text-[10px] font-bold text-gray-500 hover:text-white hover:underline uppercase tracking-tighter"
+                className="mt-2 text-[10px] font-bold text-gray-500 hover:text-white hover:underline uppercase tracking-tighter block"
               >
                 SEU PERFIL
               </button>

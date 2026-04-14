@@ -9,7 +9,8 @@ import {
   doc,
   getDoc,
   deleteDoc,
-  updateDoc
+  updateDoc,
+  writeBatch
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import PhoneInput from 'react-phone-number-input';
@@ -403,9 +404,22 @@ export default function ConsumerApp() {
     <div className="min-h-screen bg-gray-50 font-sans pb-24">
       {/* Header */}
       <header className="bg-white px-6 py-8 sticky top-0 z-10 border-b border-gray-100 flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-black text-gray-900 tracking-tight">Meus Pontos</h2>
-          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Olá, {customerRecords[0]?.name?.split(' ')[0] || 'Cliente'}</p>
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center overflow-hidden border border-gray-100 shadow-sm">
+            <img 
+              src={customerRecords[0] && stores[customerRecords[0].companyId]?.companyProfile?.logoURL || '/logo.png'} 
+              alt="Logo" 
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+              onError={(e) => {
+                (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/loyalty/200';
+              }}
+            />
+          </div>
+          <div>
+            <h2 className="text-xl font-black text-gray-900 tracking-tight">Meus Pontos</h2>
+            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Olá, {customerRecords[0]?.name?.split(' ')[0] || 'Cliente'}</p>
+          </div>
         </div>
         <button 
           onClick={handleLogout}
@@ -490,6 +504,26 @@ export default function ConsumerApp() {
                           Próximo: {nextTier.prize}
                         </div>
                       )}
+
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const availableTiers = store?.rewardTiers?.filter(t => t.points <= record.points) || [];
+                          if (availableTiers.length > 0) {
+                            setSelectedStore(record.companyId);
+                          } else {
+                            alert("Você ainda não tem pontos suficientes para o resgate. Continue participando!");
+                          }
+                        }}
+                        className={cn(
+                          "w-full mt-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                          (store?.rewardTiers?.some(t => t.points <= record.points))
+                            ? "bg-green-500 text-white shadow-lg shadow-green-500/20 hover:bg-green-600"
+                            : "bg-gray-100 text-gray-400"
+                        )}
+                      >
+                        Resgatar Prêmio
+                      </button>
                     </motion.div>
                   );
                 })}
@@ -498,7 +532,29 @@ export default function ConsumerApp() {
           </>
         ) : (
           <div className="space-y-4">
-            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Suas Notificações</h4>
+            <div className="flex items-center justify-between ml-1">
+              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Suas Notificações</h4>
+              {notifications.length > 0 && (
+                <button 
+                  onClick={async () => {
+                    if (!window.confirm("Deseja realmente excluir todas as notificações?")) return;
+                    try {
+                      const batch = writeBatch(db);
+                      notifications.forEach(n => {
+                        batch.delete(doc(db, 'notifications', n.id));
+                      });
+                      await batch.commit();
+                      setDeletedIds(new Set(notifications.map(n => n.id)));
+                    } catch (err) {
+                      console.error("Error deleting all notifications:", err);
+                    }
+                  }}
+                  className="text-[10px] font-black text-red-500 uppercase tracking-widest hover:underline"
+                >
+                  Limpar Tudo
+                </button>
+              )}
+            </div>
             <AnimatePresence mode="popLayout">
               {notifications.filter(n => !deletedIds.has(n.id)).map((notif, index) => (
                 <div key={notif.id} className="relative group overflow-hidden rounded-3xl">
@@ -732,12 +788,25 @@ export default function ConsumerApp() {
                       const store = stores[redeemingTier.companyId];
                       if (redemptionCodeInput.toUpperCase() === store.redemptionCode?.toUpperCase()) {
                         setIsRedeeming(true);
-                        // Here you would normally update the database to deduct points
-                        // For now, we'll just show success and clear state
-                        alert("Resgate validado com sucesso! Mostre esta tela ao atendente para receber seu prêmio.");
-                        setRedeemingTier(null);
-                        setRedemptionCodeInput('');
-                        setIsRedeeming(false);
+                        try {
+                          const customerRecord = customerRecords.find(r => r.companyId === redeemingTier.companyId);
+                          if (!customerRecord) throw new Error("Registro do cliente não encontrado.");
+
+                          const newPoints = customerRecord.points - redeemingTier.points;
+                          
+                          await updateDoc(doc(db, 'customers', customerRecord.id), {
+                            points: newPoints
+                          });
+
+                          alert("PREMIO RESGATADO COM SUCESSO! Seus pontos foram atualizados.");
+                          setRedeemingTier(null);
+                          setRedemptionCodeInput('');
+                        } catch (error) {
+                          console.error("Error redeeming prize:", error);
+                          alert("Erro ao resgatar prêmio. Tente novamente.");
+                        } finally {
+                          setIsRedeeming(false);
+                        }
                       } else {
                         alert("Código inválido. Tente novamente.");
                       }
