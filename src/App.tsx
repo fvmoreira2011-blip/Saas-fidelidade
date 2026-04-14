@@ -695,41 +695,6 @@ function AppContent() {
     prevUserRef.current = user?.uid || null;
   }, [user, isSuperAdmin]);
 
-  // Cleanup Non-Ruver Clients
-  useEffect(() => {
-    if (isSuperAdmin && isAuthReady) {
-      const cleanup = async () => {
-        try {
-          const q = query(collection(db, 'users'), where('isClient', '==', true));
-          const snap = await getDocs(q);
-          for (const d of snap.docs) {
-            const data = d.data();
-            const companyName = (data.companyName || data.displayName || '').toLowerCase();
-            const whitelist = ['ruver', 'ruver fidelidade', 'dna'];
-            if (!whitelist.includes(companyName)) {
-              console.log('Cleaning up unauthorized client:', d.id, data.companyName);
-              await deleteDoc(doc(db, 'users', d.id));
-              await deleteDoc(doc(db, 'configs', d.id));
-              
-              // Delete associated data
-              const collections = ['customers', 'purchases', 'goals', 'notifications'];
-              for (const coll of collections) {
-                const qColl = query(collection(db, coll), where('companyId', '==', d.id));
-                const snapColl = await getDocs(qColl);
-                const batch = writeBatch(db);
-                snapColl.docs.forEach(doc => batch.delete(doc.ref));
-                await batch.commit();
-              }
-            }
-          }
-        } catch (err) {
-          console.error('Error during client cleanup:', err);
-        }
-      };
-      cleanup();
-    }
-  }, [isSuperAdmin, isAuthReady]);
-
   // Auth State Listener
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
@@ -1513,7 +1478,7 @@ function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
 }
 
 function LoginScreen() {
-  const [loginMode, setLoginMode] = useState<'client' | 'admin'>('client');
+  const [loginMode, setLoginMode] = useState<'client' | 'admin'>('admin');
   const [cnpj, setCnpj] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -2315,38 +2280,6 @@ function SuperAdminPanel({ onBack, isSuperAdmin, appUser }: { onBack: () => void
 
   useEffect(() => {
     if (isAuthenticated) {
-      // Cleanup Non-Ruver Clients
-      const cleanupNonRuver = async () => {
-        try {
-          const q = query(collection(db, 'users'), where('isClient', '==', true));
-          const snap = await getDocs(q);
-          for (const d of snap.docs) {
-            const data = d.data();
-            const companyName = (data.companyName || data.displayName || '').toLowerCase();
-            const whitelist = ['ruver', 'ruver fidelidade', 'dna'];
-            if (!whitelist.includes(companyName)) {
-              const clientId = d.id;
-              console.log('Cleaning up unauthorized client:', clientId, data.companyName);
-              await deleteDoc(doc(db, 'configs', clientId));
-              await deleteDoc(doc(db, 'users', clientId));
-              
-              // Delete associated data
-              const collections = ['customers', 'purchases', 'goals', 'notifications'];
-              for (const coll of collections) {
-                const qColl = query(collection(db, coll), where('companyId', '==', clientId));
-                const snapColl = await getDocs(qColl);
-                const batch = writeBatch(db);
-                snapColl.docs.forEach(doc => batch.delete(doc.ref));
-                await batch.commit();
-              }
-            }
-          }
-        } catch (err) {
-          console.error('Error during client cleanup:', err);
-        }
-      };
-      cleanupNonRuver();
-
       const q = query(collection(db, 'users'), where('isClient', '==', true));
       const unsub = onSnapshot(q, (snapshot) => {
         setClients(snapshot.docs.map(d => ({ id: d.id, uid: d.id, ...d.data() } as AppUser)));
@@ -6225,7 +6158,7 @@ function SettingsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; is
             <input 
               value={localRules.campaignName || ''} 
               onChange={(e) => setLocalRules(prev => ({ ...prev, campaignName: e.target.value }))} 
-              placeholder="Ex: Programa de Fidelidade Tentáculos"
+              placeholder="Ex: Programa de Fidelidade da Loja"
               disabled={!canEdit || isSaving}
               className="w-full bg-gray-50 border border-gray-100 rounded-lg px-4 py-2 text-gray-900 focus:ring-2 focus:ring-primary outline-none disabled:opacity-50"
             />
