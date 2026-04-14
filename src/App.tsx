@@ -1003,8 +1003,8 @@ function AppContent() {
   return (
     <div className={cn("min-h-screen flex flex-col lg:flex-row", isSuperAdminPanelActive ? "bg-black text-white" : "bg-white text-gray-900")} style={themeStyle}>
       {/* Sidebar for Desktop */}
-      <aside className={cn("hidden lg:flex flex-col w-72 sticky top-0 h-screen p-6 z-20 bg-black border-r border-white/10 items-start")}>
-        <div className="flex flex-col items-start gap-4 mb-10 w-full">
+      <aside className={cn("hidden lg:flex flex-col w-72 sticky top-0 h-screen p-6 z-20 bg-black border-r border-white/10 items-center")}>
+        <div className="flex flex-col items-center gap-4 mb-10 w-full">
           <div className={cn("w-24 h-24 overflow-hidden shadow-lg rounded-xl border-2 border-white/10")}>
             <img 
               src={currentLogo} 
@@ -1015,7 +1015,7 @@ function AppContent() {
               }}
             />
           </div>
-          <div className="text-left w-full">
+          <div className="text-center w-full">
             <h1 className={cn("text-xs font-bold uppercase tracking-widest leading-relaxed text-white")}>
               {currentCompanyName}
             </h1>
@@ -1035,7 +1035,7 @@ function AppContent() {
           </div>
         </div>
         
-        <nav className="flex flex-col gap-2 flex-1 w-full">
+        <nav className="flex flex-col gap-2 flex-1 w-full items-start">
           {isSuperAdmin ? (
             <>
               <SidebarButton active={activeTab === 'super_admin_profile'} onClick={() => handleTabChange('super_admin_profile')} icon={<UserCircle size={20} />} label="Meu Perfil" isSuperAdmin={true} />
@@ -4528,7 +4528,7 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-black text-gray-900 tracking-tight">Olá, {rules.companyProfile?.responsible?.split(' ')[0] || appUser?.displayName?.split(' ')[0] || 'Usuário'}</h2>
+          <h2 className="text-2xl font-black text-gray-900 tracking-tight">Olá, {appUser?.displayName?.split(' ')[0] || rules.companyProfile?.responsible?.split(' ')[0] || 'Usuário'}</h2>
           <p className="text-sm text-gray-500 mt-1">Bem-vindo ao seu Dashboard • {todayFormatted}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -6746,7 +6746,8 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
       await onUpdateRules({ ...rules, companyProfile: profile });
       alert("Perfil atualizado com sucesso!");
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'configs');
+      console.error("Error updating profile:", error);
+      alert("Erro ao atualizar perfil. Por favor, tente novamente.");
     } finally {
       setIsSaving(false);
     }
