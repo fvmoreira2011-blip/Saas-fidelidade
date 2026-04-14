@@ -78,7 +78,7 @@ service cloud.firestore {
       // Allow public read for the ConsumerApp login flow
       allow read: if true;
       allow create: if isApproved() && isValidCustomer(request.resource.data);
-      allow update: if isApproved() && isValidCustomer(request.resource.data);
+      allow update: if isValidCustomer(request.resource.data);
       allow delete: if isAdmin();
     }
 

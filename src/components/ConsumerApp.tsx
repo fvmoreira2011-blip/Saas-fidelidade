@@ -30,7 +30,7 @@ import {
   Trash2,
   Key
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -273,16 +273,21 @@ export default function ConsumerApp() {
         const validRecords: CustomerRecord[] = [];
         
         for (const id of storeIds) {
-          const storeDoc = await getDoc(doc(db, 'configs', id));
-          if (storeDoc.exists()) {
-            const data = storeDoc.data() as StoreConfig;
-            // Filter out "Tentaculos" program as requested
-            const companyName = data.companyProfile?.companyName?.toLowerCase() || '';
-            const campaignName = data.campaignName?.toLowerCase() || '';
-            if (companyName.includes('tentaculos') || campaignName.includes('tentaculos')) {
-              continue;
+          if (!id) continue;
+          try {
+            const storeDoc = await getDoc(doc(db, 'configs', id));
+            if (storeDoc.exists()) {
+              const data = storeDoc.data() as StoreConfig;
+              // Filter out "Tentaculos" program as requested
+              const companyName = data.companyProfile?.companyName?.toLowerCase() || '';
+              const campaignName = data.campaignName?.toLowerCase() || '';
+              if (companyName.includes('tentaculos') || campaignName.includes('tentaculos')) {
+                continue;
+              }
+              storeData[id] = { id, ...data } as StoreConfig;
             }
-            storeData[id] = { id, ...data } as StoreConfig;
+          } catch (err) {
+            console.error(`Error fetching store config for ${id}:`, err);
           }
         }
 
@@ -302,7 +307,7 @@ export default function ConsumerApp() {
       }
     } catch (error) {
       console.error('Error logging in:', error);
-      alert('Erro ao acessar o sistema.');
+      alert(`Erro ao acessar o sistema: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
     } finally {
       setLoading(false);
     }
