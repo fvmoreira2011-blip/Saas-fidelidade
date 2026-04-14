@@ -194,6 +194,11 @@ export default function ConsumerApp() {
               }
             });
           }
+        }, (error) => {
+          console.error("Notifications listener error:", error);
+          if (error.message.includes("Quota exceeded")) {
+            // Silently fail or show a small toast if we had a toast system
+          }
         });
 
     // Request permission

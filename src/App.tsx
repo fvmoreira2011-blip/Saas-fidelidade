@@ -492,8 +492,10 @@ interface FirestoreErrorInfo {
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errorMessage,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -511,6 +513,13 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     path
   }
   console.error('Firestore Error: ', JSON.stringify(errInfo));
+
+  // Check for quota exceeded
+  if (errorMessage.includes("Quota exceeded") || errorMessage.includes("quota limit exceeded")) {
+    // We can't easily set state from here if it's not a component, 
+    // but the ErrorBoundary will catch the thrown error.
+  }
+
   throw new Error(JSON.stringify(errInfo));
 }
 
@@ -540,21 +549,45 @@ class ErrorBoundary extends Component<any, any> {
   render() {
     if ((this as any).state.hasError) {
       let errorMessage = "Ocorreu um erro inesperado.";
+      let isQuotaError = false;
+
       try {
         const parsed = JSON.parse((this as any).state.error.message);
-        if (parsed.error && parsed.error.includes("Missing or insufficient permissions")) {
-          errorMessage = "Você não tem permissão para acessar estes dados. Verifique se seu cadastro foi aprovado.";
+        if (parsed.error) {
+          if (parsed.error.includes("Missing or insufficient permissions")) {
+            errorMessage = "Você não tem permissão para acessar estes dados. Verifique se seu cadastro foi aprovado.";
+          } else if (parsed.error.includes("Quota exceeded") || parsed.error.includes("quota limit exceeded")) {
+            errorMessage = "O limite de uso gratuito do banco de dados foi atingido para hoje. O sistema voltará a funcionar automaticamente em breve (geralmente à meia-noite).";
+            isQuotaError = true;
+          }
         }
       } catch (e) {
-        // Not a JSON error
+        if ((this as any).state.error.message?.includes("Quota exceeded")) {
+          errorMessage = "Limite de cota excedido. Por favor, tente novamente mais tarde.";
+          isQuotaError = true;
+        }
       }
 
       return (
         <div className="min-h-screen flex flex-col items-center justify-center bg-background p-6 text-center">
           <div className="max-w-md space-y-4">
-            <h1 className="text-2xl font-bold text-red-600">Ops! Algo deu errado.</h1>
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <AlertTriangle className="text-red-600" size={32} />
+            </div>
+            <h1 className="text-2xl font-bold text-gray-900">
+              {isQuotaError ? "Limite de Acesso Atingido" : "Ops! Algo deu errado."}
+            </h1>
             <p className="text-gray-600">{errorMessage}</p>
-            <Button onClick={() => window.location.reload()}>Recarregar Página</Button>
+            {!isQuotaError && (
+              <Button onClick={() => window.location.reload()} className="bg-green-600 hover:bg-green-700">
+                Recarregar Página
+              </Button>
+            )}
+            {isQuotaError && (
+              <p className="text-sm text-gray-400 mt-8">
+                Este é um limite do plano gratuito do Firebase. Se você é o proprietário, considere fazer o upgrade para o plano Blaze.
+              </p>
+            )}
           </div>
         </div>
       );
@@ -697,9 +730,9 @@ function AppContent() {
     }
   }, [isSuperAdmin, isAuthReady]);
 
-  // Auth & Real-time User Data
+  // Auth State Listener
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (u) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
       setUser(u);
       if (!u) {
         setAppUser(null);
@@ -708,85 +741,84 @@ function AppContent() {
         setIsAuthReady(true);
       }
     });
+    return () => unsubscribeAuth();
+  }, []);
 
-    let unsubscribeUserDoc: (() => void) | null = null;
+  // Real-time User Data Listener
+  useEffect(() => {
+    if (!user) return;
 
-    if (user) {
-      unsubscribeUserDoc = onSnapshot(doc(db, 'users', user.uid), async (snapshot) => {
-        if (snapshot.exists()) {
-          setAppUser({ ...snapshot.data(), uid: user.uid } as AppUser);
-          setLoading(false);
-          setIsAuthReady(true);
-        } else {
-          // Fallback logic if doc doesn't exist yet (migration/auto-creation)
-          try {
-            // First try to fetch by document ID (preferred)
-            const userDoc = await getDoc(doc(db, 'users', user.uid));
-            
-            if (userDoc.exists()) {
-              setAppUser({ ...userDoc.data(), uid: user.uid } as AppUser);
-            } else {
-              // Fallback 1: search by authUid field (for accounts not yet migrated)
-              const q1 = query(collection(db, 'users'), where('authUid', '==', user.uid));
-              const snap1 = await getDocs(q1);
-              
-              if (!snap1.empty) {
-                const docData = snap1.docs[0].data();
-                const userData = { ...docData, uid: user.uid } as AppUser;
-                setAppUser(userData);
-                // Migrate to UID-based document ID
-                await setDoc(doc(db, 'users', user.uid), docData);
-                await deleteDoc(doc(db, 'users', snap1.docs[0].id));
-              } else {
-                // Fallback 2: search by email (for pre-registered accounts)
-                const q2 = query(collection(db, 'users'), where('email', '==', user.email));
-                const snap2 = await getDocs(q2);
-
-                if (!snap2.empty) {
-                  const docData = snap2.docs[0].data();
-                  const userData = { ...docData, uid: user.uid, authUid: user.uid } as AppUser;
-                  setAppUser(userData);
-                  // Link to UID
-                  await setDoc(doc(db, 'users', user.uid), userData);
-                  if (snap2.docs[0].id !== user.uid) {
-                    await deleteDoc(doc(db, 'users', snap2.docs[0].id));
-                  }
-                } else {
-                  // If admin email, auto-create as approved admin
-                  const isMasterAdmin = user.email?.toLowerCase() === 'fvmoreira2011@gmail.com' || user.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
-                  const isSuper = user.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
-                  
-                  const newUser = {
-                    authUid: user.uid,
-                    email: user.email || '',
-                    approved: isMasterAdmin,
-                    role: isSuper ? 'superadmin' : (isMasterAdmin ? 'admin' : 'user'),
-                    createdAt: new Date().toISOString()
-                  };
-                  await setDoc(doc(db, 'users', user.uid), newUser);
-                  setAppUser({ ...newUser, uid: user.uid } as AppUser);
-                }
-              }
-            }
-          } catch (error) {
-            console.error("Error in user doc fallback:", error);
-          } finally {
-            setLoading(false);
-            setIsAuthReady(true);
-          }
-        }
-      }, (error) => {
-        console.error("User doc listener error:", error);
+    const unsubscribeUserDoc = onSnapshot(doc(db, 'users', user.uid), async (snapshot) => {
+      if (snapshot.exists()) {
+        setAppUser({ ...snapshot.data(), uid: user.uid } as AppUser);
         setLoading(false);
         setIsAuthReady(true);
-      });
-    }
+      } else {
+        // Fallback logic if doc doesn't exist yet (migration/auto-creation)
+        try {
+          // First try to fetch by document ID (preferred)
+          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          
+          if (userDoc.exists()) {
+            setAppUser({ ...userDoc.data(), uid: user.uid } as AppUser);
+          } else {
+            // Fallback 1: search by authUid field (for accounts not yet migrated)
+            const q1 = query(collection(db, 'users'), where('authUid', '==', user.uid));
+            const snap1 = await getDocs(q1);
+            
+            if (!snap1.empty) {
+              const docData = snap1.docs[0].data();
+              const userData = { ...docData, uid: user.uid } as AppUser;
+              setAppUser(userData);
+              // Migrate to UID-based document ID
+              await setDoc(doc(db, 'users', user.uid), docData);
+              await deleteDoc(doc(db, 'users', snap1.docs[0].id));
+            } else {
+              // Fallback 2: search by email (for pre-registered accounts)
+              const q2 = query(collection(db, 'users'), where('email', '==', user.email));
+              const snap2 = await getDocs(q2);
 
-    return () => {
-      unsubscribeAuth();
-      if (unsubscribeUserDoc) unsubscribeUserDoc();
-    };
-  }, [user]);
+              if (!snap2.empty) {
+                const docData = snap2.docs[0].data();
+                const userData = { ...docData, uid: user.uid, authUid: user.uid } as AppUser;
+                setAppUser(userData);
+                // Link to UID
+                await setDoc(doc(db, 'users', user.uid), userData);
+                if (snap2.docs[0].id !== user.uid) {
+                  await deleteDoc(doc(db, 'users', snap2.docs[0].id));
+                }
+              } else {
+                // If admin email, auto-create as approved admin
+                const isMasterAdmin = user.email?.toLowerCase() === 'fvmoreira2011@gmail.com' || user.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
+                const isSuper = user.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
+                
+                const newUser = {
+                  authUid: user.uid,
+                  email: user.email || '',
+                  approved: isMasterAdmin,
+                  role: isSuper ? 'superadmin' : (isMasterAdmin ? 'admin' : 'user'),
+                  createdAt: new Date().toISOString()
+                };
+                await setDoc(doc(db, 'users', user.uid), newUser);
+                setAppUser({ ...newUser, uid: user.uid } as AppUser);
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Error in user doc fallback:", error);
+        } finally {
+          setLoading(false);
+          setIsAuthReady(true);
+        }
+      }
+    }, (error) => {
+      console.error("User doc listener error:", error);
+      setLoading(false);
+      setIsAuthReady(true);
+    });
+
+    return () => unsubscribeUserDoc();
+  }, [user?.uid]);
 
   const handleLogout = async () => {
     localStorage.removeItem('impersonatedClientId');
@@ -886,15 +918,22 @@ function AppContent() {
       unsubPurchases();
       unsubGoals();
     };
-  }, [user, appUser, isAdminUser, selectedCompanyId]);
+  }, [user?.uid, appUser?.approved, isAdminUser, selectedCompanyId]);
 
   // Logic to check expiration
+  const customersRef = React.useRef(customers);
   useEffect(() => {
-    if (!customers.length || !rules.maxDaysBetweenPurchases) return;
+    customersRef.current = customers;
+  }, [customers]);
+
+  useEffect(() => {
+    if (!rules.maxDaysBetweenPurchases || !selectedCompanyId) return;
 
     const checkExpirations = async () => {
       const now = new Date();
-      for (const customer of customers) {
+      const currentCustomers = customersRef.current;
+      
+      for (const customer of currentCustomers) {
         if (customer.points > 0) {
           const lastDate = parseISO(customer.lastPurchaseDate);
           const daysSince = differenceInDays(now, lastDate);
@@ -916,7 +955,7 @@ function AppContent() {
     const interval = setInterval(checkExpirations, 1000 * 60 * 60); // Check every hour
     checkExpirations();
     return () => clearInterval(interval);
-  }, [customers, rules]);
+  }, [rules.maxDaysBetweenPurchases, selectedCompanyId]);
 
   if (contractCancelled) {
     return <ContractCancelledScreen />;
@@ -1603,6 +1642,10 @@ function LoginScreen() {
         await signOut(auth);
       }
     } catch (err: any) {
+      if (err.code === 'auth/popup-closed-by-user') {
+        // Just stop loading, no need to show error
+        return;
+      }
       console.error(err);
       setError('Erro ao entrar com Google: ' + err.message);
     } finally {
@@ -6117,7 +6160,8 @@ function SettingsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; is
     try {
       await signInWithPopup(auth, provider);
       setIsReauthenticated(true);
-    } catch (error) {
+    } catch (error: any) {
+      if (error.code === 'auth/popup-closed-by-user') return;
       console.error(error);
       alert("Erro ao reautenticar. Por favor, entre com sua conta Google de administrador.");
     }
