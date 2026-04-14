@@ -698,11 +698,11 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   console.error('Firestore Error: ', JSON.stringify(errInfo));
 
   // Check for quota exceeded
-  if (errorMessage.includes("Quota exceeded") || errorMessage.includes("quota limit exceeded")) {
-    // We can't easily set state from here if it's not a component, 
-    // but the ErrorBoundary will catch the thrown error.
+  if (errorMessage.includes("Quota exceeded") || errorMessage.includes("quota limit exceeded") || errorMessage.includes("resource-exhausted")) {
+    window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', { detail: errInfo }));
   }
 
+  // We still throw to stop execution, but the event will trigger the UI
   throw new Error(JSON.stringify(errInfo));
 }
 
@@ -846,6 +846,13 @@ function AppContent() {
   const [isSuperAdminAuthenticated, setIsSuperAdminAuthenticated] = useState(false);
   const [isSuperAdminPanelActive, setIsSuperAdminPanelActive] = useState(false);
   const [showQRCodeModal, setShowQRCodeModal] = useState(false);
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setQuotaExceeded(true);
+    window.addEventListener('firestore-quota-exceeded', handler);
+    return () => window.removeEventListener('firestore-quota-exceeded', handler);
+  }, []);
 
   const isAdminUser = user?.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || user?.email?.toLowerCase() === 'fvmoreira2011@gmail.com' || appUser?.role === 'admin' || appUser?.role === 'superadmin';
   const isSuperAdmin = user?.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || user?.email?.toLowerCase() === 'fvmoreira2011@gmail.com' || appUser?.role === 'superadmin';
@@ -864,7 +871,7 @@ function AppContent() {
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const clients = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as AppUser));
         setAllClients(clients);
-      });
+      }, (error) => handleFirestoreError(error, OperationType.GET, 'users'));
       return () => unsubscribe();
     }
   }, [isSuperAdmin]);
@@ -964,15 +971,18 @@ function AppContent() {
               }
             }
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error("Error in user doc fallback:", error);
+          if (error.message?.includes("Quota exceeded") || error.message?.includes("resource-exhausted")) {
+            window.dispatchEvent(new CustomEvent('firestore-quota-exceeded'));
+          }
         } finally {
           setLoading(false);
           setIsAuthReady(true);
         }
       }
     }, (error) => {
-      console.error("User doc listener error:", error);
+      handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
       setLoading(false);
       setIsAuthReady(true);
     });
@@ -1135,6 +1145,24 @@ function AppContent() {
     checkExpirations();
     return () => clearInterval(interval);
   }, [rules.maxDaysBetweenPurchases, selectedCompanyId]);
+
+  if (quotaExceeded) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-black p-6 text-center">
+        <div className="max-w-md space-y-6">
+          <div className="w-20 h-20 bg-amber-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Clock className="text-amber-500" size={40} />
+          </div>
+          <h1 className="text-3xl font-black text-white uppercase tracking-tighter">
+            ESTAMOS PASSANDO POR MANUTENÇÃO
+          </h1>
+          <p className="text-gray-400 leading-relaxed">
+            EM BREVE VOCÊ PODERÁ ACESSAR O APLICATIVO.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (contractCancelled) {
     return <ContractCancelledScreen />;

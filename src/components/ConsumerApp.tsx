@@ -28,7 +28,8 @@ import {
   Bell,
   X,
   Trash2,
-  Key
+  Key,
+  AlertTriangle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -91,6 +92,13 @@ export default function ConsumerApp() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setQuotaExceeded(true);
+    window.addEventListener('firestore-quota-exceeded', handler);
+    return () => window.removeEventListener('firestore-quota-exceeded', handler);
+  }, []);
 
   const unreadCount = useMemo(() => 
     notifications.filter(n => !n.read && !deletedIds.has(n.id)).length, 
@@ -305,9 +313,13 @@ export default function ConsumerApp() {
       } else {
         alert('Nenhum cadastro encontrado com este número.');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error logging in:', error);
-      alert(`Erro ao acessar o sistema: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+      if (error.message?.includes("Quota exceeded") || error.message?.includes("resource-exhausted")) {
+        window.dispatchEvent(new CustomEvent('firestore-quota-exceeded'));
+      } else {
+        alert(`Erro ao acessar o sistema: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -319,6 +331,24 @@ export default function ConsumerApp() {
     setCustomerRecords([]);
     setStores({});
   };
+
+  if (quotaExceeded) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6 text-center font-sans">
+        <div className="max-w-md space-y-6">
+          <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Clock className="text-amber-600" size={40} />
+          </div>
+          <h1 className="text-2xl font-black text-gray-900 uppercase tracking-tight">
+            ESTAMOS PASSANDO POR MANUTENÇÃO
+          </h1>
+          <p className="text-gray-600 leading-relaxed">
+            EM BREVE VOCÊ PODERÁ ACESSAR O APLICATIVO.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (!isAuthenticated) {
     return (
