@@ -445,13 +445,10 @@ export default function ConsumerApp() {
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center overflow-hidden border border-gray-100 shadow-sm">
             <img 
-              src={customerRecords[0] && stores[customerRecords[0].companyId]?.companyProfile?.logoURL || '/logo.png'} 
+              src="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" 
               alt="Logo" 
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain p-2"
               referrerPolicy="no-referrer"
-              onError={(e) => {
-                (e.target as HTMLImageElement).src = 'https://picsum.photos/seed/loyalty/200';
-              }}
             />
           </div>
           <div>
