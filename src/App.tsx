@@ -4,7 +4,7 @@
  */
 
 import * as React from 'react';
-import { useState, useEffect, useMemo, Component, ReactNode } from 'react';
+import { useState, useEffect, useMemo, Component, ReactNode, createContext, useContext } from 'react';
 import { 
   collection, 
   doc, 
@@ -39,6 +39,7 @@ import {
 } from 'firebase/auth';
 import firebaseConfig from '../firebase-applet-config.json';
 import { db, auth } from './firebase';
+import { Toast, useToast } from './components/Toast';
 import { 
   BarChart, 
   Bar, 
@@ -128,6 +129,24 @@ function normalizeCNPJ(cnpj: string) {
 }
 
 // Types
+interface ConfirmContextType {
+  askConfirmation: (title: string, message: string, onConfirm: () => void, isDanger?: boolean, confirmText?: string, cancelText?: string) => void;
+}
+
+const ConfirmContext = createContext<ConfirmContextType | null>(null);
+
+function useConfirm() {
+  const context = useContext(ConfirmContext);
+  if (!context) {
+    // Fallback to window.confirm if context is not available (shouldn't happen)
+    return {
+      askConfirmation: (title: string, message: string, onConfirm: () => void) => {
+        if (window.confirm(`${title}\n\n${message}`)) onConfirm();
+      }
+    };
+  }
+  return context;
+}
 interface Customer {
   id: string;
   name: string;
@@ -260,6 +279,8 @@ function RedemptionCodesTab() {
   const [newCode, setNewCode] = useState('');
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [unlockedCodes, setUnlockedCodes] = useState<Set<string>>(new Set());
+  const { showToast } = useToast();
+  const { askConfirmation } = useConfirm();
 
   const toggleLock = (id: string) => {
     setUnlockedCodes(prev => {
@@ -282,31 +303,38 @@ function RedemptionCodesTab() {
 
   const handleUpdateCode = async (id: string) => {
     if (!newCode || newCode.length !== 6) {
-      alert("O código deve ter exatamente 6 caracteres.");
+      showToast("O código deve ter exatamente 6 caracteres.", "warning");
       return;
     }
     try {
       await updateDoc(doc(db, 'configs', id), { redemptionCode: newCode.toUpperCase() });
       setEditingId(null);
       setNewCode('');
+      showToast("Código atualizado com sucesso!", "success");
     } catch (error) {
       console.error("Error updating code:", error);
+      showToast("Erro ao atualizar código.", "error");
     }
   };
 
   const handleDeleteConfig = async (id: string, name: string) => {
-    if (!window.confirm(`Tem certeza que deseja excluir permanentemente o programa "${name}"? Esta ação não pode ser desfeita.`)) return;
-    
-    setIsDeleting(id);
-    try {
-      await deleteDoc(doc(db, 'configs', id));
-      alert('Programa excluído com sucesso.');
-    } catch (error) {
-      console.error('Error deleting config:', error);
-      alert('Erro ao excluir programa. Verifique suas permissões.');
-    } finally {
-      setIsDeleting(null);
-    }
+    askConfirmation(
+      "Confirmar Exclusão",
+      `Tem certeza que deseja excluir permanentemente o programa "${name}"? Esta ação não pode ser desfeita.`,
+      async () => {
+        setIsDeleting(id);
+        try {
+          await deleteDoc(doc(db, 'configs', id));
+          showToast('Programa excluído com sucesso.', "success");
+        } catch (error) {
+          console.error('Error deleting config:', error);
+          showToast('Erro ao excluir programa. Verifique suas permissões.', "error");
+        } finally {
+          setIsDeleting(null);
+        }
+      },
+      true
+    );
   };
 
   if (loading) return <div className="p-8 text-center text-white">Carregando...</div>;
@@ -497,7 +525,7 @@ const DEFAULT_RULES: LoyaltyRule = {
   aiPrompt: 'Você é um consultor estratégico de negócios. Analise os dados fornecidos e forneça um diagnóstico detalhado, riscos, oportunidades e recomendações práticas para o crescimento da empresa.'
 };
 
-const APP_LOGO = "https://lh3.googleusercontent.com/d/1zZIjvIWtsLVet5ltkAK4dbxYuIX1GnBa";
+const APP_LOGO = "https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui";
 const FALLBACK_LOGO = "https://images.unsplash.com/photo-1556742044-3c52d6e88c62?q=80&w=2070&auto=format&fit=crop";
 const LOGIN_BG_IMAGE = "https://images.unsplash.com/photo-1639322537228-f710d846310a?q=80&w=2070&auto=format&fit=crop";
 const SUPER_ADMIN_CNPJ = "40.732.831/0001-72";
@@ -828,6 +856,36 @@ function AppContent() {
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<'business' | 'consumer'>('business');
   const [activeTab, setActiveTab] = useState<'dashboard' | 'score' | 'customers' | 'rewarded_customers' | 'rewards' | 'seasonal_dates' | 'ltv' | 'goals' | 'promotion' | 'reset' | 'admin' | 'company_profile' | 'plans' | 'super_admin_profile' | 'super_admin_management' | 'painel_master' | 'notificar' | 'redemption_codes'>('dashboard');
+  const { toast, showToast, hideToast } = useToast();
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    confirmText?: string;
+    cancelText?: string;
+    isDanger?: boolean;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
+
+  const askConfirmation = (title: string, message: string, onConfirm: () => void, isDanger = false, confirmText = "Confirmar", cancelText = "Cancelar") => {
+    setConfirmModal({
+      isOpen: true,
+      title,
+      message,
+      onConfirm: () => {
+        onConfirm();
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+      },
+      isDanger,
+      confirmText,
+      cancelText
+    });
+  };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1146,104 +1204,105 @@ function AppContent() {
     return () => clearInterval(interval);
   }, [rules.maxDaysBetweenPurchases, selectedCompanyId]);
 
-  if (quotaExceeded) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-black p-6 text-center">
-        <div className="max-w-md space-y-6">
-          <div className="w-20 h-20 bg-amber-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
-            <Clock className="text-amber-500" size={40} />
+  const renderContent = () => {
+    if (quotaExceeded) {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-black p-6 text-center">
+          <div className="max-w-md space-y-6">
+            <div className="w-20 h-20 bg-amber-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Clock className="text-amber-500" size={40} />
+            </div>
+            <h1 className="text-3xl font-black text-white uppercase tracking-tighter">
+              ESTAMOS PASSANDO POR MANUTENÇÃO
+            </h1>
+            <p className="text-gray-400 leading-relaxed">
+              EM BREVE VOCÊ PODERÁ ACESSAR O APLICATIVO.
+            </p>
           </div>
-          <h1 className="text-3xl font-black text-white uppercase tracking-tighter">
-            ESTAMOS PASSANDO POR MANUTENÇÃO
-          </h1>
-          <p className="text-gray-400 leading-relaxed">
-            EM BREVE VOCÊ PODERÁ ACESSAR O APLICATIVO.
-          </p>
         </div>
-      </div>
-    );
-  }
-
-  if (contractCancelled) {
-    return <ContractCancelledScreen />;
-  }
-
-  if (loading || !isAuthReady || (user && !appUser)) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-black">
-        <div className="flex flex-col items-center gap-6">
-          <div className="w-12 h-12 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-white font-black uppercase tracking-widest text-xs animate-pulse">
-            Carregando Sistema...
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (mode === 'consumer') {
-    return <ConsumerApp />;
-  }
-
-  if (!user) {
-    return <LoginScreen />;
-  }
-
-  if (isSuperAdminPanelActive) {
-    return <SuperAdminPanel onBack={() => setIsSuperAdminPanelActive(false)} isSuperAdmin={isSuperAdmin} appUser={appUser!} />;
-  }
-
-  if (appUser && !appUser.approved && !isAdminUser) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-black p-6 text-white text-center">
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-md space-y-6">
-          <img 
-            src={APP_LOGO} 
-            alt="Logo" 
-            className="mx-auto w-48 h-auto"
-            onError={(e) => {
-              (e.target as HTMLImageElement).src = FALLBACK_LOGO;
-            }}
-          />
-          <h1 className="text-2xl font-bold">Aguardando Aprovação</h1>
-          <p className="text-gray-400">
-            Seu cadastro foi realizado com sucesso. <br />
-            Aguarde a aprovação do administrador para acessar o sistema.
-          </p>
-          <Button onClick={handleLogout} variant="outline" className="text-white border-white hover:bg-white/10">
-            Sair
-          </Button>
-        </motion.div>
-      </div>
-    );
-  }
-
-  const isUserOnly = appUser?.role === 'user';
-  const allowedTabs = ['dashboard', ...(rules.allowedUserTabs || [])];
-
-  const handleTabChange = (tab: any) => {
-    if (isUserOnly && !allowedTabs.includes(tab)) {
-      alert("Peça acesso ao administrador para acessar esta aba.");
-      return;
+      );
     }
-    setActiveTab(tab);
-    setIsMobileMenuOpen(false);
-  };
 
-  const currentLogo = isSuperAdmin ? (appUser?.photoURL || `https://ui-avatars.com/api/?name=${appUser?.displayName || user.email}&background=random`) : (appUser?.logoURL || rules.companyProfile?.photoURL || APP_LOGO);
-  const currentCompanyName = isSuperAdmin ? (appUser?.displayName || 'Administrador') : (appUser?.companyName || rules.companyProfile?.companyName || rules.campaignName || 'PROGRAMA DE FIDELIDADE');
-  const currentThemeColor = appUser?.themeColor || rules.themeColor || '#000000';
-  const currentSecondaryColor = appUser?.secondaryColor || '#ffffff';
+    if (contractCancelled) {
+      return <ContractCancelledScreen />;
+    }
 
-  const themeStyle = {
-    '--primary-color': currentThemeColor,
-    '--tw-color-primary': currentThemeColor,
-    '--secondary-color': currentSecondaryColor,
-    '--active-tab-color': '#22c55e', // Green-500
-  } as React.CSSProperties;
+    if (loading || !isAuthReady || (user && !appUser)) {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-black">
+          <div className="flex flex-col items-center gap-6">
+            <div className="w-12 h-12 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-white font-black uppercase tracking-widest text-xs animate-pulse">
+              Carregando Sistema...
+            </p>
+          </div>
+        </div>
+      );
+    }
 
-  return (
-    <div className={cn("min-h-screen flex flex-col lg:flex-row", isSuperAdminPanelActive ? "bg-black text-white" : "bg-white text-gray-900")} style={themeStyle}>
+    if (mode === 'consumer') {
+      return <ConsumerApp />;
+    }
+
+    if (!user) {
+      return <LoginScreen />;
+    }
+
+    if (isSuperAdminPanelActive) {
+      return <SuperAdminPanel onBack={() => setIsSuperAdminPanelActive(false)} isSuperAdmin={isSuperAdmin} appUser={appUser!} />;
+    }
+
+    if (appUser && !appUser.approved && !isAdminUser) {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-black p-6 text-white text-center">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-md space-y-6">
+            <img 
+              src={APP_LOGO} 
+              alt="Logo" 
+              className="mx-auto w-48 h-auto"
+              onError={(e) => {
+                (e.target as HTMLImageElement).src = FALLBACK_LOGO;
+              }}
+            />
+            <h1 className="text-2xl font-bold">Aguardando Aprovação</h1>
+            <p className="text-gray-400">
+              Seu cadastro foi realizado com sucesso. <br />
+              Aguarde a aprovação do administrador para acessar o sistema.
+            </p>
+            <Button onClick={handleLogout} variant="outline" className="text-white border-white hover:bg-white/10">
+              Sair
+            </Button>
+          </motion.div>
+        </div>
+      );
+    }
+
+    const isUserOnly = appUser?.role === 'user';
+    const allowedTabs = ['dashboard', ...(rules.allowedUserTabs || [])];
+
+    const handleTabChange = (tab: any) => {
+      if (isUserOnly && !allowedTabs.includes(tab)) {
+        showToast("Peça acesso ao administrador para acessar esta aba.", "warning");
+        return;
+      }
+      setActiveTab(tab);
+      setIsMobileMenuOpen(false);
+    };
+
+    const currentLogo = isSuperAdmin ? (appUser?.photoURL || `https://ui-avatars.com/api/?name=${appUser?.displayName || user.email}&background=random`) : (appUser?.logoURL || rules.companyProfile?.photoURL || APP_LOGO);
+    const currentCompanyName = isSuperAdmin ? (appUser?.displayName || 'Administrador') : (appUser?.companyName || rules.companyProfile?.companyName || rules.campaignName || 'PROGRAMA DE FIDELIDADE');
+    const currentThemeColor = appUser?.themeColor || rules.themeColor || '#000000';
+    const currentSecondaryColor = appUser?.secondaryColor || '#ffffff';
+
+    const themeStyle = {
+      '--primary-color': currentThemeColor,
+      '--tw-color-primary': currentThemeColor,
+      '--secondary-color': currentSecondaryColor,
+      '--active-tab-color': '#22c55e', // Green-500
+    } as React.CSSProperties;
+
+    return (
+      <div className={cn("min-h-screen flex flex-col lg:flex-row", isSuperAdminPanelActive ? "bg-black text-white" : "bg-white text-gray-900")} style={themeStyle}>
       {/* Sidebar for Desktop */}
       <aside className={cn("hidden lg:flex flex-col w-72 sticky top-0 h-screen p-6 z-20 bg-black border-r border-white/10")}>
         <div className="flex items-center gap-4 mb-10 w-full px-2">
@@ -1477,7 +1536,7 @@ function AppContent() {
             {activeTab === 'goals' && !isSuperAdmin && <div key="goals"><GoalsTab goals={goals} companyId={selectedCompanyId} purchases={purchases} /></div>}
             {activeTab === 'score' && !isSuperAdmin && <div key="score"><ScoreTab rules={rules} customers={customers} appUser={appUser} companyId={selectedCompanyId} /></div>}
             {activeTab === 'promotion' && !isSuperAdmin && <div key="promotion"><PromotionTab customers={customers} purchases={purchases} /></div>}
-            {activeTab === 'strategic_analysis' && !isSuperAdmin && <div key="strategic_analysis"><StrategicAnalysisTab purchases={purchases} customers={customers} rules={rules} goals={goals} /></div>}
+            {activeTab === 'strategic_analysis' && !isSuperAdmin && <div key="strategic_analysis"><StrategicAnalysisTab purchases={purchases} customers={customers} rules={rules} goals={goals} companyId={selectedCompanyId} /></div>}
             {activeTab === 'reset' && !isSuperAdmin && <div key="reset"><ResetSystemTab companyId={selectedCompanyId} isAdmin={isAdminUser} /></div>}
             {activeTab === 'company_profile' && !isSuperAdmin && <div key="company_profile"><CompanyProfileTab rules={rules} isAdmin={isAdminUser} appUser={appUser} onCancelContract={() => setContractCancelled(true)} onUpgrade={() => setActiveTab('strategic_analysis')} onUpdateRules={(r) => setDoc(doc(db, 'configs', selectedCompanyId!), r)} /></div>}
             
@@ -1585,6 +1644,16 @@ function AppContent() {
                 </div>
               </motion.div>
             </div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {toast && (
+            <Toast 
+              message={toast.message} 
+              type={toast.type} 
+              onClose={hideToast} 
+            />
           )}
         </AnimatePresence>
       </div>
@@ -1801,33 +1870,21 @@ function LoginScreen() {
         const normalizedCnpj = normalizeCNPJ(cnpj);
         
         // Try normalized first
-        let q = query(collection(db, 'users'), where('cnpj', '==', normalizedCnpj));
+        let q = query(collection(db, 'users'), where('cnpj', '==', normalizedCnpj), limit(1));
         let snap = await getDocs(q);
         
         // If not found, try with mask (fallback for older records)
         if (snap.empty && cnpj !== normalizedCnpj) {
-          q = query(collection(db, 'users'), where('cnpj', '==', cnpj));
+          q = query(collection(db, 'users'), where('cnpj', '==', cnpj), limit(1));
           snap = await getDocs(q);
         }
         
         // If still not found, try searching by email (in case the user is trying to use email in CNPJ field)
         if (snap.empty && cnpj.includes('@')) {
-          q = query(collection(db, 'users'), where('email', '==', cnpj.toLowerCase()));
+          q = query(collection(db, 'users'), where('email', '==', cnpj.toLowerCase()), limit(1));
           snap = await getDocs(q);
         }
 
-        // LAST RESORT: Try to find any user where normalized CNPJ matches (in case it's stored differently)
-        if (snap.empty) {
-          const allUsersSnap = await getDocs(collection(db, 'users'));
-          const found = allUsersSnap.docs.find(d => {
-            const dData = d.data();
-            return dData.cnpj && normalizeCNPJ(dData.cnpj) === normalizedCnpj;
-          });
-          if (found) {
-            snap = { empty: false, docs: [found] } as any;
-          }
-        }
-        
         if (snap.empty) {
           setError('CNPJ não encontrado. Verifique os dados ou entre em contato com o suporte.');
           setLoading(false);
@@ -2299,6 +2356,8 @@ function SuperAdminManagementTab() {
     password: '',
     photoURL: ''
   });
+  const { showToast } = useToast();
+  const { askConfirmation } = useConfirm();
 
   useEffect(() => {
     const q = query(collection(db, 'users'), where('role', '==', 'superadmin'));
@@ -2346,20 +2405,28 @@ function SuperAdminManagementTab() {
       setShowAddModal(false);
       setEditingAdmin(null);
       setNewAdmin({ displayName: '', email: '', phone: '', roleInCompany: '', password: '', photoURL: '' });
+      showToast("Administrador salvo com sucesso!", "success");
     } catch (err: any) {
-      alert('Erro ao salvar administrador: ' + err.message);
+      showToast('Erro ao salvar administrador: ' + err.message, "error");
     } finally {
       setLoading(false);
     }
   };
 
   const handleDeleteAdmin = async (adminId: string) => {
-    if (!confirm('Tem certeza que deseja excluir este administrador?')) return;
-    try {
-      await deleteDoc(doc(db, 'users', adminId));
-    } catch (err: any) {
-      alert('Erro ao excluir administrador: ' + err.message);
-    }
+    askConfirmation(
+      "Confirmar Exclusão",
+      "Tem certeza que deseja excluir este administrador?",
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'users', adminId));
+          showToast("Administrador excluído com sucesso!", "success");
+        } catch (err: any) {
+          showToast('Erro ao excluir administrador: ' + err.message, "error");
+        }
+      },
+      true
+    );
   };
 
   const handleEditClick = (admin: AppUser) => {
@@ -2535,6 +2602,8 @@ function SuperAdminPanel({ onBack, isSuperAdmin, appUser }: { onBack: () => void
   const [activeSubTab, setActiveSubTab] = useState<'clients' | 'reports'>('clients');
   const [editingClient, setEditingClient] = useState<AppUser | null>(null);
   const [showFormModal, setShowFormModal] = useState(false);
+  const { showToast } = useToast();
+  const { askConfirmation } = useConfirm();
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -2556,51 +2625,55 @@ function SuperAdminPanel({ onBack, isSuperAdmin, appUser }: { onBack: () => void
       await updateDoc(doc(db, 'users', client.id), {
         approved: !client.approved
       });
+      showToast(`Cliente ${client.approved ? 'bloqueado' : 'desbloqueado'} com sucesso!`, "success");
     } catch (err: any) {
-      alert('Erro ao alterar status do cliente: ' + err.message);
+      showToast('Erro ao alterar status do cliente: ' + err.message, "error");
     }
   };
 
   const handleDeleteClient = async (client: AppUser) => {
-    if (!confirm(`TEM CERTEZA ABSOLUTA? Esta ação irá apagar permanentemente o cliente ${client.companyName} e TODOS os seus dados (configurações, clientes, vendas, metas). Esta operação NÃO PODE SER DESFEITA.`)) {
-      return;
-    }
+    askConfirmation(
+      "CONFIRMAR EXCLUSÃO ABSOLUTA",
+      `TEM CERTEZA ABSOLUTA? Esta ação irá apagar permanentemente o cliente ${client.companyName} e TODOS os seus dados (configurações, clientes, vendas, metas). Esta operação NÃO PODE SER DESFEITA.`,
+      async () => {
+        try {
+          setLoading(true);
+          // 1. Delete configs
+          await deleteDoc(doc(db, 'configs', client.id));
+          
+          // 2. Delete customers
+          const qCust = query(collection(db, 'customers'), where('companyId', '==', client.id));
+          const snapCust = await getDocs(qCust);
+          const batchCust = writeBatch(db);
+          snapCust.docs.forEach(d => batchCust.delete(d.ref));
+          await batchCust.commit();
 
-    try {
-      setLoading(true);
-      // 1. Delete configs
-      await deleteDoc(doc(db, 'configs', client.id));
-      
-      // 2. Delete customers
-      const qCust = query(collection(db, 'customers'), where('companyId', '==', client.id));
-      const snapCust = await getDocs(qCust);
-      const batchCust = writeBatch(db);
-      snapCust.docs.forEach(d => batchCust.delete(d.ref));
-      await batchCust.commit();
+          // 3. Delete purchases
+          const qPurc = query(collection(db, 'purchases'), where('companyId', '==', client.id));
+          const snapPurc = await getDocs(qPurc);
+          const batchPurc = writeBatch(db);
+          snapPurc.docs.forEach(d => batchPurc.delete(d.ref));
+          await batchPurc.commit();
 
-      // 3. Delete purchases
-      const qPurc = query(collection(db, 'purchases'), where('companyId', '==', client.id));
-      const snapPurc = await getDocs(qPurc);
-      const batchPurc = writeBatch(db);
-      snapPurc.docs.forEach(d => batchPurc.delete(d.ref));
-      await batchPurc.commit();
+          // 4. Delete goals
+          const qGoal = query(collection(db, 'goals'), where('companyId', '==', client.id));
+          const snapGoal = await getDocs(qGoal);
+          const batchGoal = writeBatch(db);
+          snapGoal.docs.forEach(d => batchGoal.delete(d.ref));
+          await batchGoal.commit();
 
-      // 4. Delete goals
-      const qGoal = query(collection(db, 'goals'), where('companyId', '==', client.id));
-      const snapGoal = await getDocs(qGoal);
-      const batchGoal = writeBatch(db);
-      snapGoal.docs.forEach(d => batchGoal.delete(d.ref));
-      await batchGoal.commit();
+          // 5. Delete user document
+          await deleteDoc(doc(db, 'users', client.id));
 
-      // 5. Delete user document
-      await deleteDoc(doc(db, 'users', client.id));
-
-      alert('Cliente e todos os seus dados foram excluídos com sucesso.');
-    } catch (err: any) {
-      alert('Erro ao excluir cliente: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
+          showToast('Cliente e todos os seus dados foram excluídos com sucesso.', "success");
+        } catch (err: any) {
+          showToast('Erro ao excluir cliente: ' + err.message, "error");
+        } finally {
+          setLoading(false);
+        }
+      },
+      true
+    );
   };
 
   const handleEditClient = (client: AppUser) => {
@@ -4260,6 +4333,7 @@ function GoalsTab({ goals, companyId, purchases }: { goals: Goal[]; companyId: s
   const [value, setValue] = useState('');
   const [workingDays, setWorkingDays] = useState('22');
   const [isSaving, setIsSaving] = useState(false);
+  const { askConfirmation } = useConfirm();
 
   const handleSaveGoal = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -4285,7 +4359,7 @@ function GoalsTab({ goals, companyId, purchases }: { goals: Goal[]; companyId: s
       }
       setValue('');
       setWorkingDays('22');
-      alert("Meta salva com sucesso!");
+      showToast("Meta salva com sucesso!", "success");
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'goals');
     } finally {
@@ -4391,14 +4465,19 @@ function GoalsTab({ goals, companyId, purchases }: { goals: Goal[]; companyId: s
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button 
-                        onClick={async () => {
-                          if (confirm(`Excluir meta de ${g.month}?`)) {
-                            try {
-                              await deleteDoc(doc(db, 'goals', g.id));
-                            } catch (error) {
-                              console.error(error);
-                            }
-                          }
+                        onClick={() => {
+                          askConfirmation(
+                            "Confirmar Exclusão",
+                            `Excluir meta de ${g.month}?`,
+                            async () => {
+                              try {
+                                await deleteDoc(doc(db, 'goals', g.id));
+                              } catch (error) {
+                                console.error(error);
+                              }
+                            },
+                            true
+                          );
                         }}
                         className="text-gray-500 hover:text-red-500 transition-colors"
                       >
@@ -4895,16 +4974,21 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
                           <td className="px-4 py-3 text-green-600">+{p.pointsEarned}</td>
                           <td className="px-4 py-3 text-right">
                             <button 
-                              onClick={async () => {
-                                if (confirm(`Deseja realmente excluir esta venda de R$ ${p.amount.toFixed(2)}?`)) {
-                                  try {
-                                    await deleteDoc(doc(db, 'purchases', p.id));
-                                    alert("Venda excluída com sucesso!");
-                                  } catch (error) {
-                                    console.error(error);
-                                    alert("Erro ao excluir venda.");
-                                  }
-                                }
+                              onClick={() => {
+                                askConfirmation(
+                                  "Confirmar Exclusão",
+                                  `Deseja realmente excluir esta venda de R$ ${p.amount.toFixed(2)}?`,
+                                  async () => {
+                                    try {
+                                      await deleteDoc(doc(db, 'purchases', p.id));
+                                      showToast("Venda excluída com sucesso!", "success");
+                                    } catch (error) {
+                                      console.error(error);
+                                      showToast("Erro ao excluir venda.", "error");
+                                    }
+                                  },
+                                  true
+                                );
                               }}
                               className="p-1.5 text-gray-500 hover:text-red-500 transition-colors"
                               title="Excluir Venda"
@@ -6862,6 +6946,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [newUserData, setNewUserData] = useState({ name: '', email: '', password: '', phone: '', role: 'user' as 'admin' | 'user', photoURL: '' });
   const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const { askConfirmation } = useConfirm();
 
   useEffect(() => {
     if (!appUser?.companyId) {
@@ -6882,15 +6967,21 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
 
   const handleDeleteUser = async (uid: string) => {
     if (uid === appUser?.uid) {
-      alert("Você não pode excluir seu próprio usuário.");
+      showToast("Você não pode excluir seu próprio usuário.", "warning");
       return;
     }
-    if (!confirm("Tem certeza que deseja excluir este administrador?")) return;
-    try {
-      await deleteDoc(doc(db, 'users', uid));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `users/${uid}`);
-    }
+    askConfirmation(
+      "Confirmar Exclusão",
+      "Tem certeza que deseja excluir este administrador?",
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'users', uid));
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, `users/${uid}`);
+        }
+      },
+      true
+    );
   };
 
   const handleCreateUser = async (e: React.FormEvent) => {
@@ -6899,7 +6990,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
     
     const userCount = allUsers.filter(u => u.role === 'user').length;
     if (userCount >= 2) {
-      alert("Limite de 2 usuários atingido.");
+      showToast("Limite de 2 usuários atingido.", "warning");
       return;
     }
 
@@ -6926,10 +7017,10 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
 
       setShowCreateUser(false);
       setNewUserData({ name: '', email: '', password: '', phone: '', role: 'user', photoURL: '' });
-      alert("Usuário criado com sucesso!");
+      showToast("Usuário criado com sucesso!", "success");
     } catch (error: any) {
       console.error(error);
-      alert("Erro ao criar usuário: " + error.message);
+      showToast("Erro ao criar usuário: " + error.message, "error");
     } finally {
       setIsCreatingUser(false);
     }
@@ -6964,10 +7055,10 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
       setShowCreateUser(false);
       setEditingUser(null);
       setNewUserData({ name: '', email: '', password: '', phone: '', role: 'user', photoURL: '' });
-      alert("Usuário atualizado com sucesso!");
+      showToast("Usuário atualizado com sucesso!", "success");
     } catch (error: any) {
       console.error(error);
-      alert("Erro ao atualizar usuário: " + error.message);
+      showToast("Erro ao atualizar usuário: " + error.message, "error");
     } finally {
       setIsCreatingUser(false);
     }
@@ -6999,17 +7090,17 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
     const missingFields = requiredFields.filter(field => !profile[field]);
     
     if (missingFields.length > 0) {
-      alert("Por favor, preencha todos os campos obrigatórios antes de salvar.");
+      showToast("Por favor, preencha todos os campos obrigatórios antes de salvar.", "warning");
       return;
     }
 
     setIsSaving(true);
     try {
       await onUpdateRules({ ...rules, companyProfile: profile });
-      alert("Perfil atualizado com sucesso!");
+      showToast("Perfil atualizado com sucesso!", "success");
     } catch (error) {
       console.error("Error updating profile:", error);
-      alert("Erro ao atualizar perfil. Por favor, tente novamente.");
+      showToast("Erro ao atualizar perfil. Por favor, tente novamente.", "error");
     } finally {
       setIsSaving(false);
     }
@@ -7444,14 +7535,16 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
 function AIConfigTab({ rules, onUpdateRules }: { rules: LoyaltyRule; onUpdateRules: (rules: LoyaltyRule) => Promise<void> }) {
   const [prompt, setPrompt] = useState(rules.aiPrompt || 'Você é um consultor estratégico de negócios especializado em varejo e fidelização de clientes. Analise os dados fornecidos e forneça um diagnóstico detalhado, identificando riscos, oportunidades e recomendações práticas para aumentar o faturamento e a retenção de clientes.');
   const [isSaving, setIsSaving] = useState(false);
+  const { showToast } = useToast();
 
   const handleSave = async () => {
     setIsSaving(true);
     try {
       await onUpdateRules({ ...rules, aiPrompt: prompt });
-      alert("Configurações de IA salvas com sucesso!");
+      showToast("Configurações de IA salvas com sucesso!", "success");
     } catch (error) {
       console.error(error);
+      showToast("Erro ao salvar configurações.", "error");
     } finally {
       setIsSaving(false);
     }
@@ -7487,9 +7580,10 @@ function AIConfigTab({ rules, onUpdateRules }: { rules: LoyaltyRule; onUpdateRul
   );
 }
 
-function StrategicAnalysisTab({ purchases, customers, rules, goals }: { purchases: Purchase[]; customers: Customer[]; rules: LoyaltyRule; goals: Goal[] }) {
+function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }: { purchases: Purchase[]; customers: Customer[]; rules: LoyaltyRule; goals: Goal[]; companyId: string | null }) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<string | null>(null);
+  const { showToast } = useToast();
 
   const metrics = useMemo(() => {
     const now = new Date();
@@ -7555,9 +7649,29 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals }: { purchase
   }, [purchases, customers, goals, rules]);
 
   const handleGenerateAnalysis = async () => {
-    if (!rules.openaiApiKey && !rules.geminiApiKey) {
-      alert("Por favor, configure sua API Key do Gemini na aba 'Seu Perfil'.");
+    if (!rules.geminiApiKey) {
+      showToast("Por favor, configure sua API Key do Gemini na aba 'Seu Perfil'.", "warning");
       return;
+    }
+
+    // Simple Cache Implementation
+    const cacheKey = `analysis_cache_${companyId}`;
+    const cachedData = localStorage.getItem(cacheKey);
+    const now = Date.now();
+    const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+    if (cachedData) {
+      const { timestamp, result, dataHash } = JSON.parse(cachedData);
+      const currentDataHash = JSON.stringify({
+        metrics,
+        companyName: rules.companyProfile?.companyName,
+        campaignName: rules.campaignName
+      });
+
+      if (now - timestamp < CACHE_TTL && dataHash === currentDataHash) {
+        setAnalysis(result);
+        return;
+      }
     }
 
     setIsAnalyzing(true);
@@ -7572,40 +7686,28 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals }: { purchase
       const prompt = rules.aiPrompt || 'Analise os dados estratégicos do negócio.';
       const context = `Aqui estão os dados do meu negócio para análise: ${JSON.stringify(dataToAnalyze)}`;
 
-      if (rules.geminiApiKey) {
-        const ai = new GoogleGenAI({ apiKey: rules.geminiApiKey });
-        const response = await ai.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: `${prompt}\n\n${context}`
-        });
-        setAnalysis(response.text || '');
-      } else {
-        // Fallback to OpenAI if only that is available
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${rules.openaiApiKey}`
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o',
-            messages: [
-              { role: 'system', content: prompt },
-              { role: 'user', content: context }
-            ]
-          })
-        });
+      const ai = new GoogleGenAI({ apiKey: rules.geminiApiKey });
+      const response = await ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: `${prompt}\n\n${context}`
+      });
+      
+      const resultText = response.text || '';
+      setAnalysis(resultText);
 
-        const result = await response.json();
-        if (result.choices && result.choices[0]) {
-          setAnalysis(result.choices[0].message.content);
-        } else {
-          throw new Error(result.error?.message || 'Erro ao gerar análise');
-        }
-      }
+      // Save to cache
+      localStorage.setItem(cacheKey, JSON.stringify({
+        timestamp: now,
+        result: resultText,
+        dataHash: JSON.stringify({
+          metrics,
+          companyName: rules.companyProfile?.companyName,
+          campaignName: rules.campaignName
+        })
+      }));
     } catch (error: any) {
       console.error(error);
-      alert("Erro ao gerar análise: " + error.message);
+      showToast("Erro ao gerar análise: " + error.message, "error");
     } finally {
       setIsAnalyzing(false);
     }
@@ -7879,6 +7981,23 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals }: { purchase
         )}
       </Card>
     </motion.div>
+    );
+  };
+
+  return (
+    <ConfirmContext.Provider value={{ askConfirmation }}>
+      {renderContent()}
+      <ConfirmModal 
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmModal.onConfirm}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        confirmText={confirmModal.confirmText}
+        cancelText={confirmModal.cancelText}
+        isDanger={confirmModal.isDanger}
+      />
+    </ConfirmContext.Provider>
   );
 }
 

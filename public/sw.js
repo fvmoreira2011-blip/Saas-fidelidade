@@ -11,8 +11,8 @@ self.addEventListener('push', (event) => {
   
   const options = {
     body: data.body || data.message,
-    icon: data.icon || 'https://lh3.googleusercontent.com/d/1zZIjvIWtsLVet5ltkAK4dbxYuIX1GnBa',
-    badge: 'https://lh3.googleusercontent.com/d/1zZIjvIWtsLVet5ltkAK4dbxYuIX1GnBa',
+    icon: data.icon || 'https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui',
+    badge: 'https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui',
     data: {
       url: data.url || '/'
     }

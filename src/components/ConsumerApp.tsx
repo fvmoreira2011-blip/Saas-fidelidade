@@ -34,6 +34,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { Toast, useToast } from './Toast';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -93,6 +94,7 @@ export default function ConsumerApp() {
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
+  const { toast, showToast, hideToast } = useToast();
 
   useEffect(() => {
     const handler = () => setQuotaExceeded(true);
@@ -138,7 +140,7 @@ export default function ConsumerApp() {
         next.delete(id);
         return next;
       });
-      alert("Não foi possível excluir a notificação. Tente novamente.");
+      showToast("Não foi possível excluir a notificação. Tente novamente.", "error");
     }
   };
 
@@ -170,7 +172,7 @@ export default function ConsumerApp() {
 
   const handleInstallClick = async () => {
     if (isIOS) {
-      alert('Para instalar no iPhone: Toque no ícone de compartilhar (quadrado com seta) e selecione "Adicionar à Tela de Início".');
+      showToast('Para instalar: Toque em compartilhar e selecione "Adicionar à Tela de Início".', 'info');
       return;
     }
     if (!deferredPrompt) return;
@@ -199,7 +201,7 @@ export default function ConsumerApp() {
               if (change.type === 'added') {
                 const data = change.doc.data();
                 const store = stores[data.companyId];
-                const companyLogo = store?.companyProfile?.logoURL || store?.companyProfile?.photoURL || 'https://lh3.googleusercontent.com/d/1zZIjvIWtsLVet5ltkAK4dbxYuIX1GnBa';
+                const companyLogo = store?.companyProfile?.logoURL || store?.companyProfile?.photoURL || 'https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui';
                 
                 new Notification(data.title, { 
                   body: data.message,
@@ -226,7 +228,7 @@ export default function ConsumerApp() {
   const handleLogin = async (phoneToUse?: string) => {
     const finalPhone = phoneToUse || phone;
     if (!finalPhone) {
-      alert('Por favor, insira seu número de celular.');
+      showToast('Por favor, insira seu número de celular.', 'warning');
       return;
     }
 
@@ -310,15 +312,16 @@ export default function ConsumerApp() {
         setStores(storeData);
         setIsAuthenticated(true);
         localStorage.setItem('consumer_phone', finalPhone);
+        showToast('Bem-vindo de volta!', 'success');
       } else {
-        alert('Nenhum cadastro encontrado com este número.');
+        showToast('Nenhum cadastro encontrado com este número.', 'error');
       }
     } catch (error: any) {
       console.error('Error logging in:', error);
       if (error.message?.includes("Quota exceeded") || error.message?.includes("resource-exhausted")) {
         window.dispatchEvent(new CustomEvent('firestore-quota-exceeded'));
       } else {
-        alert(`Erro ao acessar o sistema: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+        showToast(`Erro ao acessar o sistema: ${error instanceof Error ? error.message : 'Erro desconhecido'}`, 'error');
       }
     } finally {
       setLoading(false);
@@ -365,7 +368,7 @@ export default function ConsumerApp() {
               <div className="bg-gray-900 text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between gap-4 border border-white/10">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-white rounded-xl p-1 shrink-0">
-                    <img src="https://lh3.googleusercontent.com/d/1zZIjvIWtsLVet5ltkAK4dbxYuIX1GnBa" alt="Icon" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                    <img src="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" alt="Icon" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                   </div>
                   <div>
                     <p className="text-xs font-black uppercase tracking-widest">BuyPass</p>
@@ -396,7 +399,7 @@ export default function ConsumerApp() {
           <div className="text-center space-y-4">
             <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center mx-auto shadow-lg shadow-green-500/10 overflow-hidden border border-gray-100">
               <img 
-                src="https://lh3.googleusercontent.com/d/1zZIjvIWtsLVet5ltkAK4dbxYuIX1GnBa" 
+                src="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" 
                 alt="Logo" 
                 className="w-full h-full object-contain p-2"
                 referrerPolicy="no-referrer"
@@ -547,7 +550,7 @@ export default function ConsumerApp() {
                           if (availableTiers.length > 0) {
                             setSelectedStore(record.companyId);
                           } else {
-                            alert("Você ainda não tem pontos suficientes para o resgate. Continue participando!");
+                            showToast("Você ainda não tem pontos suficientes para o resgate.", "info");
                           }
                         }}
                         className={cn(
@@ -572,7 +575,6 @@ export default function ConsumerApp() {
               {notifications.length > 0 && (
                 <button 
                   onClick={async () => {
-                    if (!window.confirm("Deseja realmente excluir todas as notificações?")) return;
                     try {
                       const batch = writeBatch(db);
                       notifications.forEach(n => {
@@ -580,8 +582,10 @@ export default function ConsumerApp() {
                       });
                       await batch.commit();
                       setDeletedIds(new Set(notifications.map(n => n.id)));
+                      showToast("Notificações limpas!", "success");
                     } catch (err) {
                       console.error("Error deleting all notifications:", err);
+                      showToast("Erro ao limpar notificações.", "error");
                     }
                   }}
                   className="text-[10px] font-black text-red-500 uppercase tracking-widest hover:underline"
@@ -833,17 +837,17 @@ export default function ConsumerApp() {
                             points: newPoints
                           });
 
-                          alert("PREMIO RESGATADO COM SUCESSO! Seus pontos foram atualizados.");
+                          showToast("PREMIO RESGATADO COM SUCESSO!", "success");
                           setRedeemingTier(null);
                           setRedemptionCodeInput('');
                         } catch (error) {
                           console.error("Error redeeming prize:", error);
-                          alert("Erro ao resgatar prêmio. Tente novamente.");
+                          showToast("Erro ao resgatar prêmio. Tente novamente.", "error");
                         } finally {
                           setIsRedeeming(false);
                         }
                       } else {
-                        alert("Código inválido. Tente novamente.");
+                        showToast("Código inválido. Tente novamente.", "error");
                       }
                     }}
                     disabled={redemptionCodeInput.length !== 6 || isRedeeming}
@@ -855,6 +859,16 @@ export default function ConsumerApp() {
               </div>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {toast && (
+          <Toast 
+            message={toast.message} 
+            type={toast.type} 
+            onClose={hideToast} 
+          />
         )}
       </AnimatePresence>
     </div>
