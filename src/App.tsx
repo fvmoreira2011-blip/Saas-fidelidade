@@ -128,6 +128,13 @@ function normalizeCNPJ(cnpj: string) {
   return cnpj.replace(/\D/g, '');
 }
 
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 // Types
 interface ConfirmContextType {
   askConfirmation: (title: string, message: string, onConfirm: () => void, isDanger?: boolean, confirmText?: string, cancelText?: string) => void;
@@ -1306,7 +1313,7 @@ function AppContent() {
       {/* Sidebar for Desktop */}
       <aside className={cn("hidden lg:flex flex-col w-72 sticky top-0 h-screen p-6 z-20 bg-black border-r border-white/10")}>
         <div className="flex items-center gap-4 mb-10 w-full px-2">
-          <div className={cn("w-14 h-14 overflow-hidden shadow-lg rounded-xl border-2 border-white/10 shrink-0")}>
+          <div className={cn("w-14 h-14 overflow-hidden shadow-lg rounded-full border-2 border-white/10 shrink-0")}>
             <img 
               src={currentLogo} 
               alt="Logo" 
@@ -1439,7 +1446,7 @@ function AppContent() {
             <img 
               src={currentLogo} 
               alt="Logo" 
-              className={cn("w-10 h-10 object-contain rounded-lg")}
+              className={cn("w-10 h-10 object-contain rounded-full")}
               onError={(e) => {
                 (e.target as HTMLImageElement).src = FALLBACK_LOGO;
               }}
@@ -3751,7 +3758,7 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
                 <div className="flex justify-between items-center">
                   <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Valor da Compra (R$)</label>
                   {(rules.minPurchaseValue || 0) > 0 && (
-                    <span className="text-[8px] text-primary font-bold uppercase tracking-tighter">Mín: R$ {rules.minPurchaseValue}</span>
+                    <span className="text-[8px] text-primary font-bold uppercase tracking-tighter">Mín: R$ {formatCurrency(rules.minPurchaseValue || 0)}</span>
                   )}
                 </div>
                 <div className="relative">
@@ -3767,7 +3774,7 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
                 </div>
                 {(rules.extraPointsThreshold || 0) > 0 && (rules.extraPointsAmount || 0) > 0 && (
                   <p className="text-[8px] text-yellow-500 font-bold uppercase mt-1 tracking-widest">
-                    🔥 + {rules.extraPointsAmount} pontos extra acima de R$ {rules.extraPointsThreshold}
+                    🔥 + {rules.extraPointsAmount} pontos extra acima de R$ {formatCurrency(rules.extraPointsThreshold || 0)}
                   </p>
                 )}
               </div>
@@ -4042,7 +4049,7 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
       c.name,
       c.phone,
       c.points,
-      c.totalSpent.toFixed(2),
+      formatCurrency(c.totalSpent),
       c.purchaseCount,
       format(parseISO(c.lastPurchaseDate), "dd/MM/yyyy HH:mm")
     ]);
@@ -4253,7 +4260,7 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
                 {/* LTV Card */}
                 <div className="hidden md:flex flex-col items-end px-4 border-r border-gray-100">
                   <p className="text-[8px] font-black text-green-500 uppercase tracking-widest mb-0.5">LTV (Total)</p>
-                  <p className="text-sm font-black text-gray-900">R$ {customer.totalSpent.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                  <p className="text-sm font-black text-gray-900">R$ {formatCurrency(customer.totalSpent)}</p>
                   <p className="text-[8px] text-gray-400 uppercase tracking-tighter">{customer.purchaseCount} compras</p>
                 </div>
 
@@ -4450,8 +4457,8 @@ function GoalsTab({ goals, companyId, purchases }: { goals: Goal[]; companyId: s
                   <tr key={g.id} className="text-sm hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3 text-gray-900 font-bold uppercase">{format(parseISO(g.month + '-01'), 'MMMM yyyy', { locale: ptBR })}</td>
                     <td className="px-4 py-3 text-center text-gray-500 font-bold">{g.workingDays || 22}</td>
-                    <td className="px-4 py-3 text-primary font-bold">R$ {g.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                    <td className="px-4 py-3 text-green-600 font-bold">R$ {realSales.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                    <td className="px-4 py-3 text-primary font-bold">R$ {formatCurrency(g.value)}</td>
+                    <td className="px-4 py-3 text-green-600 font-bold">R$ {formatCurrency(realSales)}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden min-w-[60px]">
@@ -4912,14 +4919,14 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
         />
         <StatCard 
           label="Valor Total" 
-          value={`R$ ${stats.totalValue.toFixed(2)}`} 
+          value={`R$ ${formatCurrency(stats.totalValue)}`} 
           icon={<DollarSign size={16} />} 
           color="bg-green-50 text-green-600" 
           onClick={() => setDetailView(detailView === 'vendas' ? null : 'vendas')}
         />
         <StatCard 
           label="Ticket Médio" 
-          value={`R$ ${stats.avgTicket.toFixed(2)}`} 
+          value={`R$ ${formatCurrency(stats.avgTicket)}`} 
           icon={<TrendingUp size={16} />} 
           color="bg-purple-50 text-purple-600" 
           onClick={() => setDetailView(detailView === 'ticket' ? null : 'ticket')}
@@ -4970,14 +4977,14 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
                         <tr key={p.id} className="text-sm hover:bg-gray-50 transition-colors">
                           <td className="px-4 py-3 text-gray-500">{format(parseISO(p.date), "dd/MM/yy HH:mm")}</td>
                           <td className="px-4 py-3 font-bold text-gray-900">{p.customerName}</td>
-                          <td className="px-4 py-3 text-primary font-bold">R$ {p.amount.toFixed(2)}</td>
+                          <td className="px-4 py-3 text-primary font-bold">R$ {formatCurrency(p.amount)}</td>
                           <td className="px-4 py-3 text-green-600">+{p.pointsEarned}</td>
                           <td className="px-4 py-3 text-right">
                             <button 
                               onClick={() => {
                                 askConfirmation(
                                   "Confirmar Exclusão",
-                                  `Deseja realmente excluir esta venda de R$ ${p.amount.toFixed(2)}?`,
+                                  `Deseja realmente excluir esta venda de R$ ${formatCurrency(p.amount)}?`,
                                   async () => {
                                     try {
                                       await deleteDoc(doc(db, 'purchases', p.id));
@@ -5041,15 +5048,15 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
                         <p className="text-[10px] text-gray-500 uppercase font-bold mb-1">Ticket Médio Hoje</p>
-                        <p className="text-xl font-bold text-gray-900">R$ {stats.dailyAvg.toFixed(2)}</p>
+                        <p className="text-xl font-bold text-gray-900">R$ {formatCurrency(stats.dailyAvg)}</p>
                       </div>
                       <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
                         <p className="text-[10px] text-gray-500 uppercase font-bold mb-1">Ticket Médio Semanal</p>
-                        <p className="text-xl font-bold text-gray-900">R$ {stats.weeklyAvg.toFixed(2)}</p>
+                        <p className="text-xl font-bold text-gray-900">R$ {formatCurrency(stats.weeklyAvg)}</p>
                       </div>
                       <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
                         <p className="text-[10px] text-gray-500 uppercase font-bold mb-1">Ticket Médio Quinzenal</p>
-                        <p className="text-xl font-bold text-gray-900">R$ {stats.biweeklyAvg.toFixed(2)}</p>
+                        <p className="text-xl font-bold text-gray-900">R$ {formatCurrency(stats.biweeklyAvg)}</p>
                       </div>
                     </div>
                     <p className="text-xs text-gray-400 italic">
@@ -5069,15 +5076,15 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
           <div className="space-y-4">
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-400">Diário</span>
-              <span className="text-sm font-bold text-gray-900">R$ {stats.dailyAvg.toFixed(2)}</span>
+              <span className="text-sm font-bold text-gray-900">R$ {formatCurrency(stats.dailyAvg)}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-400">Semanal</span>
-              <span className="text-sm font-bold text-gray-900">R$ {stats.weeklyAvg.toFixed(2)}</span>
+              <span className="text-sm font-bold text-gray-900">R$ {formatCurrency(stats.weeklyAvg)}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-400">Quinzenal</span>
-              <span className="text-sm font-bold text-gray-900">R$ {stats.biweeklyAvg.toFixed(2)}</span>
+              <span className="text-sm font-bold text-gray-900">R$ {formatCurrency(stats.biweeklyAvg)}</span>
             </div>
           </div>
         </Card>
@@ -5117,7 +5124,7 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
           </p>
           <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center">
             <span className="text-xs text-gray-500">Ticket Médio do Período</span>
-            <span className="text-sm font-bold text-green-600">R$ {stats.avgTicket.toFixed(2)}</span>
+            <span className="text-sm font-bold text-green-600">R$ {formatCurrency(stats.avgTicket)}</span>
           </div>
         </Card>
 
@@ -5237,7 +5244,7 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
                 <p className="text-[10px] text-gray-500">{format(parseISO(p.date), "dd/MM/yy HH:mm")}</p>
               </div>
               <div className="text-right">
-                <p className="text-sm font-bold text-primary">R$ {p.amount.toFixed(2)}</p>
+                <p className="text-sm font-bold text-primary">R$ {formatCurrency(p.amount)}</p>
                 <p className="text-[10px] text-green-600">+{p.pointsEarned} ponto</p>
               </div>
             </div>
@@ -6339,7 +6346,7 @@ function LTVTab({ purchases, customers, rules, onUpdateRules, isAdmin }: { purch
           <div className="flex items-baseline gap-2">
             <span className="text-gray-400 text-2xl font-black">R$</span>
             <h1 className="text-5xl sm:text-7xl font-black text-gray-900 tracking-tighter">
-              {ltvStats.averageProjectedLtv.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatCurrency(ltvStats.averageProjectedLtv)}
             </h1>
           </div>
           <p className="text-gray-400 text-[10px] font-bold mt-4 uppercase tracking-widest">
@@ -6357,7 +6364,7 @@ function LTVTab({ purchases, customers, rules, onUpdateRules, isAdmin }: { purch
           <div className="grid grid-cols-2 gap-4">
             <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
               <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">LTV Projetado</p>
-              <p className="text-xl font-bold text-gray-900">R$ {ltvStats.campaign.projectedLtv.toFixed(2)}</p>
+              <p className="text-xl font-bold text-gray-900">R$ {formatCurrency(ltvStats.campaign.projectedLtv)}</p>
             </div>
             <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
               <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Frequência</p>
@@ -6365,7 +6372,7 @@ function LTVTab({ purchases, customers, rules, onUpdateRules, isAdmin }: { purch
             </div>
             <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
               <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Ticket Médio</p>
-              <p className="text-xl font-bold text-gray-900">R$ {ltvStats.campaign.avgValue.toFixed(2)}</p>
+              <p className="text-xl font-bold text-gray-900">R$ {formatCurrency(ltvStats.campaign.avgValue)}</p>
             </div>
             <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
               <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Recência Média</p>
@@ -6382,7 +6389,7 @@ function LTVTab({ purchases, customers, rules, onUpdateRules, isAdmin }: { purch
           <div className="grid grid-cols-2 gap-4">
             <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
               <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">LTV Projetado</p>
-              <p className="text-xl font-bold text-gray-900">R$ {ltvStats.nonCampaign.projectedLtv.toFixed(2)}</p>
+              <p className="text-xl font-bold text-gray-900">R$ {formatCurrency(ltvStats.nonCampaign.projectedLtv)}</p>
             </div>
             <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
               <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Frequência</p>
@@ -6390,7 +6397,7 @@ function LTVTab({ purchases, customers, rules, onUpdateRules, isAdmin }: { purch
             </div>
             <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
               <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Ticket Médio</p>
-              <p className="text-xl font-bold text-gray-900">R$ {ltvStats.nonCampaign.avgValue.toFixed(2)}</p>
+              <p className="text-xl font-bold text-gray-900">R$ {formatCurrency(ltvStats.nonCampaign.avgValue)}</p>
             </div>
             <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
               <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Recência Média</p>
@@ -7785,8 +7792,8 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard 
           title="Projeção Faturamento" 
-          value={`R$ ${metrics.projectedRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-          subtitle={`Meta: R$ ${metrics.currentGoalValue.toLocaleString('pt-BR')}`}
+          value={`R$ ${formatCurrency(metrics.projectedRevenue)}`}
+          subtitle={`Meta: R$ ${formatCurrency(metrics.currentGoalValue)}`}
           icon={DollarSign}
           className="bg-white border-gray-100 shadow-sm"
         />
@@ -7799,7 +7806,7 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
         />
         <MetricCard 
           title="Ticket Médio" 
-          value={`R$ ${metrics.avgTicket.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+          value={`R$ ${formatCurrency(metrics.avgTicket)}`}
           subtitle="Valor médio por compra"
           icon={ArrowUpCircle}
           className="bg-white border-gray-100 shadow-sm"
@@ -7878,7 +7885,7 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
             </div>
             <div className="flex justify-between items-center p-4 bg-primary/10 rounded-xl border border-primary/20">
               <span className="text-sm font-bold text-gray-900">Valor da Base (Ativos)</span>
-              <span className="text-xl font-black text-gray-900">R$ {metrics.baseValue.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</span>
+              <span className="text-xl font-black text-gray-900">R$ {formatCurrency(metrics.baseValue)}</span>
             </div>
           </div>
         </Card>
@@ -7901,8 +7908,8 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
                 {metrics.ltvProjections.map(proj => (
                   <tr key={proj.months}>
                     <td className="py-3 text-gray-900 font-bold">{proj.months} meses</td>
-                    <td className="py-3 text-gray-900 font-bold">R$ {proj.value.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</td>
-                    <td className="py-3 text-gray-500">R$ {proj.conservative.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</td>
+                    <td className="py-3 text-gray-900 font-bold">R$ {formatCurrency(proj.value)}</td>
+                    <td className="py-3 text-gray-500">R$ {formatCurrency(proj.conservative)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -7919,7 +7926,7 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="p-6 bg-gray-50 rounded-2xl border border-gray-100">
             <p className="text-[10px] font-bold text-gray-500 uppercase mb-2">Custo Esperado</p>
-            <p className="text-2xl font-black text-gray-900">R$ {metrics.expectedCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+            <p className="text-2xl font-black text-gray-900">R$ {formatCurrency(metrics.expectedCost)}</p>
             <p className="text-[10px] text-gray-500 mt-2">Baseado no resgate provável</p>
           </div>
           <div className="p-6 bg-gray-50 rounded-2xl border border-gray-100">

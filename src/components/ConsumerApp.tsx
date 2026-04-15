@@ -77,6 +77,13 @@ interface Notification {
   read: boolean;
 }
 
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 export default function ConsumerApp() {
   const [phone, setPhone] = useState<string | undefined>('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -367,7 +374,7 @@ export default function ConsumerApp() {
             >
               <div className="bg-gray-900 text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between gap-4 border border-white/10">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-white rounded-xl p-1 shrink-0">
+                  <div className="w-10 h-10 bg-white rounded-full p-1 shrink-0 overflow-hidden">
                     <img src="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" alt="Icon" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                   </div>
                   <div>
@@ -397,7 +404,7 @@ export default function ConsumerApp() {
           className="w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl p-8 space-y-8 border border-gray-100"
         >
           <div className="text-center space-y-4">
-            <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center mx-auto shadow-lg shadow-green-500/10 overflow-hidden border border-gray-100">
+            <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto shadow-lg shadow-green-500/10 overflow-hidden border border-gray-100">
               <img 
                 src="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" 
                 alt="Logo" 
@@ -443,7 +450,7 @@ export default function ConsumerApp() {
       {/* Header */}
       <header className="bg-white px-6 py-8 sticky top-0 z-10 border-b border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center overflow-hidden border border-gray-100 shadow-sm">
+          <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center overflow-hidden border border-gray-100 shadow-sm">
             <img 
               src="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" 
               alt="Logo" 
