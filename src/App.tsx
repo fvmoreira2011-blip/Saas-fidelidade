@@ -1488,7 +1488,6 @@ function AppContent() {
             <>
               <SidebarButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<FileText size={20} />} label="Dashboard" />
               <SidebarButton active={activeTab === 'goals'} onClick={() => handleTabChange('goals')} icon={<Target size={20} />} label="Metas Gerais" />
-              <SidebarButton active={activeTab === 'strategic_analysis'} onClick={() => handleTabChange('strategic_analysis')} icon={<BarChart3 size={20} />} label="Análise Estratégica" />
               {(!isUserOnly || allowedTabs.includes('customers')) && (
                 <SidebarButton active={activeTab === 'customers'} onClick={() => handleTabChange('customers')} icon={<Users size={20} />} label="Clientes" />
               )}
@@ -3852,6 +3851,8 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
   const [newBirthDate, setNewBirthDate] = useState('');
   const [showRedeemConfirm, setShowRedeemConfirm] = useState(false);
 
+  const [desktopStep, setDesktopStep] = useState(0); // 0: phone, 1: confirm/register, 2: amount, 3: success
+
   const calculatedAge = useMemo(() => {
     if (!newBirthDate) return 0;
     try {
@@ -4044,9 +4045,9 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
   };
 
   return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="flex flex-col items-center justify-center min-h-[600px] py-8">
-      {/* iPhone Frame Container */}
-      <div className="relative w-[320px] h-[650px] bg-gray-950 rounded-[3rem] border-[8px] border-gray-800 shadow-2xl overflow-hidden flex flex-col">
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="flex flex-col items-center justify-center min-h-[700px] py-8 w-full">
+      {/* Mobile View - iPhone Frame (Hidden on Desktop) */}
+      <div className="lg:hidden relative w-[320px] h-[650px] bg-gray-950 rounded-[3rem] border-[8px] border-gray-800 shadow-2xl overflow-hidden flex flex-col">
         {/* iPhone Notch */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6 bg-gray-800 rounded-b-2xl z-20" />
         
@@ -4161,11 +4162,6 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
                     className="w-full pl-9 pr-4 py-2.5 bg-gray-900 border border-gray-800 rounded-xl text-white text-sm outline-none focus:border-primary transition-all font-bold"
                   />
                 </div>
-                {(rules.extraPointsThreshold || 0) > 0 && (rules.extraPointsAmount || 0) > 0 && (
-                  <p className="text-[8px] text-yellow-500 font-bold uppercase mt-1 tracking-widest">
-                    🔥 + {rules.extraPointsAmount} pontos extra acima de R$ {formatCurrency(rules.extraPointsThreshold || 0)}
-                  </p>
-                )}
               </div>
 
               {message && (
@@ -4215,26 +4211,8 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
                 />
               </div>
 
-              {message && (
-                <motion.div 
-                  initial={{ opacity: 0, y: 5 }} 
-                  animate={{ opacity: 1, y: 0 }} 
-                  className={cn(
-                    "p-3 rounded-xl text-[10px] font-bold text-center uppercase tracking-widest",
-                    message.type === 'success' ? "bg-green-500/10 text-green-500 border border-green-500/20" : "bg-red-500/10 text-red-500 border border-red-500/20"
-                  )}
-                >
-                  {message.text}
-                </motion.div>
-              )}
-
               <div className="space-y-1.5">
-                <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Data de Nascimento</label>
-                  {calculatedAge > 0 && (
-                    <span className="text-[10px] text-primary font-bold">{calculatedAge} anos</span>
-                  )}
-                </div>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Data de Nascimento</label>
                 <input 
                   type="date" 
                   value={newBirthDate}
@@ -4266,6 +4244,230 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
 
         {/* Home Indicator */}
         <div className="h-1.5 w-1/3 bg-gray-800 rounded-full mx-auto mb-2" />
+      </div>
+
+      {/* Desktop Sequential Flow Layout (Hidden on Mobile) */}
+      <div className="hidden lg:flex flex-col items-center w-full max-w-5xl bg-white rounded-[3rem] p-16 shadow-2xl border border-gray-100 overflow-hidden relative">
+        <AnimatePresence mode="wait">
+          {!phone || (phone.replace(/\D/g, '').length < 8) ? (
+            <motion.div 
+              key="step-phone"
+              initial={{ opacity: 0, x: 100 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -100 }}
+              className="w-full space-y-12 text-center"
+            >
+              <div className="space-y-4">
+                <h2 className="text-5xl font-black text-gray-900 tracking-tighter uppercase leading-none">Dite o Celular</h2>
+                <p className="text-xl text-gray-400 font-medium tracking-tight">Comece o atendimento identificando o cliente pelo número do WhatsApp.</p>
+              </div>
+              <div className="max-w-2xl mx-auto p-4 bg-gray-50 rounded-[2.5rem] border-4 border-gray-100 focus-within:border-primary transition-all shadow-inner scale-110">
+                <PhoneInput
+                  placeholder="Seu celular aqui..."
+                  value={phone}
+                  onChange={setPhone}
+                  defaultCountry="BR"
+                  className="PhoneInput desktop-phone-input"
+                />
+              </div>
+            </motion.div>
+          ) : showRegister ? (
+            <motion.div 
+              key="step-register"
+              initial={{ opacity: 0, x: 100 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -100 }}
+              className="w-full max-w-2xl space-y-10"
+            >
+              <div className="text-center space-y-4">
+                <div className="inline-flex items-center gap-3 bg-amber-50 text-amber-600 px-6 py-3 rounded-2xl border border-amber-100 mb-4">
+                  <AlertCircle size={24} />
+                  <span className="text-lg font-black uppercase tracking-widest">Cliente não encontrado!</span>
+                </div>
+                <h2 className="text-4xl font-black text-gray-900 tracking-tighter uppercase">Realize o Cadastro</h2>
+                <p className="text-lg text-gray-500 font-medium">É rápido! Apenas nome e data de nascimento para começar.</p>
+              </div>
+
+              <form onSubmit={handleRegister} className="space-y-6">
+                <div className="grid grid-cols-1 gap-6">
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Nome Completo</label>
+                    <input 
+                      type="text" 
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      placeholder="Nome do cliente"
+                      className="w-full px-8 py-5 bg-gray-50 border-2 border-gray-100 rounded-3xl text-xl outline-none focus:border-primary transition-all font-bold placeholder:text-gray-300"
+                      required
+                      autoFocus
+                    />
+                  </div>
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Data de Nascimento</label>
+                    <input 
+                      type="date" 
+                      value={newBirthDate}
+                      onChange={(e) => setNewBirthDate(e.target.value)}
+                      className="w-full px-8 py-5 bg-gray-50 border-2 border-gray-100 rounded-3xl text-xl outline-none focus:border-primary transition-all font-bold"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-4 pt-4">
+                   <button 
+                    type="button"
+                    onClick={() => setPhone(undefined)}
+                    className="flex-1 px-8 py-6 rounded-3xl font-black uppercase tracking-widest text-gray-400 hover:text-gray-600 transition-all text-sm"
+                  >
+                    Voltar
+                  </button>
+                  <Button 
+                    type="submit" 
+                    disabled={isSubmitting} 
+                    className="flex-[2] py-6 rounded-[2rem] font-black uppercase tracking-[0.2em] text-lg shadow-2xl shadow-primary/30"
+                  >
+                    {isSubmitting ? 'Cadastrando...' : 'Finalizar Cadastro'}
+                  </Button>
+                </div>
+              </form>
+            </motion.div>
+          ) : foundCustomer ? (
+            <motion.div 
+              key="step-score"
+              initial={{ opacity: 0, x: 100 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -100 }}
+              className="w-full flex gap-12 items-center"
+            >
+              <div className="flex-1 space-y-10">
+                <div className="space-y-4">
+                  <div className="inline-flex items-center gap-3 bg-green-50 text-green-600 px-6 py-3 rounded-2xl border border-green-100 mb-2">
+                    <CheckCircle2 size={24} />
+                    <span className="text-lg font-black uppercase tracking-widest">Cliente Identificado!</span>
+                  </div>
+                  <h2 className="text-6xl font-black text-gray-900 tracking-tighter uppercase leading-none">{foundCustomer.name}</h2>
+                  <div className="flex items-center gap-4">
+                    <p className="text-2xl text-gray-500 font-bold tracking-tight">Saldo Atual: <span className="text-primary font-black text-3xl">{rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(foundCustomer.points)}` : `${foundCustomer.points} Pontos`}</span></p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleScore} className="space-y-8">
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Valor da Compra (R$)</label>
+                    <div className="relative group">
+                      <div className="absolute left-8 top-1/2 -translate-y-1/2 text-gray-350 text-4xl font-black opacity-30 group-focus-within:opacity-100 transition-all">R$</div>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        placeholder="0,00"
+                        className="w-full pl-24 pr-8 py-8 bg-gray-50 border-4 border-gray-100 rounded-[2.5rem] text-6xl outline-none focus:border-primary transition-all font-black placeholder:text-gray-200 tracking-tighter"
+                        autoFocus
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-4 pt-4">
+                    <Button 
+                      type="submit" 
+                      disabled={isSubmitting || !amount} 
+                      className="w-full py-10 rounded-[3rem] font-black uppercase tracking-[0.3em] text-2xl shadow-3xl shadow-primary/40 relative overflow-hidden group/btn"
+                    >
+                      <span className="relative z-10">{isSubmitting ? 'Processando...' : 'Confirmar Pontos'}</span>
+                      <motion.div className="absolute inset-0 bg-white/20 translate-y-full group-hover/btn:translate-y-0 transition-transform" />
+                    </Button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Right Panel - Stats/Redeem */}
+              <div className="w-96 space-y-6">
+                <div className="bg-gray-50 p-8 rounded-[2.5rem] border border-gray-100 space-y-6">
+                   <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest text-center border-b border-gray-200 pb-4">Status no Programa</h3>
+                   
+                   {/* Progress Visualizer */}
+                   <div className="space-y-4">
+                      {rules.rewardMode === 'points' && (
+                        <div className="grid grid-cols-5 gap-2">
+                          {[...Array(rules.purchasesForPrize)].map((_, i) => (
+                            <div 
+                              key={i} 
+                              className={cn(
+                                "aspect-square rounded-xl border-2 transition-all duration-300 transform",
+                                i < foundCustomer.points 
+                                  ? "bg-primary border-primary shadow-lg shadow-primary/20 scale-105" 
+                                  : "bg-white border-gray-200"
+                              )} 
+                            >
+                              {i < foundCustomer.points && <Check size={16} className="text-white m-auto mt-2" />}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      
+                      {foundCustomer.points >= rules.purchasesForPrize && (
+                        <motion.div 
+                          initial={{ scale: 0.9 }}
+                          animate={{ scale: 1 }}
+                          className="bg-primary text-white p-6 rounded-3xl shadow-2xl shadow-primary/30 space-y-4 text-center"
+                        >
+                          <Trophy size={48} className="mx-auto" />
+                          <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest opacity-80 decoration-white">PRÊMIO DISPONÍVEL</p>
+                            <h4 className="text-xl font-black tracking-tight">{rules.rewardTiers?.sort((a,b) => b.points - a.points).find(t => foundCustomer.points >= t.points)?.prize || 'Brinde Especial'}</h4>
+                          </div>
+                          {!showRedeemConfirm ? (
+                            <button 
+                              onClick={() => setShowRedeemConfirm(true)}
+                              className="w-full bg-white text-primary py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-gray-50 transition-all"
+                            >
+                              Resgatar Agora
+                            </button>
+                          ) : (
+                            <div className="flex gap-2">
+                              <button onClick={() => setShowRedeemConfirm(false)} className="flex-1 bg-black/20 py-3 rounded-2xl font-black text-xs uppercase tracking-widest">Não</button>
+                              <button onClick={handleRedeem} className="flex-1 bg-white text-primary py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl">Confirmar</button>
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
+                   </div>
+                </div>
+
+                <button 
+                  onClick={() => setPhone(undefined)}
+                  className="w-full py-4 text-gray-400 font-black uppercase tracking-[0.2em] text-[10px] hover:text-red-500 transition-colors"
+                >
+                  Cancelar Atendimento
+                </button>
+              </div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
+        {/* Global Feedback Overlay */}
+        <AnimatePresence>
+          {message && (
+            <motion.div 
+              initial={{ opacity: 0, y: 100 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 100 }}
+              className="absolute bottom-12 left-1/2 -translate-x-1/2 w-full max-w-md"
+            >
+              <div className={cn(
+                "px-8 py-6 rounded-3xl shadow-2xl text-center flex items-center justify-center gap-4 border-2",
+                message.type === 'success' ? "bg-green-600 text-white border-green-500 shadow-green-600/20" : "bg-red-600 text-white border-red-500 shadow-red-600/20"
+              )}>
+                {message.type === 'success' ? <CheckCircle2 size={32} /> : <AlertTriangle size={32} />}
+                <p className="text-lg font-black uppercase tracking-tight">{message.text}</p>
+                <button onClick={() => setMessage(null)} className="ml-4 opacity-50 hover:opacity-100"><X size={20}/></button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </motion.div>
   );

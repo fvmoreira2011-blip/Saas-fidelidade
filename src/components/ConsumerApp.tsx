@@ -56,6 +56,8 @@ interface StoreConfig {
   campaignName?: string;
   themeColor?: string;
   rewardMode?: 'points' | 'cashback';
+  maxDaysBetweenPurchases?: number;
+  pointsExpiryDays?: number;
   cashbackConfig?: {
     percentage: number;
     minActivationValue: number;
@@ -468,7 +470,9 @@ export default function ConsumerApp() {
           </div>
           <div>
             <h2 className="text-xl font-black text-gray-900 tracking-tight">Meus Pontos</h2>
-            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Olá, {customerRecords[0]?.name?.split(' ')[0] || 'Cliente'}</p>
+            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">
+              Olá, {customerRecords[0]?.name?.split(' ')[0] || 'Cliente'}, hoje é {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}
+            </p>
           </div>
         </div>
         <button 
@@ -485,8 +489,10 @@ export default function ConsumerApp() {
             {/* Summary Card */}
             <div className="bg-green-600 rounded-[2rem] p-8 text-white shadow-2xl shadow-green-600/30 relative overflow-hidden">
               <div className="relative z-10 space-y-1">
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80">Total de Programas</p>
-                <h3 className="text-4xl font-black">{customerRecords.length}</h3>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 font-mono">Resumo da Carteira</p>
+                <h3 className="text-2xl font-black leading-tight uppercase tracking-tight">
+                  Você está participando de {customerRecords.length} programas
+                </h3>
               </div>
               <Wallet className="absolute -right-4 -bottom-4 text-white/10" size={120} />
             </div>
@@ -524,13 +530,14 @@ export default function ConsumerApp() {
                           )}
                         </div>
                         <div className="flex-1">
-                          <h5 className="font-black text-gray-900 tracking-tight">
+                          <h5 className="font-black text-gray-900 tracking-tight leading-none">
                             {store?.companyProfile?.companyName || 'Loja Parceira'}
-                            {store?.rewardMode === 'cashback' ? ' (C$)' : ' (P)'}
                           </h5>
-                          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">
+                          <p className="text-[9px] text-gray-400 font-bold uppercase mt-1">
                             {store?.campaignName || 'Programa de Fidelidade'}
-                            {store?.rewardMode === 'cashback' ? ' (C$)' : ' (P)'}
+                          </p>
+                          <p className="text-[11px] font-black text-green-600 uppercase tracking-widest mt-2">
+                            {store?.rewardMode === 'cashback' ? 'CASHBACK' : 'PONTOS'}
                           </p>
                         </div>
                         <div className="text-right">
@@ -573,6 +580,41 @@ export default function ConsumerApp() {
                           Próximo: {nextTier.prize}
                         </div>
                       )}
+
+                      {/* Expiration Info */}
+                      <div className="mt-4 space-y-1">
+                        {store?.rewardMode === 'cashback' ? (
+                          <div className="flex flex-col gap-1">
+                            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Validade do Programa</p>
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-amber-600 bg-amber-50 p-2 rounded-xl border border-amber-100">
+                              <Clock size={12} />
+                              {store.cashbackConfig?.expiryDays 
+                                ? `Expira em ${store.cashbackConfig.expiryDays} dias` 
+                                : 'Sem expiração definida'}
+                              {record.lastPurchaseDate && store.cashbackConfig?.expiryDays && (
+                                <span className="ml-auto opacity-70">
+                                  Faltam {Math.max(0, store.cashbackConfig.expiryDays - differenceInDays(new Date(), parseISO(record.lastPurchaseDate)))} dias
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-1">
+                            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Expiração de Pontos</p>
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-amber-600 bg-amber-50 p-2 rounded-xl border border-amber-100">
+                              <Clock size={12} />
+                              {(store.maxDaysBetweenPurchases || store.pointsExpiryDays) 
+                                ? `Expira em ${store.maxDaysBetweenPurchases || store.pointsExpiryDays} dias de inatividade` 
+                                : 'Pontos não expiram'}
+                              {record.lastPurchaseDate && (store.maxDaysBetweenPurchases || store.pointsExpiryDays) && (
+                                <span className="ml-auto opacity-70">
+                                  Faltam {Math.max(0, (store.maxDaysBetweenPurchases || store.pointsExpiryDays || 0) - differenceInDays(new Date(), parseISO(record.lastPurchaseDate)))} dias
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
 
                       <button 
                         onClick={(e) => {
