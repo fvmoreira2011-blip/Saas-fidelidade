@@ -40,6 +40,9 @@ import {
 import firebaseConfig from '../firebase-applet-config.json';
 import { db, auth } from './firebase';
 import { Toast, useToast } from './components/Toast';
+import { utils, read, writeFile } from 'xlsx';
+import PhoneInput from 'react-phone-number-input';
+import 'react-phone-number-input/style.css';
 import { 
   BarChart, 
   Bar, 
@@ -56,8 +59,6 @@ import {
   Legend
 } from 'recharts';
 import { 
-  LayoutDashboard, 
-  UserPlus, 
   PlusCircle, 
   FileText, 
   Settings, 
@@ -77,11 +78,8 @@ import {
   QrCode,
   MessageSquare,
   ChevronRight,
-  TrendingUp,
-  Award,
-  User as UserIcon,
-  Lock,
-  Unlock,
+  BarChart3,
+  Edit,
   Trash2,
   MoreVertical,
   Building2,
@@ -95,22 +93,30 @@ import {
   Building,
   Plus,
   Menu,
-  Target,
-  Edit,
-  Edit2,
   ShieldCheck,
   UserCircle,
+  TrendingUp,
+  Unlock,
+  Lock,
+  Key,
+  Award,
+  Info,
+  Upload,
+  ExternalLink,
+  Brain,
+  HelpCircle,
+  Sparkles,
+  Cake,
   Mail,
   MessageCircle,
   RotateCcw,
-  Key,
-  Brain,
-  BarChart3,
-  Sparkles,
-  Cake
+  Target,
+  Edit2,
+  LayoutDashboard,
+  UserPlus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import PhoneInput from 'react-phone-number-input';
+import 'react-phone-number-input/style.css';
 import { GoogleGenAI } from "@google/genai";
 import { format, isToday, subDays, differenceInDays, differenceInYears, parseISO, isWithinInterval, startOfDay, endOfDay, subWeeks, subMonths, isBefore } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -241,6 +247,17 @@ interface LoyaltyRule {
   geminiApiKey?: string;
   aiPrompt?: string;
   redemptionCode?: string;
+  rewardMode: 'points' | 'cashback';
+  cashbackConfig?: {
+    percentage: number;
+    minActivationValue: number;
+    minRedeemDays: number;
+    expiryDays: number;
+  };
+  currentAvgTicket?: number;
+  currentMonthlyRevenue?: number;
+  onboardingComplete?: boolean;
+  erpKey?: string;
 }
 
 interface AppUser {
@@ -277,6 +294,7 @@ interface AppUser {
   paymentMethod?: string;
   roleInCompany?: string;
   redemptionCode?: string;
+  erpKey?: string;
 }
 
 function RedemptionCodesTab() {
@@ -480,6 +498,16 @@ const DEFAULT_RULES: LoyaltyRule = {
   rewardTiers: [{ points: 10, prize: 'Prêmio Padrão' }],
   allowedUserTabs: ['score', 'reports'],
   themeColor: '#000000',
+  rewardMode: 'points',
+  cashbackConfig: {
+    percentage: 5,
+    minActivationValue: 0,
+    minRedeemDays: 0,
+    expiryDays: 90
+  },
+  currentAvgTicket: 0,
+  currentMonthlyRevenue: 0,
+  onboardingComplete: false,
   companyProfile: {
     companyName: 'SUA EMPRESA',
     tradingName: 'NOME FANTASIA',
@@ -1286,8 +1314,13 @@ function AppContent() {
 
     const isUserOnly = appUser?.role === 'user';
     const allowedTabs = ['dashboard', ...(rules.allowedUserTabs || [])];
+    const isOnboarding = rules.onboardingComplete === false && !isSuperAdmin;
 
     const handleTabChange = (tab: any) => {
+      if (isOnboarding && tab !== 'company_profile' && tab !== 'rewards' && tab !== 'goals') {
+        showToast("Por favor, complete o onboarding de configuração primeiro.", "warning");
+        return;
+      }
       if (isUserOnly && !allowedTabs.includes(tab)) {
         showToast("Peça acesso ao administrador para acessar esta aba.", "warning");
         return;
@@ -1354,13 +1387,15 @@ function AppContent() {
           ) : (
             <>
               <SidebarButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<FileText size={20} />} label="Dashboard" />
-              <SidebarButton active={activeTab === 'notificar'} onClick={() => handleTabChange('notificar')} icon={<Bell size={20} />} label="Notificar" />
-              {(!isUserOnly || allowedTabs.includes('score')) && (
-                <SidebarButton active={activeTab === 'score'} onClick={() => handleTabChange('score')} icon={<PlusCircle size={20} />} label="Pontuar" />
-              )}
+              <SidebarButton active={activeTab === 'goals'} onClick={() => handleTabChange('goals')} icon={<Target size={20} />} label="Metas Gerais" />
+              <SidebarButton active={activeTab === 'strategic_analysis'} onClick={() => handleTabChange('strategic_analysis')} icon={<BarChart3 size={20} />} label="Análise Estratégica" />
               {(!isUserOnly || allowedTabs.includes('customers')) && (
                 <SidebarButton active={activeTab === 'customers'} onClick={() => handleTabChange('customers')} icon={<Users size={20} />} label="Clientes" />
               )}
+              {(!isUserOnly || allowedTabs.includes('score')) && (
+                <SidebarButton active={activeTab === 'score'} onClick={() => handleTabChange('score')} icon={<PlusCircle size={20} />} label="Pontuar" />
+              )}
+              <SidebarButton active={activeTab === 'notificar'} onClick={() => handleTabChange('notificar')} icon={<Bell size={20} />} label="Notificar" />
               {(!isUserOnly || allowedTabs.includes('rewarded_customers')) && (
                 <SidebarButton active={activeTab === 'rewarded_customers'} onClick={() => handleTabChange('rewarded_customers')} icon={<Award size={20} />} label="Premiados" />
               )}
@@ -1372,9 +1407,6 @@ function AppContent() {
               )}
               {(!isUserOnly || allowedTabs.includes('ltv')) && (
                 <SidebarButton active={activeTab === 'ltv'} onClick={() => handleTabChange('ltv')} icon={<TrendingUp size={20} />} label="LTV" />
-              )}
-              {(!isUserOnly || allowedTabs.includes('goals')) && (
-                <SidebarButton active={activeTab === 'goals'} onClick={() => handleTabChange('goals')} icon={<Target size={20} />} label="Metas Gerais" />
               )}
               {(!isUserOnly || allowedTabs.includes('promotion')) && (
                 <SidebarButton active={activeTab === 'promotion'} onClick={() => handleTabChange('promotion')} icon={<MessageSquare size={20} />} label="Envio WhatsApp" />
@@ -1483,16 +1515,16 @@ function AppContent() {
                 ) : (
                   <>
                     <SidebarButton active={activeTab === 'dashboard'} onClick={() => { handleTabChange('dashboard'); setIsMobileMenuOpen(false); }} icon={<FileText size={20} />} label="Dashboard" />
-                    <SidebarButton active={activeTab === 'notificar'} onClick={() => { handleTabChange('notificar'); setIsMobileMenuOpen(false); }} icon={<Bell size={20} />} label="Notificar" />
-                    <SidebarButton active={activeTab === 'score'} onClick={() => { handleTabChange('score'); setIsMobileMenuOpen(false); }} icon={<PlusCircle size={20} />} label="Pontuar" />
+                    <SidebarButton active={activeTab === 'goals'} onClick={() => { handleTabChange('goals'); setIsMobileMenuOpen(false); }} icon={<Target size={20} />} label="Metas Gerais" />
+                    <SidebarButton active={activeTab === 'strategic_analysis'} onClick={() => { handleTabChange('strategic_analysis'); setIsMobileMenuOpen(false); }} icon={<BarChart3 size={20} />} label="Análise Estratégica" />
                     <SidebarButton active={activeTab === 'customers'} onClick={() => { handleTabChange('customers'); setIsMobileMenuOpen(false); }} icon={<Users size={20} />} label="Clientes" />
+                    <SidebarButton active={activeTab === 'score'} onClick={() => { handleTabChange('score'); setIsMobileMenuOpen(false); }} icon={<PlusCircle size={20} />} label="Pontuar" />
+                    <SidebarButton active={activeTab === 'notificar'} onClick={() => { handleTabChange('notificar'); setIsMobileMenuOpen(false); }} icon={<Bell size={20} />} label="Notificar" />
                     <SidebarButton active={activeTab === 'rewarded_customers'} onClick={() => { handleTabChange('rewarded_customers'); setIsMobileMenuOpen(false); }} icon={<Award size={20} />} label="Premiados" />
                     <SidebarButton active={activeTab === 'rewards'} onClick={() => { handleTabChange('rewards'); setIsMobileMenuOpen(false); }} icon={<Trophy size={20} />} label="Premiação" />
                     <SidebarButton active={activeTab === 'seasonal_dates'} onClick={() => { handleTabChange('seasonal_dates'); setIsMobileMenuOpen(false); }} icon={<Calendar size={20} />} label="Datas Sazonais" />
                     <SidebarButton active={activeTab === 'ltv'} onClick={() => { handleTabChange('ltv'); setIsMobileMenuOpen(false); }} icon={<TrendingUp size={20} />} label="LTV" />
-                    <SidebarButton active={activeTab === 'goals'} onClick={() => { handleTabChange('goals'); setIsMobileMenuOpen(false); }} icon={<Target size={20} />} label="Metas Gerais" />
                     <SidebarButton active={activeTab === 'promotion'} onClick={() => { handleTabChange('promotion'); setIsMobileMenuOpen(false); }} icon={<MessageSquare size={20} />} label="Envio WhatsApp" />
-                    <SidebarButton active={activeTab === 'strategic_analysis'} onClick={() => { handleTabChange('strategic_analysis'); setIsMobileMenuOpen(false); }} icon={<BarChart3 size={20} />} label="Análise Estratégica" />
                     {isAdminUser && (
                       <SidebarButton active={activeTab === 'reset'} onClick={() => { handleTabChange('reset'); setIsMobileMenuOpen(false); }} icon={<RotateCcw size={20} />} label="Zerar Sistema" />
                     )}
@@ -1533,6 +1565,17 @@ function AppContent() {
         {/* Main Content */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full pb-24 lg:pb-8">
           <AnimatePresence mode="wait">
+            {rules.onboardingComplete === false && !isSuperAdmin && (
+              <div key="onboarding">
+                <OnboardingOverlay 
+                  rules={rules} 
+                  onUpdateRules={(r) => setDoc(doc(db, 'configs', selectedCompanyId!), r)}
+                  onAddAdmin={async (email) => {
+                    showToast(`Convite enviado para ${email}`, "success");
+                  }}
+                />
+              </div>
+            )}
             {activeTab === 'dashboard' && !isSuperAdmin && <div key="dashboard"><DashboardTab purchases={purchases} customers={customers} rules={rules} goals={goals} appUser={appUser} /></div>}
             {activeTab === 'notificar' && !isSuperAdmin && <div key="notificar"><NotifyTab customers={customers} rules={rules} companyId={selectedCompanyId} /></div>}
             {activeTab === 'customers' && !isSuperAdmin && <div key="customers"><CustomersTab customers={customers} purchases={purchases} isAdmin={isAdminUser} rules={rules} companyId={selectedCompanyId} /></div>}
@@ -1540,7 +1583,7 @@ function AppContent() {
             {activeTab === 'rewards' && !isSuperAdmin && <div key="rewards"><RewardsTab rules={rules} isAdmin={isAdminUser} onUpdateRules={(r) => setDoc(doc(db, 'configs', selectedCompanyId!), r)} /></div>}
             {activeTab === 'seasonal_dates' && !isSuperAdmin && <div key="seasonal_dates"><SeasonalDatesTab rules={rules} isAdmin={isAdminUser} onTabChange={handleTabChange} onUpdateRules={(r) => setDoc(doc(db, 'configs', selectedCompanyId!), r)} /></div>}
             {activeTab === 'ltv' && !isSuperAdmin && <div key="ltv"><LTVTab purchases={purchases} customers={customers} rules={rules} isAdmin={isAdminUser} onUpdateRules={(r) => setDoc(doc(db, 'configs', selectedCompanyId!), r)} /></div>}
-            {activeTab === 'goals' && !isSuperAdmin && <div key="goals"><GoalsTab goals={goals} companyId={selectedCompanyId} purchases={purchases} /></div>}
+            {activeTab === 'goals' && !isSuperAdmin && <div key="goals"><GoalsTab goals={goals} purchases={purchases} onUpdateRules={(r) => setDoc(doc(db, 'configs', selectedCompanyId!), r)} rules={rules} isAdmin={isAdminUser} companyId={selectedCompanyId} /></div>}
             {activeTab === 'score' && !isSuperAdmin && <div key="score"><ScoreTab rules={rules} customers={customers} appUser={appUser} companyId={selectedCompanyId} /></div>}
             {activeTab === 'promotion' && !isSuperAdmin && <div key="promotion"><PromotionTab customers={customers} purchases={purchases} /></div>}
             {activeTab === 'strategic_analysis' && !isSuperAdmin && <div key="strategic_analysis"><StrategicAnalysisTab purchases={purchases} customers={customers} rules={rules} goals={goals} companyId={selectedCompanyId} /></div>}
@@ -2126,6 +2169,94 @@ function LoginScreen() {
   );
 }
 
+
+function OnboardingOverlay({ rules, onUpdateRules, onAddAdmin }: { rules: LoyaltyRule; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; onAddAdmin: (email: string) => Promise<void> }) {
+  const [step, setStep] = useState(1);
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [isFinishing, setIsFinishing] = useState(false);
+  const { showToast } = useToast();
+
+  const handleFinish = async () => {
+    if (step < 5) {
+      setStep(step + 1);
+      return;
+    }
+    setIsFinishing(true);
+    try {
+      await onUpdateRules({ ...rules, onboardingComplete: true });
+      showToast("Configuração concluída com sucesso!", "success");
+    } catch (error) {
+      showToast("Erro ao concluir onboarding.", "error");
+    } finally {
+      setIsFinishing(false);
+    }
+  };
+
+  const steps = [
+    { title: "Bem-vindo!", description: "Vamos configurar os dados essenciais para o seu programa de fidelidade." },
+    { title: "Equipe", description: "Deseja adicionar outros administradores agora?", type: 'admin' },
+    { title: "Premiação", description: "Defina o modelo de premiação (Pontos ou Cashback) na aba Premiação.", type: 'nav', tab: 'rewards' },
+    { title: "Metas Gerais", description: "Configure seu ticket médio e faturamento atual para habilitar as estatísticas.", type: 'nav', tab: 'goals' },
+    { title: "Tudo Pronto!", description: "Agora você pode acessar todas as funcionalidades do sistema." }
+  ];
+
+  return (
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[1000] flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }} 
+        animate={{ opacity: 1, scale: 1 }} 
+        className="bg-white rounded-[3rem] w-full max-w-lg p-10 shadow-2xl relative overflow-hidden"
+      >
+        <div className="absolute top-0 right-0 p-8 opacity-5">
+          <TrendingUp size={150} />
+        </div>
+        
+        <div className="relative z-10 space-y-8">
+          <div className="flex justify-between items-center">
+            <div className="flex gap-1">
+              {[1, 2, 3, 4, 5].map(i => (
+                <div key={i} className={cn("w-8 h-1.5 rounded-full transition-all", i <= step ? "bg-primary" : "bg-gray-100")} />
+              ))}
+            </div>
+            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Passo {step} de 5</span>
+          </div>
+
+          <div className="space-y-2">
+            <h2 className="text-3xl font-black text-gray-900 tracking-tighter italic">{steps[step-1].title}</h2>
+            <p className="text-gray-500 font-medium leading-relaxed">{steps[step-1].description}</p>
+          </div>
+
+          {step === 2 && (
+            <div className="space-y-4 py-4">
+              <div className="bg-gray-50 border border-gray-100 rounded-2xl p-6">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">E-mail do novo administrador</label>
+                <div className="flex gap-2">
+                  <input 
+                    type="email" 
+                    value={newAdminEmail}
+                    onChange={(e) => setNewAdminEmail(e.target.value)}
+                    placeholder="exemplo@email.com"
+                    className="flex-1 bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-primary"
+                  />
+                  <Button onClick={() => { onAddAdmin(newAdminEmail); setNewAdminEmail(''); }} disabled={!newAdminEmail}>Add</Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-4 pt-4">
+            {step > 1 && (
+              <Button variant="outline" className="flex-1" onClick={() => setStep(step - 1)}>Voltar</Button>
+            )}
+            <Button className="flex-[2] shadow-xl shadow-primary/20" onClick={handleFinish} disabled={isFinishing}>
+              {step < 5 ? 'Próximo' : (isFinishing ? 'Finalizando...' : 'Começar Agora!')}
+            </Button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
 
 function SuperAdminProfileTab({ appUser }: { appUser: AppUser }) {
   const [displayName, setDisplayName] = useState(appUser?.displayName || '');
@@ -2762,6 +2893,11 @@ function SuperAdminPanel({ onBack, isSuperAdmin, appUser }: { onBack: () => void
                   <p className="text-primary text-[10px] font-black uppercase tracking-widest flex items-center gap-1">
                     <Mail size={12} /> {client.email}
                   </p>
+                  {client.erpKey && (
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-[8px] bg-white/10 text-white/60 px-2 py-0.5 rounded border border-white/5 uppercase font-bold">ERP: {client.erpKey}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -3223,6 +3359,7 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
     secondaryColor: '#000000',
     clientStatus: 'monthly',
     activationDate: new Date().toISOString(),
+    erpKey: '',
     email: '',
     password: '',
     role: 'admin',
@@ -3419,6 +3556,18 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
                 <option value="quarterly">Trimestral</option>
                 <option value="annual">Anual</option>
               </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Chave ERP / Integração</label>
+              <input 
+                type="text" 
+                value={formData.erpKey || ''} 
+                onChange={e => setFormData({ ...formData, erpKey: e.target.value })} 
+                className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-gray-900 text-sm font-bold outline-none focus:border-primary transition-all" 
+                placeholder="Ex: ERP-XYZ-123"
+              />
+              <p className="text-[10px] text-gray-400 italic">Configure a chave de conexão com o ERP do cliente aqui.</p>
             </div>
 
             <div className="space-y-1.5">
@@ -3883,464 +4032,201 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
 }
 
 function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { customers: Customer[]; purchases: Purchase[]; isAdmin: boolean; rules: LoyaltyRule; companyId: string | null }) {
-  const [search, setSearch] = useState('');
-  const [sortBy, setSortBy] = useState<'name' | 'points' | 'totalSpent'>('points');
-  const [birthdayFilter, setBirthdayFilter] = useState<'all' | 'today' | 'week' | '15days' | 'month'>('all');
-  const [showRegister, setShowRegister] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newBirthDate, setNewBirthDate] = useState('');
-  const [newPhone, setNewPhone] = useState<string | undefined>();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [deleteMenu, setDeleteMenu] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<{ id: string; type: 'only_customer' | 'customer_and_sales' | 'only_sales' } | null>(null);
-  const menuRef = React.useRef<HTMLDivElement>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+  const { showToast } = useToast();
 
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setDeleteMenu(null);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const handleDelete = async (customerId: string, type: 'only_customer' | 'customer_and_sales' | 'only_sales') => {
-    setConfirmDelete({ id: customerId, type });
-  };
-
-  const executeDelete = async () => {
-    if (!confirmDelete) return;
-    const { id: customerId, type } = confirmDelete;
-    setConfirmDelete(null);
+  const calculateRFV = (customer: Customer) => {
+    const now = new Date();
+    const lastPurchase = parseISO(customer.lastPurchaseDate || new Date().toISOString());
+    const recency = differenceInDays(now, lastPurchase);
     
-    setIsSubmitting(true);
-    try {
-      if (type === 'only_customer' || type === 'customer_and_sales') {
-        await deleteDoc(doc(db, 'customers', customerId));
-      }
-
-      if (type === 'customer_and_sales' || type === 'only_sales') {
-        const customerPurchases = purchases.filter(p => p.customerId === customerId);
-        if (customerPurchases.length > 0) {
-          const batch = writeBatch(db);
-          customerPurchases.forEach(p => {
-            batch.delete(doc(db, 'purchases', p.id));
-          });
-          await batch.commit();
-        }
-        
-        if (type === 'only_sales') {
-          // Reset points if only sales are deleted
-          await updateDoc(doc(db, 'customers', customerId), {
-            points: 0
-          });
-        }
-      }
-      setDeleteMenu(null);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'customers/purchases');
-    } finally {
-      setIsSubmitting(false);
-    }
+    const customerPurchases = purchases.filter(p => p.customerId === customer.id);
+    const freq = customerPurchases.length;
+    const value = customerPurchases.reduce((acc, p) => acc + p.amount, 0);
+    
+    return { recency, freq, value };
   };
 
-  const customerStats = useMemo(() => {
-    return customers.map(customer => {
-      const customerPurchases = purchases.filter(p => p.customerId === customer.id);
-      const totalSpent = customerPurchases.reduce((acc, p) => acc + p.amount, 0);
-      const purchaseCount = customerPurchases.length;
+  const filteredCustomers = customers.filter(c => 
+    c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    c.phone.includes(searchTerm)
+  );
+
+  const downloadTemplate = () => {
+    const headers = [['Nome', 'Telefone', 'Data Nascimento (AAAA-MM-DD)', 'Email']];
+    const ws = utils.aoa_to_sheet(headers);
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws, "Modelo Importacao");
+    writeFile(wb, "modelo_importacao_clientes.xlsx");
+  };
+
+  const handleExportXLSX = () => {
+    const data = filteredCustomers.map(c => {
+      const rfv = calculateRFV(c);
       return {
-        ...customer,
-        totalSpent,
-        purchaseCount
+        'Nome': c.name,
+        'Telefone': c.phone,
+        'Pontos': c.points,
+        'Última Compra': c.lastPurchaseDate,
+        'R (Recência)': `${rfv.recency} dias`,
+        'F (Frequência)': rfv.freq,
+        'V (Valor Total)': rfv.value
       };
     });
-  }, [customers, purchases]);
-
-  const filtered = useMemo(() => {
-    let result = customerStats.filter(c => 
-      c.name.toLowerCase().includes(search.toLowerCase()) || 
-      c.phone.includes(search)
-    );
-
-    // Birthday Filter
-    if (birthdayFilter !== 'all') {
-      const today = new Date();
-      result = result.filter(c => {
-        if (!c.birthDate) return false;
-        const birth = parseISO(c.birthDate);
-        const thisYearBirthday = new Date(today.getFullYear(), birth.getMonth(), birth.getDate());
-        
-        if (birthdayFilter === 'today') {
-          return isToday(thisYearBirthday);
-        }
-        if (birthdayFilter === 'week') {
-          const nextWeek = subDays(today, -7);
-          return isWithinInterval(thisYearBirthday, { start: startOfDay(today), end: endOfDay(nextWeek) });
-        }
-        if (birthdayFilter === '15days') {
-          const next15 = subDays(today, -15);
-          return isWithinInterval(thisYearBirthday, { start: startOfDay(today), end: endOfDay(next15) });
-        }
-        if (birthdayFilter === 'month') {
-          return thisYearBirthday.getMonth() === today.getMonth();
-        }
-        return true;
-      });
-    }
-
-    // Sort by criteria
-    result.sort((a, b) => {
-      if (sortBy === 'points') return b.points - a.points;
-      if (sortBy === 'totalSpent') return b.totalSpent - a.totalSpent;
-      return a.name.localeCompare(b.name);
-    });
-
-    // ALWAYS prioritize reward-ready customers
-    const rewardReady = (c: any) => c.points >= rules.purchasesForPrize;
-    
-    result.sort((a, b) => {
-      const aReady = rewardReady(a);
-      const bReady = rewardReady(b);
-      if (aReady && !bReady) return -1;
-      if (!aReady && bReady) return 1;
-      return 0;
-    });
-
-    return result;
-  }, [customerStats, search, sortBy, rules.purchasesForPrize]);
-
-  const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!companyId) return;
-    if (!newName || !newPhone) {
-      alert("Por favor, preencha o nome e o celular do cliente.");
-      return;
-    }
-    setIsSubmitting(true);
-    try {
-      const now = new Date().toISOString();
-      const calculatedAge = newBirthDate ? differenceInYears(new Date(), parseISO(newBirthDate)) : 0;
-      await addDoc(collection(db, 'customers'), {
-        companyId,
-        name: newName,
-        phone: newPhone,
-        birthDate: newBirthDate,
-        age: calculatedAge,
-        points: 0,
-        lastPurchaseDate: now,
-        createdAt: now
-      });
-      setShowRegister(false);
-      setNewName('');
-      setNewBirthDate('');
-      setNewPhone(undefined);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'customers');
-    } finally {
-      setIsSubmitting(false);
-    }
+    const ws = utils.json_to_sheet(data);
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws, "Clientes");
+    writeFile(wb, `clientes_${format(new Date(), 'yyyyMMdd')}.xlsx`);
   };
 
-  const exportToCSV = () => {
-    const headers = ['Nome', 'Telefone', 'Pontos', 'Total Comprado (R$)', 'Qtd Compras', 'Ultima Compra'];
-    const rows = filtered.map(c => [
-      c.name,
-      c.phone,
-      c.points,
-      formatCurrency(c.totalSpent),
-      c.purchaseCount,
-      format(parseISO(c.lastPurchaseDate), "dd/MM/yyyy HH:mm")
-    ]);
+  const handleImportXLSX = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !companyId) return;
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(r => r.join(','))
-    ].join('\n');
+    setIsImporting(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (evt) => {
+        const bstr = evt.target?.result;
+        const wb = read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = utils.sheet_to_json(ws) as any[];
+        
+        const batchSize = 500;
+        let processed = 0;
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `clientes_${format(new Date(), 'dd_MM_yyyy')}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+        for (let i = 0; i < data.length; i += batchSize) {
+          const chunk = data.slice(i, i + batchSize);
+          const batch = writeBatch(db);
+          
+          chunk.forEach(row => {
+            const phone = String(row['Telefone'] || row['telefone'] || '').replace(/\D/g, '');
+            if (!phone || !row['Nome']) return;
+            
+            const customerRef = doc(collection(db, 'customers'));
+            batch.set(customerRef, {
+              companyId,
+              name: row['Nome'] || row['nome'],
+              phone,
+              email: row['Email'] || row['email'] || '',
+              birthDate: row['Data Nascimento'] || row['Data Nascimento (AAAA-MM-DD)'] || '',
+              points: 0,
+              lastPurchaseDate: new Date().toISOString(),
+              totalSpent: 0,
+              purchasesCount: 0,
+              createdAt: new Date().toISOString()
+            });
+          });
+          
+          await batch.commit();
+          processed += chunk.length;
+        }
+        showToast(`${processed} clientes importados com sucesso!`, "success");
+      };
+      reader.readAsBinaryString(file);
+    } catch (error) {
+      console.error(error);
+      showToast("Erro ao importar arquivo Excel.", "error");
+    } finally {
+      setIsImporting(false);
+      e.target.value = '';
+    }
   };
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <h2 className="text-2xl font-bold text-gray-900">Clientes</h2>
-          <Users className="text-green-500" size={28} />
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Base de Clientes</h2>
+          <p className="text-xs text-gray-500 font-bold uppercase tracking-widest mt-1">Gerencie seu público e veja indicadores RFV</p>
         </div>
-
-        <ConfirmModal 
-          isOpen={!!confirmDelete}
-          onClose={() => setConfirmDelete(null)}
-          onConfirm={executeDelete}
-          title="Confirmar Exclusão"
-          message={
-            confirmDelete?.type === 'only_customer' ? "Tem certeza que deseja excluir este cliente? As compras dele serão mantidas." :
-            confirmDelete?.type === 'customer_and_sales' ? "Tem certeza que deseja excluir este cliente e todas as suas compras? Esta ação não pode ser desfeita." :
-            "Tem certeza que deseja excluir apenas o valor das compras deste cliente? Os pontos dele serão zerados."
-          }
-          isDanger={true}
-          confirmText="Excluir"
-        />
-        <div className="flex items-center gap-2">
-          <Button onClick={() => setShowRegister(true)} className="flex-1 sm:flex-none">
-            <PlusCircle size={18} />
-            Novo Cliente
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={downloadTemplate} variant="outline" className="text-[10px] font-black uppercase tracking-widest gap-2">
+            <Download size={14} /> Template
           </Button>
-          <Button variant="outline" size="sm" onClick={exportToCSV} className="border-gray-200 text-gray-600 hover:bg-gray-50">
-            <Download size={18} />
-            Exportar CSV
+          <label className="cursor-pointer">
+            <div className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">
+              <Upload size={14} /> {isImporting ? 'Importando...' : 'Importar XLSX'}
+            </div>
+            <input type="file" accept=".xlsx, .xls" onChange={handleImportXLSX} className="hidden" disabled={isImporting} />
+          </label>
+          <Button onClick={handleExportXLSX} className="bg-primary text-white text-[10px] font-black uppercase tracking-widest gap-2">
+            <ExternalLink size={14} /> Exportar XLSX
           </Button>
         </div>
       </div>
 
-      <AnimatePresence>
-        {showRegister && (
-          <motion.div 
-            initial={{ opacity: 0, height: 0 }} 
-            animate={{ opacity: 1, height: 'auto' }} 
-            exit={{ opacity: 0, height: 0 }}
-            className="overflow-hidden"
-          >
-            <Card className="p-6 bg-white border-gray-100 shadow-sm mb-6">
-              <form onSubmit={handleRegister} className="space-y-4">
-                <h3 className="font-bold text-gray-900">Cadastrar Novo Cliente</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-sm font-medium text-gray-700">Nome Completo</label>
-                    <input 
-                      type="text" 
-                      value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
-                      required
-                      className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
-                      placeholder="Nome do cliente"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-sm font-medium text-gray-700">Data de Nascimento</label>
-                    <input 
-                      type="date" 
-                      value={newBirthDate}
-                      onChange={(e) => setNewBirthDate(e.target.value)}
-                      required
-                      className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-sm font-medium text-gray-700">Celular</label>
-                    <PhoneInput
-                      placeholder="Ex: +55 11 99999-9999"
-                      value={newPhone}
-                      onChange={setNewPhone}
-                      defaultCountry="BR"
-                      className="PhoneInput"
-                    />
-                  </div>
-                </div>
-                <div className="flex gap-3 justify-end">
-                  <Button variant="outline" onClick={() => setShowRegister(false)} disabled={isSubmitting} className="border-gray-200 text-gray-600 hover:bg-gray-50">
-                    Cancelar
-                  </Button>
-                  <Button type="submit" disabled={isSubmitting}>
-                    {isSubmitting ? 'Salvando...' : 'Salvar Cliente'}
-                  </Button>
-                </div>
-              </form>
-            </Card>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <div className="flex flex-col sm:flex-row gap-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+      <Card className="p-4 bg-white border-gray-100 shadow-sm">
+        <div className="relative">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
           <input 
             type="text" 
-            placeholder="Buscar por nome ou celular..." 
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-white border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-green-500 text-gray-900"
+            placeholder="Buscar por nome ou telefone..." 
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full bg-gray-50 border border-gray-100 rounded-xl pl-12 pr-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-primary transition-all"
           />
         </div>
-        <div className="flex items-center gap-2">
-          <Filter size={18} className="text-gray-400" />
-          <select 
-            value={birthdayFilter}
-            onChange={(e) => setBirthdayFilter(e.target.value as any)}
-            className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
-          >
-            <option value="all">Aniversariantes: Todos</option>
-            <option value="today">Hoje</option>
-            <option value="week">Esta Semana</option>
-            <option value="15days">Próximos 15 Dias</option>
-            <option value="month">Este Mês</option>
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          <select 
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as any)}
-            className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
-          >
-            <option value="points">Ordenar por Pontos</option>
-            <option value="totalSpent">Ordenar por LTV</option>
-            <option value="name">Ordenar por Nome</option>
-          </select>
-        </div>
-      </div>
+      </Card>
 
-      <div className="grid gap-4">
-        {filtered.map((customer, index) => {
-          const isRewardReady = customer.points >= rules.purchasesForPrize;
-          
-          const nextBday = customer.birthDate ? (() => {
-            const birth = parseISO(customer.birthDate);
-            const today = new Date();
-            let next = new Date(today.getFullYear(), birth.getMonth(), birth.getDate());
-            if (isBefore(next, startOfDay(today))) {
-              next.setFullYear(today.getFullYear() + 1);
-            }
-            return {
-              date: format(next, 'dd/MM'),
-              age: differenceInYears(next, birth)
-            };
-          })() : null;
-
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {filteredCustomers.map(customer => {
+          const rfv = calculateRFV(customer);
           return (
-            <Card 
-              key={customer.id} 
-              className={cn(
-                "p-4 flex items-center justify-between transition-all bg-white shadow-sm",
-                isRewardReady ? "bg-green-50 border-green-200" : ""
-              )}
-            >
-              <div className="flex items-center gap-4">
-                <div className={cn(
-                  "w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg",
-                  isRewardReady ? "bg-green-500 text-white" : (index < 3 ? "bg-green-100 text-green-600" : "bg-gray-100 text-gray-400")
-                )}>
-                  {isRewardReady ? <Trophy size={20} /> : index + 1}
-                </div>
+            <Card key={customer.id} className="p-5 bg-white border-gray-100 shadow-sm group hover:border-primary/50 transition-all">
+              <div className="flex justify-between items-start mb-4">
                 <div>
-                  <h3 className="font-bold text-gray-900 flex items-center gap-2">
-                    {customer.name}
-                    {customer.birthDate && (
-                      <span className="text-[10px] text-gray-400 font-normal">
-                        ({differenceInYears(new Date(), parseISO(customer.birthDate))} anos)
-                      </span>
-                    )}
-                    {isRewardReady && <span className="text-[10px] bg-green-500 text-white px-1.5 py-0.5 rounded font-black uppercase">Prêmio Disponível</span>}
-                  </h3>
-                  <p className="text-sm text-gray-500">{customer.phone}</p>
-                  <div className="flex flex-wrap items-center gap-3 mt-1">
-                    <div className="flex items-center gap-1 text-[10px] text-gray-400">
-                      <Cake size={10} className="text-pink-500" />
-                      {customer.birthDate ? format(parseISO(customer.birthDate), 'dd/MM/yyyy') : 'N/A'}
-                    </div>
-                    {nextBday && (
-                      <div className="flex items-center gap-1 text-[10px] text-blue-500 font-bold">
-                        <Calendar size={10} />
-                        Próximo: {nextBday.date} ({nextBday.age} anos)
-                      </div>
-                    )}
-                  </div>
+                  <h3 className="font-bold text-gray-900 leading-tight">{customer.name}</h3>
+                  <p className="text-[10px] text-gray-500 font-bold uppercase">{customer.phone}</p>
+                </div>
+                <div className="bg-primary/10 text-primary px-3 py-1 rounded-lg text-[10px] font-black">
+                  {customer.points} PTS
                 </div>
               </div>
-              <div className="flex items-center gap-4">
-                {/* LTV Card */}
-                <div className="hidden md:flex flex-col items-end px-4 border-r border-gray-100">
-                  <p className="text-[8px] font-black text-green-500 uppercase tracking-widest mb-0.5">LTV (Total)</p>
-                  <p className="text-sm font-black text-gray-900">R$ {formatCurrency(customer.totalSpent)}</p>
-                  <p className="text-[8px] text-gray-400 uppercase tracking-tighter">{customer.purchaseCount} compras</p>
+              
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                <div className="p-2 bg-gray-50 rounded-xl text-center">
+                  <p className="text-[8px] font-black text-gray-400 uppercase">Recência</p>
+                  <p className="text-xs font-bold text-gray-900">{rfv.recency}d</p>
                 </div>
-
-                <div className="text-right">
-                  <div className={cn(
-                    "flex items-center gap-1 justify-end font-bold",
-                    isRewardReady ? "text-green-600" : "text-gray-900"
-                  )}>
-                    <Trophy size={16} />
-                    <span>{customer.points}</span>
-                  </div>
-                  <p className="text-[10px] text-gray-400 uppercase tracking-wider">Pontos</p>
-                  <p className="text-[10px] text-gray-300 mt-1">
-                    {format(parseISO(customer.lastPurchaseDate), "dd/MM/yy", { locale: ptBR })}
-                  </p>
+                <div className="p-2 bg-gray-50 rounded-xl text-center">
+                  <p className="text-[8px] font-black text-gray-400 uppercase">Frequência</p>
+                  <p className="text-xs font-bold text-gray-900">{rfv.freq}x</p>
                 </div>
+                <div className="p-2 bg-gray-50 rounded-xl text-center">
+                  <p className="text-[8px] font-black text-gray-400 uppercase">Valor</p>
+                  <p className="text-xs font-bold text-gray-900">R${formatCurrency(rfv.value)}</p>
+                </div>
+              </div>
 
-                {isAdmin && (
-                  <div className={cn("relative", deleteMenu === customer.id && "z-[60]")} ref={deleteMenu === customer.id ? menuRef : null}>
-                    <button 
-                      onClick={() => setDeleteMenu(deleteMenu === customer.id ? null : customer.id)}
-                      className="p-2 text-gray-500 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
-                    >
-                      <MoreVertical size={18} />
-                    </button>
-                    
-                    <AnimatePresence>
-                      {deleteMenu === customer.id && (
-                        <motion.div 
-                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                          className="absolute right-0 mt-2 w-56 bg-white border border-gray-100 rounded-lg shadow-xl z-[50] overflow-hidden"
-                        >
-                            <button 
-                              onClick={() => handleDelete(customer.id, 'only_customer')}
-                              className="w-full px-4 py-2 text-left text-xs text-gray-600 hover:bg-gray-50 flex items-center gap-2"
-                            >
-                              <Trash2 size={14} className="text-red-500" />
-                              Excluir Clientes
-                            </button>
-                            <button 
-                              onClick={() => handleDelete(customer.id, 'customer_and_sales')}
-                              className="w-full px-4 py-2 text-left text-xs text-gray-600 hover:bg-gray-50 flex items-center gap-2"
-                            >
-                              <Trash2 size={14} className="text-red-500" />
-                              Excluir Clientes e Valor do Total
-                            </button>
-                            <button 
-                              onClick={() => handleDelete(customer.id, 'only_sales')}
-                              className="w-full px-4 py-2 text-left text-xs text-red-500 hover:bg-red-50 flex items-center gap-2 font-bold"
-                            >
-                              <Trash2 size={14} />
-                              Somente Valor
-                            </button>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                )}
+              <div className="flex items-center justify-between pt-2 border-t border-gray-50">
+                <p className="text-[8px] text-gray-400 font-bold uppercase">Última: {format(parseISO(customer.lastPurchaseDate || new Date().toISOString()), 'dd/MM/yy')}</p>
+                <div className="flex gap-2">
+                   <button className="text-gray-400 hover:text-primary transition-colors"><MessageSquare size={16} /></button>
+                   <button className="text-gray-400 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
+                </div>
               </div>
             </Card>
           );
         })}
-        {filtered.length === 0 && (
-          <div className="text-center py-12 text-gray-500">
-            Nenhum cliente encontrado.
-          </div>
-        )}
       </div>
     </motion.div>
   );
 }
 
-function GoalsTab({ goals, companyId, purchases }: { goals: Goal[]; companyId: string | null; purchases: Purchase[] }) {
+function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId }: { goals: Goal[]; purchases: Purchase[]; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; rules: LoyaltyRule; isAdmin: boolean; companyId: string | null }) {
   const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [value, setValue] = useState('');
   const [workingDays, setWorkingDays] = useState('22');
   const [isSaving, setIsSaving] = useState(false);
-  const { askConfirmation } = useConfirm();
+  
+  // Reference data state
+  const [avgTicket, setAvgTicket] = useState(rules.currentAvgTicket?.toString() || '');
+  const [monthlyRevenue, setMonthlyRevenue] = useState(rules.currentMonthlyRevenue?.toString() || '');
+
+  const { showToast } = useToast();
 
   const handleSaveGoal = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -4374,135 +4260,179 @@ function GoalsTab({ goals, companyId, purchases }: { goals: Goal[]; companyId: s
     }
   };
 
-  const getRealSales = (monthStr: string) => {
-    return purchases
-      .filter(p => p.date.startsWith(monthStr))
-      .reduce((acc, p) => acc + p.amount, 0);
+  const handleSaveReference = async () => {
+    setIsSaving(true);
+    try {
+      await onUpdateRules({
+        ...rules,
+        currentAvgTicket: parseFloat(avgTicket) || 0,
+        currentMonthlyRevenue: parseFloat(monthlyRevenue) || 0
+      });
+      showToast("Dados de referência salvos!", "success");
+    } catch (error) {
+      showToast("Erro ao salvar referência.", "error");
+    } finally {
+      setIsSaving(false);
+    }
   };
+
+  const activeClientsNeeded = useMemo(() => {
+    const rev = parseFloat(monthlyRevenue) || 0;
+    const tkt = parseFloat(avgTicket) || 0;
+    return tkt > 0 ? Math.ceil(rev / tkt) : 0;
+  }, [monthlyRevenue, avgTicket]);
 
   const sortedGoals = [...goals].sort((a, b) => b.month.localeCompare(a.month));
 
   return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-6">
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-6 pb-12">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900">Metas Gerais</h2>
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 leading-tight">Metas Gerais</h2>
+          <p className="text-xs text-gray-500 font-bold uppercase tracking-widest mt-1">Planejamento e Estatísticas Comparativas</p>
+        </div>
         <Target className="text-primary" size={28} />
       </div>
 
-      <Card className="p-6 bg-white border-gray-100 shadow-sm">
-        <h3 className="font-bold text-gray-900 mb-6">Definir Meta de Faturamento</h3>
-        <form onSubmit={handleSaveGoal} className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-500 uppercase">Mês</label>
-              <input 
-                type="month" 
-                value={month}
-                onChange={(e) => setMonth(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-primary"
-                required
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-500 uppercase">Dias Úteis</label>
-              <input 
-                type="number" 
-                value={workingDays}
-                onChange={(e) => setWorkingDays(e.target.value)}
-                placeholder="22"
-                className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-primary font-bold"
-                required
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-gray-500 uppercase">Meta de Faturamento (R$)</label>
-              <input 
-                type="number" 
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                placeholder="0.00"
-                step="0.01"
-                className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-primary font-bold"
-                required
-              />
-            </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="p-6 bg-white border-gray-100 shadow-sm">
+          <div className="flex items-center gap-2 mb-6">
+            <h3 className="font-bold text-gray-900">Definir Meta de Faturamento</h3>
           </div>
-          <div className="flex justify-end">
-            <Button type="submit" disabled={isSaving} className="px-12 py-3 rounded-xl font-black uppercase tracking-widest shadow-lg shadow-green-500/20 bg-green-600 hover:bg-green-700 text-white">
-              {isSaving ? 'Salvando...' : 'Salvar Meta'}
+          <form onSubmit={handleSaveGoal} className="space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Mês de Referência</label>
+                <input 
+                  type="month" 
+                  value={month}
+                  onChange={(e) => setMonth(e.target.value)}
+                  className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-gray-900 font-bold outline-none focus:border-primary transition-all shadow-inner"
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Dias Úteis</label>
+                <input 
+                  type="number" 
+                  value={workingDays}
+                  onChange={(e) => setWorkingDays(e.target.value)}
+                  placeholder="22"
+                  className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-gray-900 font-bold outline-none focus:border-primary transition-all shadow-inner"
+                  required
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Meta de Faturamento (R$)</label>
+              <div className="relative">
+                <DollarSign className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                <input 
+                  type="number" 
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  placeholder="0.00"
+                  step="0.01"
+                  className="w-full bg-gray-50 border border-gray-100 rounded-2xl pl-14 pr-6 py-4 text-gray-900 font-black text-xl outline-none focus:border-primary transition-all shadow-inner"
+                  required
+                />
+              </div>
+            </div>
+            <Button type="submit" disabled={isSaving} className="w-full py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-primary/20">
+              {isSaving ? 'Gravando...' : 'Salvar Meta Mensal'}
+            </Button>
+          </form>
+        </Card>
+
+        <Card className="p-6 bg-white border-gray-100 shadow-sm">
+          <div className="flex items-center gap-2 mb-6">
+            <h3 className="font-bold text-gray-900">Dados de Referência Atual</h3>
+            <div className="px-2 py-0.5 bg-yellow-100 text-yellow-600 rounded text-[8px] font-black uppercase tracking-widest">Estatísticas</div>
+          </div>
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Ticket Médio Atual</label>
+                <div className="relative">
+                  <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                  <input 
+                    type="number" 
+                    value={avgTicket}
+                    onChange={(e) => setAvgTicket(e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-100 rounded-2xl pl-10 pr-4 py-4 text-gray-900 font-bold outline-none focus:border-primary"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Faturamento Médio Atual</label>
+                <div className="relative">
+                  <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                  <input 
+                    type="number" 
+                    value={monthlyRevenue}
+                    onChange={(e) => setMonthlyRevenue(e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-100 rounded-2xl pl-10 pr-4 py-4 text-gray-900 font-bold outline-none focus:border-primary"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 bg-primary/5 border border-primary/10 rounded-2xl">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[10px] font-black text-primary uppercase tracking-widest">Cálculo de Clientes Ativos</p>
+                <Users className="text-primary" size={16} />
+              </div>
+              <p className="text-3xl font-black text-gray-900 italic tracking-tighter">
+                {activeClientsNeeded} <span className="text-xs font-bold text-gray-400 uppercase not-italic">Clientes</span>
+              </p>
+              <p className="text-[10px] text-gray-400 font-medium mt-1 italic">Baseado no faturamento dividido pelo ticket médio.</p>
+            </div>
+
+            <Button onClick={handleSaveReference} disabled={isSaving} variant="outline" className="w-full py-4 border-primary/20 text-primary hover:bg-primary/5 font-black uppercase tracking-widest">
+              Atualizar Referências
             </Button>
           </div>
-        </form>
-      </Card>
+        </Card>
+      </div>
 
-      <Card className="p-6 bg-white border-gray-100 shadow-sm">
-        <h3 className="font-bold text-gray-900 mb-4">Planejamento x Realizado</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="border-b border-gray-100 text-[10px] font-bold text-gray-500 uppercase tracking-widest">
-                <th className="px-4 py-3">Mês</th>
-                <th className="px-4 py-3 text-center">Dias Úteis</th>
-                <th className="px-4 py-3">Meta (R$)</th>
-                <th className="px-4 py-3">Vendas Reais (R$)</th>
-                <th className="px-4 py-3">Atingimento</th>
-                <th className="px-4 py-3 text-right">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {sortedGoals.map(g => {
-                const realSales = getRealSales(g.month);
-                const percent = g.value > 0 ? (realSales / g.value) * 100 : 0;
-                return (
-                  <tr key={g.id} className="text-sm hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 text-gray-900 font-bold uppercase">{format(parseISO(g.month + '-01'), 'MMMM yyyy', { locale: ptBR })}</td>
-                    <td className="px-4 py-3 text-center text-gray-500 font-bold">{g.workingDays || 22}</td>
-                    <td className="px-4 py-3 text-primary font-bold">R$ {formatCurrency(g.value)}</td>
-                    <td className="px-4 py-3 text-green-600 font-bold">R$ {formatCurrency(realSales)}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden min-w-[60px]">
-                          <div 
-                            className={cn("h-full transition-all", percent >= 100 ? "bg-green-500" : "bg-primary")} 
-                            style={{ width: `${Math.min(100, percent)}%` }} 
-                          />
-                        </div>
-                        <span className="text-[10px] font-black text-gray-900">{percent.toFixed(1)}%</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button 
-                        onClick={() => {
-                          askConfirmation(
-                            "Confirmar Exclusão",
-                            `Excluir meta de ${g.month}?`,
-                            async () => {
-                              try {
-                                await deleteDoc(doc(db, 'goals', g.id));
-                              } catch (error) {
-                                console.error(error);
-                              }
-                            },
-                            true
-                          );
-                        }}
-                        className="text-gray-500 hover:text-red-500 transition-colors"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-              {sortedGoals.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-gray-500 italic">Nenhuma meta cadastrada.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+      <div className="mt-8">
+        <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4 ml-1">Histórico de Metas</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {sortedGoals.map(goal => {
+            const realSales = purchases.filter(p => p.date.startsWith(goal.month)).reduce((acc, p) => acc + p.amount, 0);
+            const percent = goal.value > 0 ? (realSales / goal.value) * 100 : 0;
+            
+            return (
+              <Card key={goal.id} className="p-5 bg-white border-gray-100 shadow-sm relative overflow-hidden group">
+                <div className="absolute top-0 left-0 h-1 bg-primary/20 w-full" />
+                <div className="absolute top-0 left-0 h-1 bg-primary transition-all duration-1000" style={{ width: `${Math.min(percent, 100)}%` }} />
+                
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h4 className="font-black text-gray-900 uppercase tracking-tighter text-lg">{format(parseISO(goal.month + '-01'), 'MMMM yyyy', { locale: ptBR })}</h4>
+                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{goal.workingDays} dias úteis</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs font-black text-primary">{Math.round(percent)}%</p>
+                    <p className="text-[9px] text-gray-400 font-bold uppercase">Meta: R$ {formatCurrency(goal.value)}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex justify-between items-end">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">Vendas Reais</p>
+                    <p className="text-xl font-black text-gray-900 tracking-tighter italic">R$ {formatCurrency(realSales)}</p>
+                  </div>
+                  <div className="pt-3 border-t border-gray-50 flex justify-between">
+                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">Meta Diária</span>
+                    <span className="text-[10px] text-gray-900 font-black">R$ {formatCurrency(goal.value / goal.workingDays)}</span>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
         </div>
-      </Card>
+      </div>
     </motion.div>
   );
 }
@@ -4745,6 +4675,8 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
     const weeklyAvg = weekP.length > 0 ? weekP.reduce((acc, p) => acc + p.amount, 0) / weekP.length : 0;
     const biweeklyAvg = biweekP.length > 0 ? biweekP.reduce((acc, p) => acc + p.amount, 0) / biweekP.length : 0;
 
+    const activeCustomersCount = rules.currentAvgTicket && rules.currentMonthlyRevenue ? Math.round(rules.currentMonthlyRevenue / rules.currentAvgTicket) : 0;
+
     return {
       totalValue,
       count,
@@ -4756,7 +4688,8 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
       customerCountInPeriod,
       withinRules,
       outsideRules,
-      conversionRate
+      conversionRate,
+      activeCustomersCount
     };
   }, [filteredPurchases, purchases, customers, rules]);
 
@@ -5690,6 +5623,14 @@ function RewardsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; isA
   const [minPurchaseValue, setMinPurchaseValue] = useState(rules.minPurchaseValue || 0);
   const [extraPointsThreshold, setExtraPointsThreshold] = useState(rules.extraPointsThreshold || 0);
   const [extraPointsAmount, setExtraPointsAmount] = useState(rules.extraPointsAmount || 0);
+  const [rewardMode, setRewardMode] = useState<'points' | 'cashback'>(rules.rewardMode || 'points');
+  const [cashbackConfig, setCashbackConfig] = useState(rules.cashbackConfig || {
+    percentage: 5,
+    minActivationValue: 0,
+    minRedeemDays: 0,
+    expiryDays: 90
+  });
+  
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [showReauth, setShowReauth] = useState(false);
@@ -5718,8 +5659,8 @@ function RewardsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; isA
     setLocalTiers(newTiers);
   };
 
-  const handleSaveAttempt = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveAttempt = (e?: React.FormEvent | React.MouseEvent) => {
+    e?.preventDefault();
     if (!isAdmin || isLocked) return;
     setShowReauth(true);
   };
@@ -5729,7 +5670,6 @@ function RewardsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; isA
     setIsSaving(true);
     setReauthError('');
     try {
-      // Reauthenticate
       const credential = EmailAuthProvider.credential(auth.currentUser!.email!, reauthPassword);
       await reauthenticateWithCredential(auth.currentUser!, credential);
       
@@ -5738,13 +5678,15 @@ function RewardsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; isA
         rewardTiers: localTiers,
         minPurchaseValue,
         extraPointsThreshold,
-        extraPointsAmount
+        extraPointsAmount,
+        rewardMode,
+        cashbackConfig
       };
       await onUpdateRules(updatedRules);
       setShowSuccess(true);
       setShowReauth(false);
       setReauthPassword('');
-      setIsLocked(true); // Re-lock after save
+      setIsLocked(true);
       setTimeout(() => setShowSuccess(false), 3000);
     } catch (error: any) {
       if (error.code === 'auth/wrong-password') {
@@ -5757,13 +5699,11 @@ function RewardsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; isA
     }
   };
 
-  const canEdit = isAdmin;
-
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h2 className="text-2xl font-bold text-gray-900">Configurar Premiação</h2>
+          <h2 className="text-2xl font-bold text-gray-900">Configurar Campanha</h2>
           <Trophy className="text-green-500" size={28} />
         </div>
         {isAdmin && (
@@ -5780,200 +5720,199 @@ function RewardsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; isA
         )}
       </div>
 
-      {/* Redemption Code Display (Read-only for Client) */}
-      <Card className="p-6 bg-gray-900 border-gray-800 shadow-xl overflow-hidden relative">
-        <div className="absolute top-0 right-0 p-4 opacity-10 text-white">
-          <Key size={80} />
-        </div>
-        <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <p className="text-[10px] font-black text-green-500 uppercase tracking-[0.2em] mb-1">Código de Resgate do Estabelecimento</p>
-            <h3 className="text-white text-sm font-medium opacity-70">Este código deve ser inserido pelo cliente no momento do resgate do prêmio.</h3>
-          </div>
-          <div className="bg-white/10 border border-white/20 px-6 py-3 rounded-2xl flex items-center gap-4">
-            <span className="text-white font-mono font-black text-2xl tracking-[0.3em]">{rules.redemptionCode || '---'}</span>
-            <div className="w-px h-8 bg-white/10" />
-            <Key className="text-green-500" size={24} />
-          </div>
-        </div>
-      </Card>
-
       <Card className="p-6 bg-white border-gray-100 shadow-sm">
-        <form onSubmit={handleSaveAttempt} className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-2">
-                Valor Mínimo para Pontuar
-                <span className="text-green-500">*</span>
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">R$</span>
-                <input 
-                  type="number" 
-                  value={minPurchaseValue}
-                  onChange={(e) => setMinPurchaseValue(parseFloat(e.target.value) || 0)}
-                  disabled={!canEdit}
-                  className="w-full bg-gray-50 border border-gray-100 rounded-xl pl-10 pr-4 py-2.5 text-gray-900 text-sm outline-none focus:border-green-500 transition-all disabled:opacity-50"
-                />
-              </div>
-              <p className="text-[10px] text-gray-400 italic">Compras abaixo deste valor não geram pontos.</p>
-            </div>
+        <div className="space-y-6">
+          <div className="space-y-3">
+            <label className="text-xs font-black text-gray-500 uppercase tracking-widest">Modelo de Campanha Objetivo</label>
+            <div className="grid grid-cols-2 gap-4">
+              <button 
+                onClick={() => !isLocked && setRewardMode('points')}
+                className={cn(
+                  "p-4 rounded-2xl border-2 transition-all text-left group",
+                  rewardMode === 'points' ? "border-primary bg-primary/5" : "border-gray-100 bg-gray-50 opacity-50 grayscale"
+                )}
+                disabled={isLocked}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className={cn("p-2 rounded-lg", rewardMode === 'points' ? "bg-primary text-white" : "bg-gray-200 text-gray-400")}>
+                    <Award size={20} />
+                  </div>
+                  {rewardMode === 'points' && <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />}
+                </div>
+                <h4 className="font-bold text-gray-900">Programa de Pontos</h4>
+                <p className="text-[10px] text-gray-500 leading-tight mt-1">Clientes acumulam pontos em cada compra e trocam por prêmios definidos.</p>
+              </button>
 
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">
-                Meta para Pontos Extra (R$)
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">R$</span>
-                <input 
-                  type="number" 
-                  value={extraPointsThreshold}
-                  onChange={(e) => setExtraPointsThreshold(parseFloat(e.target.value) || 0)}
-                  disabled={!canEdit}
-                  className="w-full bg-gray-50 border border-gray-100 rounded-xl pl-10 pr-4 py-2.5 text-gray-900 text-sm outline-none focus:border-green-500 transition-all disabled:opacity-50"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">
-                Quantidade de Pontos Extra
-              </label>
-              <input 
-                type="number" 
-                value={extraPointsAmount}
-                onChange={(e) => setExtraPointsAmount(parseInt(e.target.value) || 0)}
-                disabled={!canEdit}
-                className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2.5 text-gray-900 text-sm outline-none focus:border-green-500 transition-all disabled:opacity-50"
-              />
+              <button 
+                onClick={() => !isLocked && setRewardMode('cashback')}
+                className={cn(
+                  "p-4 rounded-2xl border-2 transition-all text-left group",
+                  rewardMode === 'cashback' ? "border-green-600 bg-green-50" : "border-gray-100 bg-gray-50 opacity-50 grayscale"
+                )}
+                disabled={isLocked}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className={cn("p-2 rounded-lg", rewardMode === 'cashback' ? "bg-green-600 text-white" : "bg-gray-200 text-gray-400")}>
+                    <DollarSign size={20} />
+                  </div>
+                  {rewardMode === 'cashback' && <div className="w-2 h-2 rounded-full bg-green-600 animate-pulse" />}
+                </div>
+                <h4 className="font-bold text-gray-900">Cashback</h4>
+                <p className="text-[10px] text-gray-500 leading-tight mt-1">Clientes recebem um percentual do valor gasto de volta como saldo na loja.</p>
+              </button>
             </div>
           </div>
 
           <div className="h-px bg-gray-100" />
 
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <h3 className="font-bold text-gray-900">Faixas de Premiação</h3>
-              {isLocked && <Lock size={14} className="text-gray-400" />}
-            </div>
-            {isAdmin && !isLocked && (
-              <button 
-                type="button"
-                onClick={addTier}
-                className="p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all"
-              >
-                <PlusCircle size={20} />
-              </button>
-            )}
-          </div>
-
-          <div className="space-y-3">
-            {localTiers.map((tier, index) => (
-              <div key={index} className="flex flex-col sm:flex-row gap-3 p-4 bg-gray-50 border border-gray-100 rounded-xl items-end sm:items-center">
-                <div className="flex-1 space-y-1.5 w-full">
-                  <label className="text-[10px] font-bold text-gray-400 uppercase">Pontos Necessários</label>
-                  <input 
-                    type="number" 
-                    value={tier.points}
-                    onChange={(e) => updateTier(index, 'points', e.target.value)}
-                    disabled={!canEdit}
-                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50"
-                  />
-                </div>
-                <div className="flex-[2] space-y-1.5 w-full">
-                  <label className="text-[10px] font-bold text-gray-400 uppercase">Prêmio</label>
-                  <input 
-                    type="text" 
-                    value={tier.prize}
-                    onChange={(e) => updateTier(index, 'prize', e.target.value)}
-                    disabled={!canEdit}
-                    placeholder="Ex: Vale Compras R$ 50"
-                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50"
-                  />
-                </div>
-                <div className="flex-1 space-y-1.5 w-full">
-                  <label className="text-[10px] font-bold text-gray-400 uppercase">Dias p/ Resgate</label>
-                  <input 
-                    type="number" 
-                    value={tier.expiryDays || 30}
-                    onChange={(e) => updateTier(index, 'expiryDays', e.target.value)}
-                    disabled={!canEdit}
-                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50"
-                  />
-                </div>
-                <div className="flex-1 space-y-1.5 w-full">
-                  <label className="text-[10px] font-bold text-gray-400 uppercase">Custo Total</label>
+          {rewardMode === 'points' ? (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                    Valor Mínimo para Pontuar
+                    <span className="text-green-500">*</span>
+                  </label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-[10px]">R$</span>
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">R$</span>
                     <input 
                       type="number" 
-                      step="0.01"
-                      value={tier.cost || 0}
-                      onChange={(e) => updateTier(index, 'cost', e.target.value)}
-                      disabled={!canEdit}
-                      className="w-full bg-white border border-gray-200 rounded-lg pl-8 pr-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50"
+                      value={minPurchaseValue}
+                      onChange={(e) => setMinPurchaseValue(parseFloat(e.target.value) || 0)}
+                      disabled={isLocked}
+                      className="w-full bg-gray-50 border border-gray-100 rounded-xl pl-10 pr-4 py-2.5 text-gray-900 text-sm outline-none focus:border-green-500 transition-all disabled:opacity-50"
                     />
                   </div>
                 </div>
-                {canEdit && localTiers.length > 1 && (
-                  <button 
-                    type="button"
-                    onClick={() => removeTier(index)}
-                    className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                  >
-                    <Trash2 size={20} />
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Meta pontos Extra (R$)</label>
+                  <input 
+                    type="number" 
+                    value={extraPointsThreshold}
+                    onChange={(e) => setExtraPointsThreshold(parseFloat(e.target.value) || 0)}
+                    disabled={isLocked}
+                    className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2.5 text-gray-900 text-sm outline-none focus:border-green-500 transition-all disabled:opacity-50"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Qtd Pontos Extra</label>
+                  <input 
+                    type="number" 
+                    value={extraPointsAmount}
+                    onChange={(e) => setExtraPointsAmount(parseInt(e.target.value) || 0)}
+                    disabled={isLocked}
+                    className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2.5 text-gray-900 text-sm outline-none focus:border-green-500 transition-all disabled:opacity-50"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-gray-900">Faixas de Premiação</h3>
+                {isAdmin && !isLocked && (
+                  <button onClick={addTier} type="button" className="p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all">
+                    <PlusCircle size={20} />
                   </button>
                 )}
               </div>
-            ))}
-          </div>
+
+              <div className="space-y-3">
+                {localTiers.map((tier, index) => (
+                  <div key={index} className="flex flex-col sm:flex-row gap-3 p-4 bg-gray-50 border border-gray-100 rounded-xl items-end sm:items-center">
+                    <div className="flex-1 space-y-1.5 w-full">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase">Pontos</label>
+                      <input type="number" value={tier.points} onChange={(e) => updateTier(index, 'points', e.target.value)} disabled={isLocked} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50" />
+                    </div>
+                    <div className="flex-[2] space-y-1.5 w-full">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase">Prêmio</label>
+                      <input type="text" value={tier.prize} onChange={(e) => updateTier(index, 'prize', e.target.value)} disabled={isLocked} placeholder="Ex: Vale Compras R$ 50" className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50" />
+                    </div>
+                    <div className="flex-1 space-y-1.5 w-full">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase">Dias/Expira</label>
+                      <input type="number" value={tier.expiryDays || 30} onChange={(e) => updateTier(index, 'expiryDays', e.target.value)} disabled={isLocked} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50" />
+                    </div>
+                    {isAdmin && !isLocked && localTiers.length > 1 && (
+                      <button type="button" onClick={() => removeTier(index)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-all">
+                        <Trash2 size={20} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Percentual de Cashback (%)</label>
+                  <div className="relative">
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">%</span>
+                    <input 
+                      type="number" 
+                      value={cashbackConfig.percentage}
+                      onChange={(e) => setCashbackConfig({...cashbackConfig, percentage: parseFloat(e.target.value) || 0})}
+                      disabled={isLocked}
+                      className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Valor Mínimo p/ Ativação</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">R$</span>
+                    <input 
+                      type="number" 
+                      value={cashbackConfig.minActivationValue}
+                      onChange={(e) => setCashbackConfig({...cashbackConfig, minActivationValue: parseFloat(e.target.value) || 0})}
+                      disabled={isLocked}
+                      className="w-full bg-gray-50 border border-gray-100 rounded-xl pl-10 pr-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Prazo Mínimo p/ Resgate (Dias)</label>
+                  <input 
+                    type="number" 
+                    value={cashbackConfig.minRedeemDays}
+                    onChange={(e) => setCashbackConfig({...cashbackConfig, minRedeemDays: parseInt(e.target.value) || 0})}
+                    disabled={isLocked}
+                    className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Validade do Cashback (Dias)</label>
+                  <input 
+                    type="number" 
+                    value={cashbackConfig.expiryDays}
+                    onChange={(e) => setCashbackConfig({...cashbackConfig, expiryDays: parseInt(e.target.value) || 0})}
+                    disabled={isLocked}
+                    className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="flex justify-end pt-4">
             <Button 
-              type="submit"
+              onClick={handleSaveAttempt}
               disabled={isSaving || isLocked}
-              className="px-8 py-3 rounded-xl font-black uppercase tracking-widest shadow-lg shadow-green-500/20"
+              className="px-8 py-3 rounded-xl font-black uppercase tracking-widest"
             >
               {isSaving ? 'Salvando...' : 'Salvar Configurações'}
             </Button>
           </div>
-          
-          {showSuccess && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center text-green-600 text-sm font-bold">
-              Premiações salvas com sucesso!
-            </motion.div>
-          )}
-        </form>
+        </div>
       </Card>
 
       <AnimatePresence>
         {showUnlockConfirm && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white border border-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-bold text-gray-900">Desbloquear Edição</h3>
-                <button onClick={() => setShowUnlockConfirm(false)} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
-              </div>
-              <p className="text-sm text-gray-500 mb-8">
-                Você está prestes a desbloquear as configurações de premiação. 
-                Tenha cuidado ao alterar estes valores, pois eles afetam diretamente a pontuação dos clientes.
-              </p>
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
+              <h3 className="text-xl font-bold mb-4">Desbloquear Edição</h3>
+              <p className="text-sm text-gray-500 mb-8">Cuidado ao alterar as regras, isso impacta a pontuação atual dos seus clientes.</p>
               <div className="flex gap-4">
-                <button 
-                  onClick={() => setShowUnlockConfirm(false)}
-                  className="flex-1 py-3 bg-gray-100 text-gray-600 font-bold rounded-xl hover:bg-gray-200 transition-all"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  onClick={() => {
-                    setIsLocked(false);
-                    setShowUnlockConfirm(false);
-                  }}
-                  className="flex-1 py-3 bg-green-500 text-white font-bold rounded-xl hover:bg-green-600 transition-all shadow-lg shadow-green-500/20"
-                >
-                  Desbloquear
-                </button>
+                <Button variant="outline" className="flex-1" onClick={() => setShowUnlockConfirm(false)}>Cancelar</Button>
+                <Button className="flex-1 bg-green-600" onClick={() => { setIsLocked(false); setShowUnlockConfirm(false); }}>Desbloquear</Button>
               </div>
             </motion.div>
           </div>
@@ -5981,32 +5920,17 @@ function RewardsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; isA
 
         {showReauth && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[210] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white border border-gray-100 rounded-3xl p-8 max-w-md w-full shadow-2xl">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-bold text-gray-900">Confirmar Alterações</h3>
-                <button onClick={() => setShowReauth(false)} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
-              </div>
-              <p className="text-sm text-gray-500 mb-6">Para sua segurança, confirme sua senha para alterar as regras de premiação.</p>
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-400 uppercase">Sua Senha</label>
-                  <input 
-                    type="password" 
-                    value={reauthPassword}
-                    onChange={(e) => setReauthPassword(e.target.value)}
-                    className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-green-500 transition-all"
-                    placeholder="••••••••"
-                  />
-                </div>
-                {reauthError && <p className="text-xs text-red-500 font-bold">{reauthError}</p>}
-                <Button 
-                  onClick={handleConfirmSave}
-                  disabled={isSaving || !reauthPassword}
-                  className="w-full py-4 rounded-xl font-black uppercase tracking-widest shadow-lg shadow-green-500/20"
-                >
-                  {isSaving ? 'Processando...' : 'Confirmar e Salvar'}
-                </Button>
-              </div>
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl">
+              <h3 className="text-xl font-bold mb-6">Confirmar Alterações</h3>
+              <input 
+                type="password" 
+                value={reauthPassword}
+                onChange={(e) => setReauthPassword(e.target.value)}
+                className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 mb-4 outline-none"
+                placeholder="Sua senha"
+              />
+              {reauthError && <p className="text-xs text-red-500 mb-4">{reauthError}</p>}
+              <Button onClick={handleConfirmSave} className="w-full">Confirmar e Salvar</Button>
             </motion.div>
           </div>
         )}
@@ -7486,6 +7410,44 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
         </div>
       )}
 
+      {/* ERP Integration Section */}
+      <Card className="p-8 bg-white border-gray-100 shadow-sm space-y-6">
+        <div className="flex items-center gap-3 border-b border-gray-100 pb-4">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+            <Key size={20} />
+          </div>
+          <div>
+            <h3 className="text-xl font-bold text-gray-900">Integração ERP</h3>
+            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Conecte seu sistema de gestão externa</p>
+          </div>
+        </div>
+        
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Chave de API / Conector</label>
+            <div className="relative">
+              <Key className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+              <input 
+                type="text" 
+                value={rules.erpKey || 'NÃO CONFIGURADA'}
+                readOnly
+                className="w-full bg-gray-50 border border-gray-100 rounded-2xl pl-14 pr-6 py-4 text-gray-900 font-mono text-sm font-bold"
+              />
+            </div>
+            <p className="text-[10px] text-gray-400 italic font-medium leading-relaxed">
+              Esta chave deve ser solicitada ao administrador master do sistema. Ela permite a sincronização de vendas diretamente com o seu ERP via Webhook ou API REST.
+            </p>
+          </div>
+
+          <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex gap-3">
+            <Info className="text-blue-500 shrink-0" size={20} />
+            <p className="text-[11px] text-blue-700 font-bold leading-relaxed">
+              O modelo de integração Saas ERP v2.0 já está disponível para sua conta. Consulte a documentação técnica para endpoints de pontuação automática.
+            </p>
+          </div>
+        </div>
+      </Card>
+
       {/* Cancellation Modals */}
       {showCancelConfirm && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
@@ -7608,6 +7570,10 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
     const goalTrend = currentGoal ? (projectedRevenue / currentGoal.value) * 100 : 0;
     
     const avgTicket = purchases.length > 0 ? purchases.reduce((acc, p) => acc + p.amount, 0) / purchases.length : 0;
+    const configuredAvgTicket = rules.currentAvgTicket || 0;
+    const configuredMonthlyRevenue = rules.currentMonthlyRevenue || 0;
+    const configuredActiveClients = configuredAvgTicket > 0 ? configuredMonthlyRevenue / configuredAvgTicket : 0;
+    
     const avgFrequency = customers.length > 0 ? purchases.length / customers.length : 0;
     
     const repeatCustomers = customers.filter(c => purchases.filter(p => p.customerId === c.id).length > 1).length;
@@ -7644,6 +7610,9 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
       projectedRevenue,
       goalTrend,
       avgTicket,
+      configuredAvgTicket,
+      configuredMonthlyRevenue,
+      configuredActiveClients,
       avgFrequency,
       repurchaseRate,
       churnRate,
@@ -7651,7 +7620,8 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
       ltvProjections,
       expectedCost,
       payback,
-      currentGoalValue: currentGoal?.value || 0
+      currentGoalValue: currentGoal?.value || 0,
+      activeCustomers
     };
   }, [purchases, customers, goals, rules]);
 
@@ -7798,23 +7768,23 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
           className="bg-white border-gray-100 shadow-sm"
         />
         <MetricCard 
-          title="Tendência da Meta" 
-          value={`${metrics.goalTrend.toFixed(1)}%`}
-          subtitle={metrics.goalTrend >= 100 ? "No caminho certo!" : "Abaixo da meta"}
+          title="Calculado: Faturamento" 
+          value={`R$ ${formatCurrency(metrics.configuredMonthlyRevenue)}`}
+          subtitle="Valor configurado"
           icon={TrendingUp}
           className="bg-white border-gray-100 shadow-sm"
         />
         <MetricCard 
           title="Ticket Médio" 
           value={`R$ ${formatCurrency(metrics.avgTicket)}`}
-          subtitle="Valor médio por compra"
+          subtitle={`Ref: R$ ${formatCurrency(metrics.configuredAvgTicket)}`}
           icon={ArrowUpCircle}
           className="bg-white border-gray-100 shadow-sm"
         />
         <MetricCard 
-          title="Taxa de Recompra" 
-          value={`${metrics.repurchaseRate.toFixed(1)}%`}
-          subtitle="Clientes recorrentes"
+          title="Clientes Ativos" 
+          value={`${metrics.activeCustomers}`}
+          subtitle={`Metas: ${Math.ceil(metrics.configuredActiveClients)}`}
           icon={Users}
           className="bg-white border-gray-100 shadow-sm"
         />
