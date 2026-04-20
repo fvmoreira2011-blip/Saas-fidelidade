@@ -37,8 +37,7 @@ import {
   EmailAuthProvider,
   reauthenticateWithCredential
 } from 'firebase/auth';
-import firebaseConfig from '../firebase-applet-config.json';
-import { db, auth } from './firebase';
+import { db, auth, firebaseConfig } from './firebase';
 import { Toast, useToast } from './components/Toast';
 import { utils, read, writeFile } from 'xlsx';
 import PhoneInput from 'react-phone-number-input';
@@ -118,7 +117,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import 'react-phone-number-input/style.css';
 import { GoogleGenAI } from "@google/genai";
-import { format, isToday, subDays, differenceInDays, differenceInYears, parseISO, isWithinInterval, startOfDay, endOfDay, subWeeks, subMonths, isBefore } from 'date-fns';
+import { format, isToday, subDays, differenceInDays, differenceInYears, parseISO, isWithinInterval, startOfDay, endOfDay, subWeeks, subMonths, isBefore, addMonths, parse } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -980,6 +979,37 @@ function AppContent() {
     }
   }, [appUser]);
 
+  const isUserOnly = appUser?.role === 'user';
+  const allowedTabs = ['dashboard', ...(rules.allowedUserTabs || [])];
+  const isOnboarding = rules.onboardingComplete === false && !isSuperAdmin;
+  const [onboardingTour, setOnboardingTour] = useState<'welcome' | 'profile' | 'goals' | 'reference_data_ticket' | 'reference_data_revenue' | 'finished' | null>(null);
+
+  useEffect(() => {
+    if (isOnboarding && !onboardingTour) {
+      setOnboardingTour('welcome');
+    }
+  }, [isOnboarding, onboardingTour]);
+
+  const handleTabChange = (tab: any) => {
+    if (isOnboarding) {
+      if (onboardingTour === 'welcome') return;
+      if (onboardingTour === 'profile' && tab !== 'super_admin_profile') {
+        showToast("Por favor, preencha seu perfil para continuar.", "warning");
+        return;
+      }
+      if (onboardingTour === 'goals' && tab !== 'goals') {
+        showToast("Por favor, preencha as metas de 12 meses para continuar.", "warning");
+        return;
+      }
+    }
+    if (isUserOnly && !allowedTabs.includes(tab)) {
+      showToast("Peça acesso ao administrador para acessar esta aba.", "warning");
+      return;
+    }
+    setActiveTab(tab);
+    setIsMobileMenuOpen(false);
+  };
+
   const prevUserRef = React.useRef<string | null>(null);
   useEffect(() => {
     if (user && !prevUserRef.current) {
@@ -1202,6 +1232,16 @@ function AppContent() {
     };
   }, [user?.uid, appUser?.approved, isAdminUser, selectedCompanyId]);
 
+  const handleUpdateRules = async (newRules: LoyaltyRule) => {
+    if (!selectedCompanyId) return;
+    try {
+      await setDoc(doc(db, 'configs', selectedCompanyId), newRules);
+    } catch (error) {
+      console.error("Error updating rules:", error);
+      showToast("Erro ao atualizar configurações.", "error");
+    }
+  };
+
   // Logic to check expiration
   const customersRef = React.useRef(customers);
   useEffect(() => {
@@ -1312,23 +1352,6 @@ function AppContent() {
       );
     }
 
-    const isUserOnly = appUser?.role === 'user';
-    const allowedTabs = ['dashboard', ...(rules.allowedUserTabs || [])];
-    const isOnboarding = rules.onboardingComplete === false && !isSuperAdmin;
-
-    const handleTabChange = (tab: any) => {
-      if (isOnboarding && tab !== 'company_profile' && tab !== 'rewards' && tab !== 'goals') {
-        showToast("Por favor, complete o onboarding de configuração primeiro.", "warning");
-        return;
-      }
-      if (isUserOnly && !allowedTabs.includes(tab)) {
-        showToast("Peça acesso ao administrador para acessar esta aba.", "warning");
-        return;
-      }
-      setActiveTab(tab);
-      setIsMobileMenuOpen(false);
-    };
-
     const currentLogo = isSuperAdmin ? (appUser?.photoURL || `https://ui-avatars.com/api/?name=${appUser?.displayName || user.email}&background=random`) : (appUser?.logoURL || rules.companyProfile?.photoURL || APP_LOGO);
     const currentCompanyName = isSuperAdmin ? (appUser?.displayName || 'Administrador') : (appUser?.companyName || rules.companyProfile?.companyName || rules.campaignName || 'PROGRAMA DE FIDELIDADE');
     const currentThemeColor = appUser?.themeColor || rules.themeColor || '#000000';
@@ -1342,8 +1365,85 @@ function AppContent() {
     } as React.CSSProperties;
 
     return (
-      <div className={cn("min-h-screen flex flex-col lg:flex-row", isSuperAdminPanelActive ? "bg-black text-white" : "bg-white text-gray-900")} style={themeStyle}>
-      {/* Sidebar for Desktop */}
+      <div className={cn("min-h-screen flex flex-col lg:flex-row shadow-inner", isSuperAdminPanelActive ? "bg-black text-white" : "bg-white text-gray-900")} style={themeStyle}>
+        
+        {/* Onboarding Overlay */}
+        <AnimatePresence>
+          {onboardingTour === 'welcome' && (
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-xl flex items-center justify-center p-6 text-center"
+            >
+              <div className="max-w-2xl space-y-8">
+                <div className="w-24 h-24 bg-green-500 rounded-3xl flex items-center justify-center mx-auto shadow-2xl shadow-green-500/20 rotate-3">
+                  <CheckCircle2 size={48} className="text-white" />
+                </div>
+                <div className="space-y-4">
+                  <h1 className="text-4xl font-black text-white tracking-tighter uppercase">Bem-vindo à sua plataforma de gestão de clientes</h1>
+                  <p className="text-gray-400 text-lg leading-relaxed">
+                    Você precisa configurar algumas informações como usuários do sistema, metas mês a mês, 
+                    vendas dos últimos 12 meses em moeda, ticket médio dos últimos 12 meses e tipo de premiação - pontos ou cashback.
+                  </p>
+                  <p className="text-green-500 font-bold uppercase tracking-widest text-sm">
+                    Isso deve levar cerca de 20 minutos. Você tem todas essas informações?
+                  </p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-4 pt-6">
+                  <button 
+                    onClick={handleLogout}
+                    className="flex-1 px-8 py-5 rounded-2xl font-black uppercase tracking-widest text-gray-500 hover:text-white transition-all order-2 sm:order-1"
+                  >
+                    Voltar depois
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setOnboardingTour('profile');
+                      setActiveTab('super_admin_profile');
+                    }}
+                    className="flex-1 bg-green-600 px-8 py-5 rounded-2xl font-black uppercase tracking-widest text-white shadow-2xl shadow-green-600/30 hover:bg-green-700 transition-all active:scale-95 order-1 sm:order-2"
+                  >
+                    Vamos Lá
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {onboardingTour === 'finished' && (
+             <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-xl flex items-center justify-center p-6 text-center"
+            >
+              <div className="max-w-md space-y-8">
+                <div className="w-24 h-24 bg-green-500 rounded-3xl flex items-center justify-center mx-auto shadow-2xl shadow-green-500/20 animate-bounce">
+                  <Trophy size={48} className="text-white" />
+                </div>
+                <div className="space-y-4">
+                  <h1 className="text-3xl font-black text-white tracking-tighter uppercase">Parabéns!</h1>
+                  <p className="text-gray-400 text-lg">
+                    Tudo pronto para você começar a gerenciar seus clientes.
+                  </p>
+                </div>
+                <button 
+                  onClick={async () => {
+                    await updateDoc(doc(db, 'configs', selectedCompanyId!), { onboardingComplete: true });
+                    setOnboardingTour(null);
+                    setActiveTab('dashboard');
+                  }}
+                  className="w-full bg-green-600 px-8 py-5 rounded-2xl font-black uppercase tracking-widest text-white"
+                >
+                  Começar Agora
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Sidebar for Desktop */}
       <aside className={cn("hidden lg:flex flex-col w-72 sticky top-0 h-screen p-6 z-20 bg-black border-r border-white/10")}>
         <div className="flex items-center gap-4 mb-10 w-full px-2">
           <div className={cn("w-14 h-14 overflow-hidden shadow-lg rounded-full border-2 border-white/10 shrink-0")}>
@@ -1565,33 +1665,47 @@ function AppContent() {
         {/* Main Content */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full pb-24 lg:pb-8">
           <AnimatePresence mode="wait">
-            {rules.onboardingComplete === false && !isSuperAdmin && (
-              <div key="onboarding">
-                <OnboardingOverlay 
-                  rules={rules} 
-                  onUpdateRules={(r) => setDoc(doc(db, 'configs', selectedCompanyId!), r)}
-                  onAddAdmin={async (email) => {
-                    showToast(`Convite enviado para ${email}`, "success");
-                  }}
-                />
-              </div>
-            )}
             {activeTab === 'dashboard' && !isSuperAdmin && <div key="dashboard"><DashboardTab purchases={purchases} customers={customers} rules={rules} goals={goals} appUser={appUser} /></div>}
             {activeTab === 'notificar' && !isSuperAdmin && <div key="notificar"><NotifyTab customers={customers} rules={rules} companyId={selectedCompanyId} /></div>}
             {activeTab === 'customers' && !isSuperAdmin && <div key="customers"><CustomersTab customers={customers} purchases={purchases} isAdmin={isAdminUser} rules={rules} companyId={selectedCompanyId} /></div>}
             {activeTab === 'rewarded_customers' && !isSuperAdmin && <div key="rewarded_customers"><RewardedCustomersTab customers={customers} rules={rules} /></div>}
-            {activeTab === 'rewards' && !isSuperAdmin && <div key="rewards"><RewardsTab rules={rules} isAdmin={isAdminUser} onUpdateRules={(r) => setDoc(doc(db, 'configs', selectedCompanyId!), r)} /></div>}
-            {activeTab === 'seasonal_dates' && !isSuperAdmin && <div key="seasonal_dates"><SeasonalDatesTab rules={rules} isAdmin={isAdminUser} onTabChange={handleTabChange} onUpdateRules={(r) => setDoc(doc(db, 'configs', selectedCompanyId!), r)} /></div>}
-            {activeTab === 'ltv' && !isSuperAdmin && <div key="ltv"><LTVTab purchases={purchases} customers={customers} rules={rules} isAdmin={isAdminUser} onUpdateRules={(r) => setDoc(doc(db, 'configs', selectedCompanyId!), r)} /></div>}
-            {activeTab === 'goals' && !isSuperAdmin && <div key="goals"><GoalsTab goals={goals} purchases={purchases} onUpdateRules={(r) => setDoc(doc(db, 'configs', selectedCompanyId!), r)} rules={rules} isAdmin={isAdminUser} companyId={selectedCompanyId} /></div>}
+            {activeTab === 'rewards' && !isSuperAdmin && (
+              <div key="rewards">
+                <RewardsTab 
+                  rules={rules} 
+                  isAdmin={isAdminUser} 
+                  onUpdateRules={handleUpdateRules} 
+                  onboardingMode={onboardingTour === 'rewards'}
+                  onOnboardingFinish={() => setOnboardingTour('finished')}
+                />
+              </div>
+            )}
+            {activeTab === 'seasonal_dates' && !isSuperAdmin && <div key="seasonal_dates"><SeasonalDatesTab rules={rules} isAdmin={isAdminUser} onTabChange={handleTabChange} onUpdateRules={handleUpdateRules} /></div>}
+            {activeTab === 'ltv' && !isSuperAdmin && <div key="ltv"><LTVTab purchases={purchases} customers={customers} rules={rules} isAdmin={isAdminUser} onUpdateRules={handleUpdateRules} /></div>}
+            {activeTab === 'goals' && !isSuperAdmin && (
+              <div key="goals">
+                <GoalsTab 
+                  goals={goals} 
+                  purchases={purchases} 
+                  onUpdateRules={handleUpdateRules} 
+                  rules={rules} 
+                  isAdmin={isAdminUser} 
+                  companyId={selectedCompanyId} 
+                  onboardingStep={onboardingTour === 'goals' ? 'onboarding' : 'normal'}
+                  onOnboardingComplete={() => {
+                    setOnboardingTour('reference_data_ticket');
+                  }}
+                />
+              </div>
+            )}
             {activeTab === 'score' && !isSuperAdmin && <div key="score"><ScoreTab rules={rules} customers={customers} appUser={appUser} companyId={selectedCompanyId} /></div>}
             {activeTab === 'promotion' && !isSuperAdmin && <div key="promotion"><PromotionTab customers={customers} purchases={purchases} /></div>}
             {activeTab === 'strategic_analysis' && !isSuperAdmin && <div key="strategic_analysis"><StrategicAnalysisTab purchases={purchases} customers={customers} rules={rules} goals={goals} companyId={selectedCompanyId} /></div>}
             {activeTab === 'reset' && !isSuperAdmin && <div key="reset"><ResetSystemTab companyId={selectedCompanyId} isAdmin={isAdminUser} /></div>}
-            {activeTab === 'company_profile' && !isSuperAdmin && <div key="company_profile"><CompanyProfileTab rules={rules} isAdmin={isAdminUser} appUser={appUser} onCancelContract={() => setContractCancelled(true)} onUpgrade={() => setActiveTab('strategic_analysis')} onUpdateRules={(r) => setDoc(doc(db, 'configs', selectedCompanyId!), r)} /></div>}
+            {activeTab === 'company_profile' && !isSuperAdmin && <div key="company_profile"><CompanyProfileTab rules={rules} isAdmin={isAdminUser} appUser={appUser} onCancelContract={() => setContractCancelled(true)} onUpgrade={() => setActiveTab('strategic_analysis')} onUpdateRules={handleUpdateRules} /></div>}
             
-            {/* Super Admin Tabs */}
-            {activeTab === 'super_admin_profile' && isSuperAdmin && appUser && <div key="super_admin_profile"><SuperAdminProfileTab appUser={appUser} /></div>}
+            {/* Super Admin Tabs / Profile */}
+            {activeTab === 'super_admin_profile' && appUser && <div key="super_admin_profile"><SuperAdminProfileTab appUser={appUser} onboardingMode={onboardingTour === 'profile'} onOnboardingNext={() => { setOnboardingTour('goals'); setActiveTab('goals'); }} /></div>}
             {activeTab === 'super_admin_management' && isSuperAdmin && <div key="super_admin_management"><SuperAdminManagementTab /></div>}
             {activeTab === 'redemption_codes' && isSuperAdmin && <div key="redemption_codes"><RedemptionCodesTab /></div>}
             {activeTab === 'painel_master' && isSuperAdmin && <div key="painel_master"><SuperAdminPanel onBack={() => setActiveTab('super_admin_profile')} isSuperAdmin={isSuperAdmin} appUser={appUser!} /></div>}
@@ -1698,12 +1812,116 @@ function AppContent() {
         </AnimatePresence>
 
         <AnimatePresence>
-          {toast && (
-            <Toast 
-              message={toast.message} 
-              type={toast.type} 
-              onClose={hideToast} 
-            />
+          {onboardingTour === 'reference_data_ticket' && (
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-xl flex items-center justify-center p-6 text-center"
+            >
+              <div className="max-w-md space-y-6">
+                <div className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mx-auto shadow-xl shadow-green-500/20">
+                  <DollarSign size={40} className="text-white" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-2xl font-black text-white tracking-tighter uppercase">Agora informe os dados de referência</h3>
+                  <p className="text-gray-400 font-medium">Qual é o seu ticket médio atual?</p>
+                </div>
+                <div className="space-y-4">
+                  <div className="relative">
+                    <DollarSign className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-500" size={24} />
+                    <input 
+                      type="number" 
+                      placeholder="0.00"
+                      className="w-full bg-white/5 border border-white/10 rounded-2xl pl-16 pr-6 py-5 text-white font-black text-2xl outline-none focus:border-green-500 transition-all"
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter') {
+                          const val = parseFloat((e.target as HTMLInputElement).value);
+                          if (val > 0) {
+                            handleUpdateRules({ ...rules, currentAvgTicket: val });
+                            setOnboardingTour('reference_data_revenue');
+                          } else {
+                            showToast("Por favor, informe um valor válido.", "warning");
+                          }
+                        }
+                      }}
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 italic">Pressione Enter para confirmar</p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {onboardingTour === 'reference_data_revenue' && (
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-xl flex items-center justify-center p-6 text-center"
+            >
+              <div className="max-w-md space-y-6">
+                <div className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mx-auto shadow-xl shadow-green-500/20">
+                  <TrendingUp size={40} className="text-white" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-2xl font-black text-white tracking-tighter uppercase">Ótimo!</h3>
+                  <p className="text-gray-400 font-medium">Agora informe seu faturamento médio mensal atual:</p>
+                </div>
+                <div className="space-y-4">
+                  <div className="relative">
+                    <DollarSign className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-500" size={24} />
+                    <input 
+                      type="number" 
+                      placeholder="0.00"
+                      className="w-full bg-white/5 border border-white/10 rounded-2xl pl-16 pr-6 py-5 text-white font-black text-2xl outline-none focus:border-green-500 transition-all"
+                      onKeyPress={async (e) => {
+                        if (e.key === 'Enter') {
+                          const val = parseFloat((e.target as HTMLInputElement).value);
+                          if (val > 0) {
+                            await handleUpdateRules({ ...rules, currentMonthlyRevenue: val, onboardingComplete: true });
+                            setOnboardingTour('finished');
+                          } else {
+                            showToast("Por favor, informe um valor válido.", "warning");
+                          }
+                        }
+                      }}
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 italic">Pressione Enter para finalizar o onboarding</p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {onboardingTour === 'finished' && (
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-xl flex items-center justify-center p-6 text-center"
+            >
+              <div className="max-w-md space-y-8">
+                <div className="w-24 h-24 bg-green-500 rounded-3xl flex items-center justify-center mx-auto shadow-2xl shadow-green-500/20 rotate-12">
+                  <CheckCircle2 size={48} className="text-white" />
+                </div>
+                <div className="space-y-4">
+                  <h1 className="text-4xl font-black text-white tracking-tighter uppercase">Tudo Pronto!</h1>
+                  <p className="text-gray-400 text-lg leading-relaxed">
+                    Sua plataforma foi configurada com sucesso. Agora você pode gerenciar seus clientes e metas com facilidade.
+                  </p>
+                </div>
+                <button 
+                  onClick={() => {
+                    setOnboardingTour(null);
+                    setActiveTab('dashboard');
+                  }}
+                  className="w-full bg-green-600 px-8 py-5 rounded-2xl font-black uppercase tracking-widest text-white shadow-2xl shadow-green-600/30 hover:bg-green-700 transition-all active:scale-95"
+                >
+                  Entrar no Painel
+                </button>
+              </div>
+            </motion.div>
           )}
         </AnimatePresence>
       </div>
@@ -2258,11 +2476,12 @@ function OnboardingOverlay({ rules, onUpdateRules, onAddAdmin }: { rules: Loyalt
   );
 }
 
-function SuperAdminProfileTab({ appUser }: { appUser: AppUser }) {
+function SuperAdminProfileTab({ appUser, onboardingMode, onOnboardingNext }: { appUser: AppUser; onboardingMode?: boolean; onOnboardingNext?: () => void }) {
   const [displayName, setDisplayName] = useState(appUser?.displayName || '');
   const [phone, setPhone] = useState(appUser?.phone || '');
   const [roleInCompany, setRoleInCompany] = useState(appUser?.roleInCompany || '');
   const [photoURL, setPhotoURL] = useState(appUser?.photoURL || '');
+  const { showToast } = useToast();
 
   useEffect(() => {
     if (appUser) {
@@ -2290,6 +2509,14 @@ function SuperAdminProfileTab({ appUser }: { appUser: AppUser }) {
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (onboardingMode) {
+      if (!displayName || !phone || !photoURL) {
+        showToast("Por favor, preencha nome, celular e foto de perfil.", "warning");
+        return;
+      }
+    }
+
     setLoading(true);
     setMessage(null);
     try {
@@ -2299,9 +2526,12 @@ function SuperAdminProfileTab({ appUser }: { appUser: AppUser }) {
         roleInCompany,
         photoURL
       });
-      setMessage({ type: 'success', text: 'Perfil atualizado com sucesso!' });
+      showToast('Perfil atualizado com sucesso!', 'success');
+      if (onboardingMode && onOnboardingNext) {
+        onOnboardingNext();
+      }
     } catch (err: any) {
-      setMessage({ type: 'error', text: 'Erro ao atualizar perfil: ' + err.message });
+      showToast('Erro ao atualizar perfil: ' + err.message, 'error');
     } finally {
       setLoading(false);
     }
@@ -3663,10 +3893,16 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
       const val = parseFloat(amount);
       let pointsEarned = 0;
       
-      if (val >= (rules.minPurchaseValue || 0)) {
-        pointsEarned = 1;
-        if (rules.extraPointsThreshold && rules.extraPointsAmount && val >= rules.extraPointsThreshold) {
-          pointsEarned += rules.extraPointsAmount;
+      if (rules.rewardMode === 'cashback') {
+        if (val >= (rules.cashbackConfig?.minActivationValue || 0)) {
+          pointsEarned = val * ((rules.cashbackConfig?.percentage || 0) / 100);
+        }
+      } else {
+        if (val >= (rules.minPurchaseValue || 0)) {
+          pointsEarned = 1;
+          if (rules.extraPointsThreshold && rules.extraPointsAmount && val >= rules.extraPointsThreshold) {
+            pointsEarned += rules.extraPointsAmount;
+          }
         }
       }
       
@@ -3703,8 +3939,10 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
         await addDoc(collection(db, 'notifications'), {
           customerId: foundCustomer.id,
           companyId,
-          title: 'Você ganhou pontos!',
-          message: `Parabéns! Você acaba de ganhar ${pointsEarned} ponto(s) na ${rules.companyProfile?.companyName || 'nossa loja'}. Seu saldo agora é de ${newPoints} pontos.`,
+          title: rules.rewardMode === 'cashback' ? 'Você ganhou cashback!' : 'Você ganhou pontos!',
+          message: rules.rewardMode === 'cashback' 
+            ? `Parabéns! Você acaba de ganhar R$ ${formatCurrency(pointsEarned)} de cashback na ${rules.companyProfile?.companyName || 'nossa loja'}. Seu saldo agora é de R$ ${formatCurrency(newPoints)}.`
+            : `Parabéns! Você acaba de ganhar ${pointsEarned} ponto(s) na ${rules.companyProfile?.companyName || 'nossa loja'}. Seu saldo agora é de ${newPoints} pontos.`,
           type: 'points',
           date: now,
           read: false
@@ -3739,8 +3977,10 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
       setMessage({ 
         type: 'success', 
         text: pointsEarned > 0 
-          ? `Pontuação confirmada! +1 ponto para ${foundCustomer.name}`
-          : `Compra registrada para ${foundCustomer.name}. (Abaixo do valor mínimo para pontuar)`
+          ? (rules.rewardMode === 'cashback' 
+              ? `Cashback confirmado! +R$ ${formatCurrency(pointsEarned)} para ${foundCustomer.name}`
+              : `Pontuação confirmada! +${pointsEarned} ponto(s) para ${foundCustomer.name}`)
+          : `Compra registrada para ${foundCustomer.name}. (Abaixo do valor mínimo)`
       });
       setAmount('');
       setPhone(undefined);
@@ -4216,11 +4456,12 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
   );
 }
 
-function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId }: { goals: Goal[]; purchases: Purchase[]; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; rules: LoyaltyRule; isAdmin: boolean; companyId: string | null }) {
+function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, onboardingStep, onOnboardingComplete }: { goals: Goal[]; purchases: Purchase[]; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; rules: LoyaltyRule; isAdmin: boolean; companyId: string | null; onboardingStep?: 'onboarding' | 'normal'; onOnboardingComplete?: () => void }) {
   const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [value, setValue] = useState('');
   const [workingDays, setWorkingDays] = useState('22');
   const [isSaving, setIsSaving] = useState(false);
+  const [showOnboardingFinish, setShowOnboardingFinish] = useState(false);
   
   // Reference data state
   const [avgTicket, setAvgTicket] = useState(rules.currentAvgTicket?.toString() || '');
@@ -4250,9 +4491,20 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId }
           workingDays: days
         });
       }
+      
       setValue('');
       setWorkingDays('22');
       showToast("Meta salva com sucesso!", "success");
+
+      if (onboardingStep === 'onboarding') {
+        const nextCount = goals.length + (existingGoal ? 0 : 1);
+        if (nextCount >= 12) {
+          onOnboardingComplete?.();
+        } else {
+          const nextMonth = addMonths(parse(month, 'yyyy-MM', new Date()), 1);
+          setMonth(format(nextMonth, 'yyyy-MM'));
+        }
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'goals');
     } finally {
@@ -4274,6 +4526,19 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId }
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleFinishGoalsOnboarding = async () => {
+    if (goals.length < 12) {
+      showToast(`Você ainda precisa definir metas para mais ${12 - goals.length} meses.`, "warning");
+      return;
+    }
+    if (parseFloat(avgTicket) <= 0 || parseFloat(monthlyRevenue) <= 0) {
+      showToast("Por favor, preencha o Ticket Médio e o Faturamento Médio para finalizar.", "warning");
+      return;
+    }
+    await handleSaveReference();
+    setShowOnboardingFinish(true);
   };
 
   const activeClientsNeeded = useMemo(() => {
@@ -4333,13 +4598,23 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId }
                   onChange={(e) => setValue(e.target.value)}
                   placeholder="0.00"
                   step="0.01"
-                  className="w-full bg-gray-50 border border-gray-100 rounded-2xl pl-14 pr-6 py-4 text-gray-900 font-black text-xl outline-none focus:border-primary transition-all shadow-inner"
+                  className={cn(
+                    "w-full bg-gray-50 border rounded-2xl pl-14 pr-6 py-4 text-gray-900 font-black text-xl outline-none transition-all shadow-inner",
+                    onboardingStep === 'onboarding' && !value ? "border-amber-400 animate-pulse" : "border-gray-100 focus:border-primary"
+                  )}
                   required
                 />
               </div>
             </div>
-            <Button type="submit" disabled={isSaving} className="w-full py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-primary/20">
-              {isSaving ? 'Gravando...' : 'Salvar Meta Mensal'}
+            <Button 
+              type="submit" 
+              disabled={isSaving || (onboardingStep === 'onboarding' && !value)} 
+              className={cn(
+                "w-full py-4 rounded-2xl font-black uppercase tracking-widest transition-all",
+                (onboardingStep === 'onboarding' && !value) ? "opacity-30 cursor-not-allowed bg-gray-400" : "shadow-lg shadow-primary/20 shadow-primary/20"
+              )}
+            >
+              {isSaving ? 'Gravando...' : (onboardingStep === 'onboarding' ? `Salvar Meta (${goals.length}/12)` : 'Salvar Meta Mensal')}
             </Button>
           </form>
         </Card>
@@ -4388,12 +4663,41 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId }
               <p className="text-[10px] text-gray-400 font-medium mt-1 italic">Baseado no faturamento dividido pelo ticket médio.</p>
             </div>
 
-            <Button onClick={handleSaveReference} disabled={isSaving} variant="outline" className="w-full py-4 border-primary/20 text-primary hover:bg-primary/5 font-black uppercase tracking-widest">
-              Atualizar Referências
+            <Button onClick={handleFinishGoalsOnboarding} disabled={isSaving} variant="outline" className="w-full py-4 border-primary/20 text-primary hover:bg-primary/5 font-black uppercase tracking-widest">
+              {onboardingStep === 'onboarding' ? 'Próxima Etapa: Premiação' : (isSaving ? 'Gravando...' : 'Atualizar Referências')}
             </Button>
           </div>
         </Card>
       </div>
+
+      <AnimatePresence>
+        {showOnboardingFinish && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 text-center"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="bg-white rounded-3xl p-8 max-w-md shadow-2xl space-y-6"
+            >
+              <div className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mx-auto shadow-xl shadow-green-500/20">
+                <CheckCircle2 size={40} className="text-white" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-2xl font-black text-gray-900 tracking-tighter uppercase">Parabéns!</h3>
+                <p className="text-gray-500 font-medium">Agora vamos definir qual será o seu tipo de campanha.</p>
+              </div>
+              <div className="flex flex-col gap-3">
+                <Button onClick={() => onOnboardingComplete?.()} className="w-full py-4">Vamos Lá</Button>
+                <button onClick={handleLogout} className="text-gray-400 font-bold uppercase tracking-widest text-xs py-2">Deixar para depois</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="mt-8">
         <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4 ml-1">Histórico de Metas</h3>
@@ -5618,7 +5922,7 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
   );
 }
 
-function RewardsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; isAdmin: boolean; onUpdateRules: (rules: LoyaltyRule) => Promise<void> }) {
+function RewardsTab({ rules, isAdmin, onUpdateRules, onboardingMode, onOnboardingFinish }: { rules: LoyaltyRule; isAdmin: boolean; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; onboardingMode?: boolean; onOnboardingFinish?: () => void }) {
   const [localTiers, setLocalTiers] = useState<RewardTier[]>(rules.rewardTiers || [{ points: 10, prize: 'Prêmio Padrão', expiryDays: 30 }]);
   const [minPurchaseValue, setMinPurchaseValue] = useState(rules.minPurchaseValue || 0);
   const [extraPointsThreshold, setExtraPointsThreshold] = useState(rules.extraPointsThreshold || 0);
@@ -5636,7 +5940,7 @@ function RewardsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; isA
   const [showReauth, setShowReauth] = useState(false);
   const [reauthPassword, setReauthPassword] = useState('');
   const [reauthError, setReauthError] = useState('');
-  const [isLocked, setIsLocked] = useState(true);
+  const [isLocked, setIsLocked] = useState(!onboardingMode);
   const [showUnlockConfirm, setShowUnlockConfirm] = useState(false);
 
   const addTier = () => {
@@ -5659,10 +5963,37 @@ function RewardsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; isA
     setLocalTiers(newTiers);
   };
 
-  const handleSaveAttempt = (e?: React.FormEvent | React.MouseEvent) => {
+  const handleSaveAttempt = async (e?: React.FormEvent | React.MouseEvent) => {
     e?.preventDefault();
     if (!isAdmin || isLocked) return;
-    setShowReauth(true);
+    
+    if (onboardingMode) {
+      setIsSaving(true);
+      try {
+        const updatedRules = { 
+          ...rules, 
+          rewardTiers: localTiers,
+          minPurchaseValue,
+          extraPointsThreshold,
+          extraPointsAmount,
+          rewardMode,
+          cashbackConfig
+        };
+        await onUpdateRules(updatedRules);
+        setShowSuccess(true);
+        setIsLocked(true);
+        setTimeout(() => {
+          setShowSuccess(false);
+          onOnboardingFinish?.();
+        }, 1500);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, 'configs');
+      } finally {
+        setIsSaving(false);
+      }
+    } else {
+      setShowReauth(true);
+    }
   };
 
   const handleConfirmSave = async () => {

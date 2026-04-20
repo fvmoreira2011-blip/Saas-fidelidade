@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import PhoneInput from 'react-phone-number-input';
+import { differenceInDays, parseISO } from 'date-fns';
 import { 
   Trophy, 
   Search, 
@@ -54,6 +55,13 @@ interface StoreConfig {
   id: string;
   campaignName?: string;
   themeColor?: string;
+  rewardMode?: 'points' | 'cashback';
+  cashbackConfig?: {
+    percentage: number;
+    minActivationValue: number;
+    minRedeemDays: number;
+    expiryDays: number;
+  };
   companyProfile?: {
     companyName: string;
     logoURL?: string;
@@ -516,12 +524,22 @@ export default function ConsumerApp() {
                           )}
                         </div>
                         <div className="flex-1">
-                          <h5 className="font-black text-gray-900 tracking-tight">{store?.companyProfile?.companyName || 'Loja Parceira'}</h5>
-                          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">{store?.campaignName || 'Programa de Fidelidade'}</p>
+                          <h5 className="font-black text-gray-900 tracking-tight">
+                            {store?.companyProfile?.companyName || 'Loja Parceira'}
+                            {store?.rewardMode === 'cashback' ? ' (C$)' : ' (P)'}
+                          </h5>
+                          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">
+                            {store?.campaignName || 'Programa de Fidelidade'}
+                            {store?.rewardMode === 'cashback' ? ' (C$)' : ' (P)'}
+                          </p>
                         </div>
                         <div className="text-right">
-                          <p className="text-2xl font-black text-green-600">{record.points}</p>
-                          <p className="text-[10px] text-gray-400 font-bold uppercase">Pontos</p>
+                          <p className="text-2xl font-black text-green-600">
+                            {store?.rewardMode === 'cashback' ? `R$ ${formatCurrency(record.points)}` : record.points}
+                          </p>
+                          <p className="text-[10px] text-gray-400 font-bold uppercase">
+                            {store?.rewardMode === 'cashback' ? 'Cashback' : 'Pontos'}
+                          </p>
                         </div>
                       </div>
 
@@ -529,18 +547,27 @@ export default function ConsumerApp() {
                       <div className="mt-6 space-y-2">
                         <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-widest">
                           <span className="text-gray-400">Progresso</span>
-                          <span className="text-green-600">{nextTier ? `${record.points}/${nextTier.points}` : 'Prêmio Máximo!'}</span>
+                          <span className="text-green-600">
+                            {store?.rewardMode === 'cashback' 
+                              ? `SALDO: R$ ${formatCurrency(record.points)}`
+                              : (nextTier ? `${record.points}/${nextTier.points}` : 'Prêmio Máximo!')
+                            }
+                          </span>
                         </div>
                         <div className="h-2 bg-gray-50 rounded-full overflow-hidden border border-gray-100">
                           <motion.div 
                             initial={{ width: 0 }}
-                            animate={{ width: `${progress}%` }}
-                            className="h-full bg-green-500 rounded-full"
+                            animate={{ 
+                              width: `${store?.rewardMode === 'cashback' 
+                                ? Math.min((record.points / (store.cashbackConfig?.minActivationValue || 1)) * 100, 100)
+                                : progress}%` 
+                            }}
+                            className={cn("h-full rounded-full", store?.rewardMode === 'cashback' ? "bg-green-600" : "bg-green-500")}
                           />
                         </div>
                       </div>
 
-                      {nextTier && (
+                      {nextTier && store?.rewardMode !== 'cashback' && (
                         <div className="mt-4 flex items-center gap-2 text-[10px] font-bold text-gray-500 bg-gray-50 p-3 rounded-xl">
                           <Award size={14} className="text-green-600" />
                           Próximo: {nextTier.prize}
@@ -550,6 +577,22 @@ export default function ConsumerApp() {
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
+                          if (store?.rewardMode === 'cashback') {
+                            const minRedeem = store.cashbackConfig?.minActivationValue || 0;
+                            const minDays = store.cashbackConfig?.minRedeemDays || 0;
+                            const daysSinceLast = record.lastPurchaseDate ? differenceInDays(new Date(), parseISO(record.lastPurchaseDate)) : 999;
+                            
+                            if (record.points < minRedeem) {
+                              showToast(`Saldo insuficiente. Mínimo para resgate: R$ ${formatCurrency(minRedeem)}`, "info");
+                              return;
+                            }
+                            if (daysSinceLast < minDays) {
+                              showToast(`Prazo mínimo para resgate não atingido. Aguarde mais ${minDays - daysSinceLast} dia(s).`, "info");
+                              return;
+                            }
+                            setSelectedStore(record.companyId);
+                            return;
+                          }
                           const availableTiers = store?.rewardTiers?.filter(t => t.points <= record.points) || [];
                           if (availableTiers.length > 0) {
                             setSelectedStore(record.companyId);
@@ -559,12 +602,18 @@ export default function ConsumerApp() {
                         }}
                         className={cn(
                           "w-full mt-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
-                          (store?.rewardTiers?.some(t => t.points <= record.points))
-                            ? "bg-green-500 text-white shadow-lg shadow-green-500/20 hover:bg-green-600"
-                            : "bg-gray-100 text-gray-400"
+                          store?.rewardMode === 'cashback'
+                            ? (record.points > 0 && 
+                               record.points >= (store.cashbackConfig?.minActivationValue || 0) &&
+                               (record.lastPurchaseDate ? differenceInDays(new Date(), parseISO(record.lastPurchaseDate)) : 999) >= (store.cashbackConfig?.minRedeemDays || 0)
+                                ? "bg-green-600 text-white shadow-lg shadow-green-600/20 hover:bg-green-700"
+                                : "bg-gray-100 text-gray-400")
+                            : (store?.rewardTiers?.some(t => t.points <= record.points))
+                              ? "bg-green-500 text-white shadow-lg shadow-green-500/20 hover:bg-green-600"
+                              : "bg-gray-100 text-gray-400"
                         )}
                       >
-                        Resgatar Prêmio
+                        {store?.rewardMode === 'cashback' ? 'Resgatar Cashback' : 'Resgatar Prêmio'}
                       </button>
                     </motion.div>
                   );
@@ -687,8 +736,14 @@ export default function ConsumerApp() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-gray-50 p-6 rounded-3xl text-center border border-gray-100">
-                  <p className="text-3xl font-black text-green-600">{customerRecords.find(r => r.companyId === selectedStore)?.points}</p>
-                  <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Saldo Atual</p>
+                  <p className="text-3xl font-black text-green-600">
+                    {stores[selectedStore]?.rewardMode === 'cashback' 
+                      ? `R$ ${formatCurrency(customerRecords.find(r => r.companyId === selectedStore)?.points || 0)}` 
+                      : customerRecords.find(r => r.companyId === selectedStore)?.points}
+                  </p>
+                  <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">
+                    {stores[selectedStore]?.rewardMode === 'cashback' ? 'Saldo Cashback' : 'Saldo Atual'}
+                  </p>
                 </div>
                 <div className="bg-gray-50 p-6 rounded-3xl text-center border border-gray-100">
                   <p className="text-3xl font-black text-gray-900">{stores[selectedStore]?.rewardTiers?.length || 0}</p>
@@ -697,39 +752,69 @@ export default function ConsumerApp() {
               </div>
 
               <div className="space-y-4">
-                <h4 className="text-xs font-black text-gray-900 uppercase tracking-widest ml-1">Tabela de Prêmios</h4>
+                <h4 className="text-xs font-black text-gray-900 uppercase tracking-widest ml-1">
+                  {stores[selectedStore]?.rewardMode === 'cashback' ? 'Opção de Resgate' : 'Tabela de Prêmios'}
+                </h4>
                 <div className="space-y-3">
-                  {stores[selectedStore]?.rewardTiers?.sort((a, b) => a.points - b.points).map((tier, i) => {
-                    const currentPoints = customerRecords.find(r => r.companyId === selectedStore)?.points || 0;
-                    const isUnlocked = currentPoints >= tier.points;
-
-                    return (
-                      <div 
-                        key={i}
-                        className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${
-                          isUnlocked ? 'bg-green-50 border-green-200' : 'bg-white border-gray-100 opacity-60'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className={`p-2 rounded-xl ${isUnlocked ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-400'}`}>
-                            {isUnlocked ? <Trophy size={16} /> : <Star size={16} />}
-                          </div>
-                          <div>
-                            <p className="text-sm font-bold text-gray-900">{tier.prize}</p>
-                            <p className="text-[10px] text-gray-500 font-bold">{tier.points} pontos necessários</p>
-                          </div>
+                  {stores[selectedStore]?.rewardMode === 'cashback' ? (
+                    <div className="p-4 rounded-2xl border bg-green-50 border-green-200 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-xl bg-green-600 text-white">
+                          <Wallet size={16} />
                         </div>
-                        {isUnlocked && (
-                          <button 
-                            onClick={() => setRedeemingTier({ ...tier, companyId: selectedStore })}
-                            className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg shadow-green-500/20 active:scale-95 transition-all"
-                          >
-                            Resgatar
-                          </button>
-                        )}
+                        <div>
+                          <p className="text-sm font-bold text-gray-900">Resgatar Saldo Cashback</p>
+                          <p className="text-[10px] text-gray-500 font-bold">
+                            Mínimo necessário: R$ {formatCurrency(stores[selectedStore]?.cashbackConfig?.minActivationValue || 0)}
+                          </p>
+                        </div>
                       </div>
-                    );
-                  })}
+                      {(customerRecords.find(r => r.companyId === selectedStore)?.points || 0) >= (stores[selectedStore]?.cashbackConfig?.minActivationValue || 0) && (
+                        <button 
+                          onClick={() => setRedeemingTier({ 
+                            prize: `Saldo Cashback R$ ${formatCurrency(customerRecords.find(r => r.companyId === selectedStore)?.points || 0)}`,
+                            points: customerRecords.find(r => r.companyId === selectedStore)?.points || 0,
+                            companyId: selectedStore 
+                          })}
+                          className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg shadow-green-600/20 active:scale-95 transition-all"
+                        >
+                          Resgatar
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    stores[selectedStore]?.rewardTiers?.sort((a, b) => a.points - b.points).map((tier, i) => {
+                      const currentPoints = customerRecords.find(r => r.companyId === selectedStore)?.points || 0;
+                      const isUnlocked = currentPoints >= tier.points;
+
+                      return (
+                        <div 
+                          key={i}
+                          className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${
+                            isUnlocked ? 'bg-green-50 border-green-200' : 'bg-white border-gray-100 opacity-60'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`p-2 rounded-xl ${isUnlocked ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                              {isUnlocked ? <Trophy size={16} /> : <Star size={16} />}
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-gray-900">{tier.prize}</p>
+                              <p className="text-[10px] text-gray-500 font-bold">{tier.points} pontos necessários</p>
+                            </div>
+                          </div>
+                          {isUnlocked && (
+                            <button 
+                              onClick={() => setRedeemingTier({ ...tier, companyId: selectedStore })}
+                              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg shadow-green-500/20 active:scale-95 transition-all"
+                            >
+                              Resgatar
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
 
