@@ -112,7 +112,9 @@ import {
   Target,
   Edit2,
   LayoutDashboard,
-  UserPlus
+  UserPlus,
+  Calculator,
+  Percent
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import 'react-phone-number-input/style.css';
@@ -991,7 +993,8 @@ function AppContent() {
 
   const isUserOnly = appUser?.role === 'user';
   const allowedTabs = ['dashboard', ...(rules.allowedUserTabs || [])];
-  const isOnboarding = rules.onboardingComplete === false && !isSuperAdmin;
+  // Refined: Onboarding overlay only shows if welcoming or requested, but not for experienced admins who already saw it or superadmins
+  const isOnboarding = rules.onboardingComplete === false && !isSuperAdmin && !isAdminUser; 
   const [onboardingTour, setOnboardingTour] = useState<'welcome' | 'profile' | 'goals' | 'reference_data_ticket' | 'reference_data_revenue' | 'finished' | null>(null);
 
   useEffect(() => {
@@ -1694,6 +1697,7 @@ function AppContent() {
               <div key="rewards">
                 <RewardsTab 
                   rules={rules} 
+                  goals={goals}
                   isAdmin={isAdminUser} 
                   onUpdateRules={handleUpdateRules} 
                   onboardingMode={onboardingTour === 'rewards'}
@@ -3818,7 +3822,16 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
                 className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-gray-900 text-sm font-bold outline-none focus:border-primary transition-all" 
                 placeholder="Ex: ERP-XYZ-123"
               />
-              <p className="text-[10px] text-gray-400 italic">Configure a chave de conexão com o ERP do cliente aqui.</p>
+              <div className="mt-2 p-4 bg-indigo-50 rounded-xl border border-indigo-100 space-y-2">
+                <p className="text-[10px] text-indigo-700 font-bold uppercase tracking-widest">Informações para o ERP:</p>
+                <p className="text-[9px] text-indigo-600 leading-relaxed font-medium">
+                  Solicite ao fabricante do seu ERP o mapeamento dos seguintes campos para esta chave:<br/>
+                  • <span className="font-bold">Celular</span> (campo: Phone/Telefone)<br/>
+                  • <span className="font-bold">Nome Completo</span> (campo: Nome/Sobrenome)<br/>
+                  • <span className="font-bold">Data de Nascimento</span> (formato: DD/MM/AAAA)<br/>
+                  • <span className="font-bold">Valor da Venda</span> (campo: Valor Total/Compra)
+                </p>
+              </div>
             </div>
 
             <div className="space-y-1.5">
@@ -4166,45 +4179,48 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
                     </div>
                   )}
 
+                  {/* Progress Visualizer - ONLY FOR POINTS */}
                   {rules.rewardMode === 'points' && (
-                    <div className="flex gap-0.5 justify-center mb-3">
-                      {[...Array(rules.purchasesForPrize)].map((_, i) => (
-                        <div 
-                          key={i} 
-                          className={cn(
-                            "w-1.5 h-1.5 rounded-full",
-                            i < foundCustomer.points ? "bg-primary shadow-[0_0_5px_rgba(var(--primary-rgb),0.5)]" : "bg-gray-800"
-                          )} 
-                        />
-                      ))}
-                    </div>
-                  )}
-
-                  {foundCustomer.points >= rules.purchasesForPrize && rules.rewardMode === 'points' && (
-                    <div className="mt-3 p-2 bg-primary/10 rounded-lg border border-primary/20">
-                      <div className="flex items-center gap-1.5 text-primary font-black text-[10px] animate-pulse mb-2 uppercase tracking-widest">
-                        <Trophy size={12} />
-                        PRÊMIO DISPONÍVEL!
+                    <>
+                      <div className="flex gap-0.5 justify-center mb-3">
+                        {[...Array(rules.purchasesForPrize || 10)].map((_, i) => (
+                          <div 
+                             key={i} 
+                             className={cn(
+                               "w-1.5 h-1.5 rounded-full",
+                               i < foundCustomer.points ? "bg-primary shadow-[0_0_5px_rgba(var(--primary-rgb),0.5)]" : "bg-gray-800"
+                             )} 
+                          />
+                        ))}
                       </div>
-                      {!showRedeemConfirm ? (
-                        <Button 
-                          variant="secondary" 
-                          className="w-full text-[10px] py-1.5 font-black uppercase tracking-widest"
-                          onClick={() => setShowRedeemConfirm(true)}
-                          disabled={isSubmitting}
-                        >
-                          Resgatar Prêmio
-                        </Button>
-                      ) : (
-                        <div className="space-y-2">
-                          <p className="text-[9px] text-center font-bold text-white uppercase">Confirmar resgate?</p>
-                          <div className="flex gap-2">
-                            <Button variant="outline" className="flex-1 text-[9px] py-1 border-gray-800 text-gray-400 font-black uppercase" onClick={() => setShowRedeemConfirm(false)}>Não</Button>
-                            <Button variant="secondary" className="flex-1 text-[9px] py-1 font-black uppercase" onClick={handleRedeem}>Sim</Button>
+
+                      {foundCustomer.points >= (rules.purchasesForPrize || 10) && (
+                        <div className="mt-3 p-2 bg-primary/10 rounded-lg border border-primary/20">
+                          <div className="flex items-center gap-1.5 text-primary font-black text-[10px] animate-pulse mb-2 uppercase tracking-widest">
+                            <Trophy size={12} />
+                            PRÊMIO DISPONÍVEL!
                           </div>
+                          {!showRedeemConfirm ? (
+                            <Button 
+                              variant="secondary" 
+                              className="w-full text-[10px] py-1.5 font-black uppercase tracking-widest"
+                              onClick={() => setShowRedeemConfirm(true)}
+                              disabled={isSubmitting}
+                            >
+                              Resgatar Prêmio
+                            </Button>
+                          ) : (
+                            <div className="space-y-2">
+                              <p className="text-[9px] text-center font-bold text-white uppercase">Confirmar resgate?</p>
+                              <div className="flex gap-2">
+                                <Button variant="outline" className="flex-1 text-[9px] py-1 border-gray-800 text-gray-400 font-black uppercase" onClick={() => setShowRedeemConfirm(false)}>Não</Button>
+                                <Button variant="secondary" className="flex-1 text-[9px] py-1 font-black uppercase" onClick={handleRedeem}>Sim</Button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
-                    </div>
+                    </>
                   )}
                 </motion.div>
               )}
@@ -4483,58 +4499,68 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
                             <p className="text-lg font-black text-green-600">{customerMetrics.efficiency.toFixed(1)}%</p>
                           </div>
                         </div>
-                        <div className="p-4 bg-white rounded-3xl border border-gray-100 shadow-sm">
-                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1 text-center">LTV (Total Consumido)</p>
-                          <p className="text-xl font-black text-gray-900 text-center tracking-tight">R$ {formatCurrency(customerMetrics.totalSpent)}</p>
+                        <div className="p-4 bg-white rounded-3xl border border-gray-100 shadow-sm text-center">
+                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1 leading-none">LTV (Total Consumido)</p>
+                          <p className="text-lg font-black text-gray-900 tracking-tight">R$ {formatCurrency(customerMetrics.totalSpent)}</p>
                         </div>
                      </div>
                    )}
 
-                   {/* Progress Visualizer */}
+                   {/* Progress Visualizer/Cashback Info */}
                    <div className="space-y-4 pt-4 border-t border-gray-100">
                       {rules.rewardMode === 'points' && (
-                        <div className="grid grid-cols-5 gap-2">
-                          {[...Array(rules.purchasesForPrize)].map((_, i) => (
-                            <div 
-                              key={i} 
-                              className={cn(
-                                "aspect-square rounded-xl border-2 transition-all duration-300 transform",
-                                i < foundCustomer.points 
-                                  ? "bg-primary border-primary shadow-lg shadow-primary/20 scale-105" 
-                                  : "bg-white border-gray-200"
-                              )} 
-                            >
-                              {i < foundCustomer.points && <Check size={16} className="text-white m-auto mt-2" />}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      
-                      {foundCustomer.points >= rules.purchasesForPrize && (
-                        <motion.div 
-                          initial={{ scale: 0.9 }}
-                          animate={{ scale: 1 }}
-                          className="bg-primary text-white p-6 rounded-3xl shadow-2xl shadow-primary/30 space-y-4 text-center"
-                        >
-                          <Trophy size={48} className="mx-auto" />
-                          <div>
-                            <p className="text-[10px] font-black uppercase tracking-widest opacity-80 decoration-white">PRÊMIO DISPONÍVEL</p>
-                            <h4 className="text-xl font-black tracking-tight">{rules.rewardTiers?.sort((a,b) => b.points - a.points).find(t => foundCustomer.points >= t.points)?.prize || 'Brinde Especial'}</h4>
+                        <>
+                          <div className="grid grid-cols-5 gap-2">
+                            {[...Array(rules.purchasesForPrize || 10)].map((_, i) => (
+                              <div 
+                                key={i} 
+                                className={cn(
+                                  "aspect-square rounded-xl border-2 transition-all duration-300 transform",
+                                  i < foundCustomer.points 
+                                    ? "bg-primary border-primary shadow-lg shadow-primary/20 scale-105" 
+                                    : "bg-white border-gray-200"
+                                )} 
+                              >
+                                {i < foundCustomer.points && <Check size={16} className="text-white m-auto mt-3" />}
+                              </div>
+                            ))}
                           </div>
-                          {!showRedeemConfirm ? (
-                            <button 
-                              onClick={() => setShowRedeemConfirm(true)}
-                              className="w-full bg-white text-primary py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-gray-50 transition-all"
+
+                          {foundCustomer.points >= (rules.purchasesForPrize || 10) && (
+                            <motion.div 
+                              initial={{ scale: 0.9 }}
+                              animate={{ scale: 1 }}
+                              className="bg-primary text-white p-6 rounded-3xl shadow-2xl shadow-primary/30 space-y-4 text-center"
                             >
-                              Resgatar Agora
-                            </button>
-                          ) : (
-                            <div className="flex gap-2">
-                              <button onClick={() => setShowRedeemConfirm(false)} className="flex-1 bg-black/20 py-3 rounded-2xl font-black text-xs uppercase tracking-widest">Não</button>
-                              <button onClick={handleRedeem} className="flex-1 bg-white text-primary py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl">Confirmar</button>
-                            </div>
+                              <Trophy size={48} className="mx-auto" />
+                              <div>
+                                <p className="text-[10px] font-black uppercase tracking-widest opacity-80 decoration-white">PRÊMIO DISPONÍVEL</p>
+                                <h2 className="text-xl font-black tracking-tight">{rules.rewardTiers?.sort((a,b) => b.points - a.points).find(t => foundCustomer.points >= t.points)?.prize || 'Brinde Especial'}</h2>
+                              </div>
+                              {!showRedeemConfirm ? (
+                                <button 
+                                  onClick={() => setShowRedeemConfirm(true)}
+                                  className="w-full bg-white text-primary py-3 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-gray-50 transition-all font-bold"
+                                >
+                                  Resgatar Agora
+                                </button>
+                              ) : (
+                                <div className="flex gap-2">
+                                  <button onClick={() => setShowRedeemConfirm(false)} className="flex-1 bg-black/20 py-3 rounded-2xl font-black text-xs uppercase tracking-widest font-bold">Não</button>
+                                  <button onClick={handleRedeem} className="flex-1 bg-white text-primary py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl font-bold">Confirmar</button>
+                                </div>
+                              )}
+                            </motion.div>
                           )}
-                        </motion.div>
+                        </>
+                      )}
+
+                      {rules.rewardMode === 'cashback' && foundCustomer.points >= (rules.cashbackConfig?.minActivationValue || 0) && (
+                        <div className="p-6 bg-green-50 rounded-3xl border border-green-100 text-center space-y-2">
+                           <p className="text-xs font-black text-green-600 uppercase tracking-widest">Saldo de Cashback Disponível</p>
+                           <p className="text-3xl font-black text-gray-900 tracking-tighter">R$ {formatCurrency(foundCustomer.points)}</p>
+                           <p className="text-[10px] text-gray-500 font-medium italic leading-tight">O cliente pode utilizar este valor para abater em novas compras.</p>
+                        </div>
                       )}
                    </div>
                 </div>
@@ -5353,20 +5379,21 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
       const monthPurchases = purchases.filter(p => format(parseISO(p.date), 'yyyy-MM') === g.month);
       const actual = monthPurchases.reduce((acc, p) => acc + p.amount, 0);
       return {
+        month: g.month,
         name: format(parseISO(g.month + '-01'), 'MMM/yy', { locale: ptBR }),
         planejado: g.value,
         realizado: actual
       };
-    }).sort((a, b) => a.name.localeCompare(b.name)).slice(-6);
+    }).sort((a, b) => a.month.localeCompare(b.month)).slice(-6);
   }, [goals, purchases]);
 
   const chartData = useMemo(() => {
     const last7Days = [...Array(7)].map((_, i) => {
       const d = subDays(new Date(), i);
-      const dayStr = format(d, 'dd/MM');
-      const dayPurchases = purchases.filter(p => isToday(parseISO(p.date)) ? isToday(d) : format(parseISO(p.date), 'dd/MM') === dayStr);
+      const daysStr = format(d, 'dd/MM');
+      const dayPurchases = purchases.filter(p => format(parseISO(p.date), 'dd/MM') === daysStr);
       return {
-        name: dayStr,
+        name: daysStr,
         valor: dayPurchases.reduce((acc, p) => acc + p.amount, 0),
         vendas: dayPurchases.length
       };
@@ -6132,15 +6159,20 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
               {/* Card Footer */}
               <div className="flex justify-between items-end relative z-10">
                 <div>
-                  <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-1">Pontuação Acumulada</p>
+                  <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-1">
+                    {rules.rewardMode === 'cashback' ? 'Cashback Atual' : 'Pontuação Acumulada'}
+                  </p>
                   <p className="text-2xl font-black text-white tracking-tighter">
-                    {selectedCustomer?.points || 0} <span className="text-xs font-bold text-primary">PTS</span>
+                    {rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(selectedCustomer?.points || 0)}` : `${selectedCustomer?.points || 0}`}
+                    {rules.rewardMode === 'points' && <span className="text-xs font-bold text-primary ml-1">PTS</span>}
                   </p>
                 </div>
                 <div className="text-right">
                   <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-1">Status do Prêmio</p>
                   <p className="text-xs font-black text-green-500 uppercase">
-                    {selectedCustomer?.reachedTier?.prize || 'Disponível'}
+                    {rules.rewardMode === 'cashback' 
+                      ? (selectedCustomer?.points >= (rules.cashbackConfig?.minActivationValue || 0) ? 'SALDO DISPONÍVEL' : 'ACUMULANDO SALDO')
+                      : (selectedCustomer?.reachedTier?.prize || 'EM PROGRESSO')}
                   </p>
                 </div>
               </div>
@@ -6226,7 +6258,7 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
   );
 }
 
-function RewardsTab({ rules, isAdmin, onUpdateRules, onboardingMode, onOnboardingFinish }: { rules: LoyaltyRule; isAdmin: boolean; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; onboardingMode?: boolean; onOnboardingFinish?: () => void }) {
+function RewardsTab({ rules, goals, isAdmin, onUpdateRules, onboardingMode, onOnboardingFinish }: { rules: LoyaltyRule; goals: Goal[]; isAdmin: boolean; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; onboardingMode?: boolean; onOnboardingFinish?: () => void }) {
   const [localTiers, setLocalTiers] = useState<RewardTier[]>(rules.rewardTiers || [{ points: 10, prize: 'Prêmio Padrão', expiryDays: 30 }]);
   const [minPurchaseValue, setMinPurchaseValue] = useState(rules.minPurchaseValue || 0);
   const [extraPointsThreshold, setExtraPointsThreshold] = useState(rules.extraPointsThreshold || 0);
@@ -6506,6 +6538,31 @@ function RewardsTab({ rules, isAdmin, onUpdateRules, onboardingMode, onOnboardin
                       className="w-full bg-gray-50 border border-gray-100 rounded-xl pl-10 pr-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
                     />
                   </div>
+                </div>
+
+                {/* Estimated cost box */}
+                <div className="md:col-span-2 p-6 bg-amber-50 rounded-3xl border border-amber-100 space-y-3">
+                  <div className="flex items-center gap-2 text-amber-700">
+                    <Calculator size={18} />
+                    <span className="text-xs font-black uppercase tracking-widest">Custo Aproximado do Programa</span>
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <p className="text-3xl font-black text-gray-900 tracking-tighter">
+                      R$ {formatCurrency(
+                        (() => {
+                          const currentMonthStr = format(new Date(), 'yyyy-MM');
+                          const currentGoal = goals.find(g => g.month === currentMonthStr)?.value || 0;
+                          const billing = currentGoal || 0;
+                          const factor = cashbackConfig.minActivationValue > 0 ? (billing / cashbackConfig.minActivationValue) : 0;
+                          return factor * (cashbackConfig.percentage);
+                        })()
+                      )}
+                    </p>
+                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Custo Mensal Estimado</span>
+                  </div>
+                  <p className="text-[9px] text-amber-600 leading-tight">
+                    Fórmula solicitada: (Faturamento Mensal Planejado / Valor Mínimo de Ativação) * Valor do Cashback.
+                  </p>
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Prazo Mínimo p/ Resgate (Dias)</label>
