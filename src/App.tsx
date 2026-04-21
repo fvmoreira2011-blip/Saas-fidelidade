@@ -5402,8 +5402,36 @@ function NotifyTab({ customers, rules, companyId }: { customers: Customer[]; rul
                   <p className="text-[10px] text-gray-500 font-bold uppercase">{customer.phone}</p>
                 </div>
               </div>
-              <div className="bg-primary/10 text-primary px-2 py-1 rounded-lg text-[10px] font-black">
-                {customer.points} PTS
+              <div className="text-right">
+                <p className="text-sm font-black text-primary">
+                  {rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(customer.points)}` : `${Math.floor(customer.points)} PTS`}
+                </p>
+                <div className="mt-1 flex justify-end">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[8px] font-black uppercase text-green-600 leading-none">
+                      {rules.rewardMode === 'cashback' ? 'Cashback' : 'Pontos'}
+                    </span>
+                    {(() => {
+                      const lastPurchase = parseISO(customer.lastPurchaseDate || new Date().toISOString());
+                      const daysSince = differenceInDays(new Date(), lastPurchase);
+                      const expiry = rules.rewardMode === 'cashback' 
+                        ? (rules.cashbackConfig?.expiryDays || 90) 
+                        : (rules.maxDaysBetweenPurchases || rules.pointsExpiryDays || 999);
+                      const isValid = daysSince <= expiry;
+                      return (
+                        <div 
+                          className={cn(
+                            "w-4 h-4 rounded-full flex items-center justify-center text-[7px] font-black text-white",
+                            isValid ? "bg-green-500" : "bg-red-500"
+                          )}
+                          title={isValid ? "Válido" : "Expirado"}
+                        >
+                          {isValid ? 'V' : 'E'}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
               </div>
             </div>
             
@@ -6180,7 +6208,35 @@ function PromotionTab({ customers, purchases }: { customers: Customer[]; purchas
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-xs font-bold text-primary">{c.points} pts</p>
+                      <p className="text-xs font-bold text-primary">
+                        {rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(c.points)}` : `${Math.floor(c.points)} PTS`}
+                      </p>
+                      <div className="mt-1 flex justify-end">
+                        <div className="flex items-center gap-1">
+                          <span className="text-[8px] font-black uppercase text-green-600">
+                            {rules.rewardMode === 'cashback' ? 'Cashback' : 'Pontos'}
+                          </span>
+                          {(() => {
+                            const lastPurchase = parseISO(c.lastPurchaseDate || new Date().toISOString());
+                            const daysSince = differenceInDays(new Date(), lastPurchase);
+                            const expiry = rules.rewardMode === 'cashback' 
+                              ? (rules.cashbackConfig?.expiryDays || 90) 
+                              : (rules.maxDaysBetweenPurchases || rules.pointsExpiryDays || 999);
+                            const isValid = daysSince <= expiry;
+                            return (
+                              <div 
+                                className={cn(
+                                  "w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-black text-white",
+                                  isValid ? "bg-green-500" : "bg-red-500"
+                                )}
+                                title={isValid ? "Válido" : "Expirado"}
+                              >
+                                {isValid ? 'V' : 'E'}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -6245,10 +6301,12 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
 
   const rewardedCustomers = useMemo(() => {
     return customers.map(customer => {
-      const reachedTier = tiers.find(t => customer.points >= t.points);
-      return { ...customer, reachedTier };
-    }).filter(c => c.reachedTier).sort((a, b) => b.points - a.points);
-  }, [customers, tiers]);
+      const reachedTier = rules.rewardMode === 'points' ? tiers.find(t => customer.points >= t.points) : null;
+      // For cashback, we consider rewarded if they have any balance or reached min
+      const hasBalance = rules.rewardMode === 'cashback' && customer.points > 0;
+      return { ...customer, reachedTier, isRewarded: rules.rewardMode === 'points' ? !!reachedTier : hasBalance };
+    }).filter(c => c.isRewarded).sort((a, b) => b.points - a.points);
+  }, [customers, tiers, rules.rewardMode]);
 
   const selectedCustomer = useMemo(() => {
     return rewardedCustomers.find(c => c.id === selectedCustomerId) || rewardedCustomers[0];
@@ -6344,6 +6402,29 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
                 </div>
               </div>
 
+              {/* Expiration and Rescue Info */}
+              <div className="px-8 mt-2 relative z-10 flex justify-between items-center bg-white/5 backdrop-blur-sm py-2 rounded-xl border border-white/5">
+                <div className="flex items-center gap-2">
+                  <Clock size={12} className="text-white/60" />
+                  <p className="text-[8px] font-bold text-white/80 uppercase">
+                    {(() => {
+                      const lastPurchase = parseISO(selectedCustomer?.lastPurchaseDate || new Date().toISOString());
+                      const daysSince = differenceInDays(new Date(), lastPurchase);
+                      const expiry = rules.rewardMode === 'cashback' 
+                        ? (rules.cashbackConfig?.expiryDays || 90) 
+                        : (rules.maxDaysBetweenPurchases || rules.pointsExpiryDays || 999);
+                      const remaining = Math.max(0, expiry - daysSince);
+                      return `Expira em: ${remaining} dias`;
+                    })()}
+                  </p>
+                </div>
+                {rules.rewardMode === 'cashback' && selectedCustomer?.points < (rules.cashbackConfig?.minActivationValue || 0) && (
+                  <p className="text-[8px] font-black text-yellow-500 uppercase">
+                    Faltam R$ {formatCurrency((rules.cashbackConfig?.minActivationValue || 0) - selectedCustomer.points)} p/ resgate
+                  </p>
+                )}
+              </div>
+
               {/* Holographic Effect */}
               <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
             </motion.div>
@@ -6402,8 +6483,16 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
                     </a>
                   </div>
                   <p className="text-[10px] text-gray-500">{c.phone}</p>
-                  <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-yellow-500 border border-yellow-500 text-[10px] font-black text-white uppercase shadow-lg">
-                    {c.reachedTier?.prize}
+                  <div className="mt-1 inline-flex items-center gap-2">
+                    {rules.rewardMode === 'points' ? (
+                      <div className="px-2 py-0.5 rounded-full bg-yellow-500 border border-yellow-500 text-[10px] font-black text-white uppercase shadow-lg">
+                        {c.reachedTier?.prize}
+                      </div>
+                    ) : (
+                      <div className="px-2 py-0.5 rounded-full bg-green-600 border border-green-600 text-[10px] font-black text-white uppercase shadow-lg">
+                        Acúmulo Cashback
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="text-right">
