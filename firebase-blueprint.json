@@ -37,6 +37,19 @@
       },
       "required": ["customerId", "amount", "date", "pointsEarned"]
     },
+    "Redemption": {
+      "title": "Redemption",
+      "description": "A prize redemption record",
+      "type": "object",
+      "properties": {
+        "customerId": { "type": "string", "description": "ID of the customer" },
+        "prize": { "type": "string", "description": "Name of the prize redeemed" },
+        "pointsValue": { "type": "integer", "description": "Points spent" },
+        "cost": { "type": "number", "description": "Cost of the prize for the store" },
+        "date": { "type": "string", "format": "date-time", "description": "Date of the redemption" }
+      },
+      "required": ["customerId", "prize", "pointsValue", "date"]
+    },
     "LoyaltyRule": {
       "title": "LoyaltyRule",
       "description": "Global configuration for the loyalty program",
@@ -51,7 +64,8 @@
             "type": "object",
             "properties": {
               "points": { "type": "integer" },
-              "prize": { "type": "string" }
+              "prize": { "type": "string" },
+              "cost": { "type": "number" }
             },
             "required": ["points", "prize"]
           }
@@ -73,6 +87,7 @@
   "firestore": {
     "customers": { "schema": "Customer", "description": "Collection of customers" },
     "purchases": { "schema": "Purchase", "description": "Collection of purchase records" },
+    "redemptions": { "schema": "Redemption", "description": "Collection of prize redemptions" },
     "users": { "schema": "AppUser", "description": "Collection of application users" },
     "config": { "schema": "LoyaltyRule", "description": "Global configuration (singleton)" },
     "goals": { "schema": "Goal", "description": "Collection of monthly revenue goals" }

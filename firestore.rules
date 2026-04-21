@@ -1,38 +1,51 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} { allow read, write: if false; }
+
     // Helper functions
-    function isAuthenticated() {
+    function isSignedIn() {
       return request.auth != null;
     }
 
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
     function isAdmin() {
-      return isAuthenticated() &&
+      return isSignedIn() &&
         (request.auth.token.email.lower() == "fvmoreira2011@gmail.com" ||
          request.auth.token.email.lower() == "superadmin@fidelidadevarejo.com" ||
+         request.auth.token.email.lower() == "fidelidade@sliceshare.com.br" ||
          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
           (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin')));
     }
 
     function isApproved() {
-      return isAuthenticated() &&
+      return isSignedIn() &&
         (isAdmin() || 
          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.approved == true));
     }
 
+    // Validation Blueprints
     function isValidUser(data) {
-      return data.email is string &&
+      return data.email is string && data.email.size() <= 200 &&
              data.approved is bool &&
              data.role in ['admin', 'user', 'superadmin'] &&
              (data.createdAt is string || !('createdAt' in data));
     }
 
     function isValidCustomer(data) {
-      return data.name is string &&
-             data.phone is string &&
+      return data.name is string && data.name.size() <= 200 &&
+             data.phone is string && data.phone.size() <= 30 &&
              data.points is number &&
+             (data.companyId is string || !('companyId' in data)) &&
              (data.lastPurchaseDate is string || !('lastPurchaseDate' in data)) &&
              (data.createdAt is string || !('createdAt' in data));
     }
@@ -42,73 +55,86 @@ service cloud.firestore {
              data.customerName is string &&
              data.amount is number &&
              data.date is string &&
-             data.pointsEarned is number;
+             data.pointsEarned is number &&
+             (data.companyId is string || !('companyId' in data));
     }
 
-    function isValidConfig(data) {
-      return data is map;
+    function isValidRedemption(data) {
+      return data.customerId is string &&
+             data.prize is string &&
+             data.pointsValue is number &&
+             (data.cost is number || !('cost' in data)) &&
+             data.date is string &&
+             (data.companyId is string || !('companyId' in data));
     }
 
     function isValidGoal(data) {
       return data.month is string &&
-             data.value is number;
+             data.value is number &&
+             (data.companyId is string || !('companyId' in data));
     }
 
-    // Regra para teste de conexão
+    // 1. Connection Test
     match /test/connection {
-      allow read: if isAuthenticated();
+      allow read: if isSignedIn();
     }
 
+    // 2. Users Collection
     match /users/{userId} {
-      // Allow unauthenticated read for the identification flow (CNPJ/Phone search)
-      // and allow authenticated read for profile fetching.
       allow read: if true;
-      
-      // Allow admins to create any user, and allow users to create their own profile
-      allow create: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
-      
-      // Allow users to update their own profile, and allow admins to update any profile
-      allow update: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
-      
-      // Allow migration (deleting old random-ID docs)
-      allow delete: if isAdmin() || isAuthenticated();
+      allow create: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow update: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow delete: if isAdmin();
     }
 
+    // 3. Customers Collection
     match /customers/{customerId} {
-      // Allow public read for the ConsumerApp login flow
       allow read: if true;
-      allow create: if isApproved() && isValidCustomer(request.resource.data);
-      allow update: if isValidCustomer(request.resource.data);
+      allow create: if isApproved() && isValidCustomer(incoming());
+      allow update: if isApproved() && isValidCustomer(incoming());
       allow delete: if isAdmin();
     }
 
+    // 4. Purchases Collection
     match /purchases/{purchaseId} {
-      allow read: if isApproved();
-      allow create: if isApproved() && isValidPurchase(request.resource.data);
-      allow update: if isApproved() && isValidPurchase(request.resource.data);
+      allow read: if isApproved() || (isSignedIn() && existing().customerId == request.auth.uid);
+      allow create: if isApproved() && isValidPurchase(incoming());
+      allow update: if isApproved() && isValidPurchase(incoming());
       allow delete: if isAdmin();
     }
 
+    // 5. Redemptions Collection
+    match /redemptions/{redemptionId} {
+      allow list: if isApproved() || (isSignedIn() && resource.data.customerId == request.auth.uid);
+      allow get: if isApproved() || (isSignedIn() && resource.data.customerId == request.auth.uid);
+      allow create: if isApproved() && isValidRedemption(incoming());
+      allow update: if isApproved() && isValidRedemption(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // 6. Configs Collections
     match /config/{configId} {
       allow read: if true;
-      allow write: if isAdmin() && isValidConfig(request.resource.data);
+      allow write: if isAdmin();
     }
 
     match /configs/{configId} {
       allow read: if true;
-      allow create, update: if isAdmin() && isValidConfig(request.resource.data);
+      allow create, update: if isAdmin();
       allow delete: if isAdmin();
     }
 
+    // 7. Notifications Collection
     match /notifications/{notificationId} {
       allow read: if true;
       allow create: if isApproved();
-      allow update, delete: if true;
+      allow update, delete: if isSignedIn();
     }
 
+    // 8. Goals Collection
     match /goals/{goalId} {
       allow read: if isApproved();
-      allow write: if isAdmin() && isValidGoal(request.resource.data);
+      allow write: if isAdmin() && isValidGoal(incoming());
     }
   }
 }

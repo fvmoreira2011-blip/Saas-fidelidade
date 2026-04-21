@@ -179,6 +179,15 @@ interface Purchase {
   pointsEarned: number;
 }
 
+interface Redemption {
+  id: string;
+  customerId: string;
+  prize: string;
+  pointsValue: number;
+  cost: number;
+  date: string;
+}
+
 interface Goal {
   id: string;
   month: string; // YYYY-MM
@@ -931,6 +940,7 @@ function AppContent() {
   const [rules, setRules] = useState<LoyaltyRule>(DEFAULT_RULES);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [redemptions, setRedemptions] = useState<Redemption[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -1209,6 +1219,16 @@ function AppContent() {
       (error) => handleFirestoreError(error, OperationType.GET, 'purchases')
     );
 
+    // Redemptions
+    const unsubRedemptions = onSnapshot(
+      query(collection(db, 'redemptions'), where('companyId', '==', companyId), orderBy('date', 'desc')),
+      (snapshot) => {
+        const reds = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Redemption));
+        setRedemptions(reds);
+      },
+      (error) => handleFirestoreError(error, OperationType.GET, 'redemptions')
+    );
+
     // Goals
     const unsubGoals = onSnapshot(
       query(collection(db, 'goals'), where('companyId', '==', companyId)),
@@ -1223,11 +1243,13 @@ function AppContent() {
       unsubRules();
       unsubCustomers();
       unsubPurchases();
+      unsubRedemptions();
       unsubGoals();
       // Reset states to prevent data leakage between clients
       setRules(DEFAULT_RULES);
       setCustomers([]);
       setPurchases([]);
+      setRedemptions([]);
       setGoals([]);
     };
   }, [user?.uid, appUser?.approved, isAdminUser, selectedCompanyId]);
@@ -1697,7 +1719,7 @@ function AppContent() {
                 />
               </div>
             )}
-            {activeTab === 'score' && !isSuperAdmin && <div key="score"><ScoreTab rules={rules} customers={customers} appUser={appUser} companyId={selectedCompanyId} /></div>}
+            {activeTab === 'score' && !isSuperAdmin && <div key="score"><ScoreTab rules={rules} customers={customers} purchases={purchases} redemptions={redemptions} appUser={appUser} companyId={selectedCompanyId} /></div>}
             {activeTab === 'promotion' && !isSuperAdmin && <div key="promotion"><PromotionTab customers={customers} purchases={purchases} /></div>}
             {activeTab === 'strategic_analysis' && !isSuperAdmin && <div key="strategic_analysis"><StrategicAnalysisTab purchases={purchases} customers={customers} rules={rules} goals={goals} companyId={selectedCompanyId} /></div>}
             {activeTab === 'reset' && !isSuperAdmin && <div key="reset"><ResetSystemTab companyId={selectedCompanyId} isAdmin={isAdminUser} /></div>}
@@ -3841,7 +3863,7 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
 
 // --- Tabs ---
 
-function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule; customers: Customer[]; appUser: AppUser | null; companyId: string | null }) {
+function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId }: { rules: LoyaltyRule; customers: Customer[]; purchases: Purchase[]; redemptions: Redemption[]; appUser: AppUser | null; companyId: string | null }) {
   const [phone, setPhone] = useState<string | undefined>();
   const [amount, setAmount] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -3853,29 +3875,31 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
 
   const [desktopStep, setDesktopStep] = useState(0); // 0: phone, 1: confirm/register, 2: amount, 3: success
 
-  const calculatedAge = useMemo(() => {
-    if (!newBirthDate) return 0;
-    try {
-      return differenceInYears(new Date(), parseISO(newBirthDate));
-    } catch (e) {
-      return 0;
-    }
-  }, [newBirthDate]);
-
-  const foundCustomer = useMemo(() => {
+  // Filter specific customer data
+  const customerMetrics = useMemo(() => {
     if (!phone) return null;
     const cleanPhone = phone.replace(/\D/g, '');
-    if (cleanPhone.length < 8) return null; // Avoid matching too short numbers
-    
-    return customers.find(c => {
-      const cPhone = c.phone.replace(/\D/g, '');
-      // Match if exactly the same, or if one is a suffix of the other (handling missing +55)
-      // We check for at least 8 digits to avoid false positives
-      return cPhone === cleanPhone || 
-             (cPhone.length >= 10 && cleanPhone.endsWith(cPhone)) || 
-             (cleanPhone.length >= 10 && cPhone.endsWith(cleanPhone));
-    });
-  }, [phone, customers]);
+    const customer = customers.find(c => c.phone.replace(/\D/g, '') === cleanPhone);
+    if (!customer) return null;
+
+    const customerPurchases = purchases.filter(p => p.customerId === customer.id);
+    const customerRedemptions = redemptions.filter(r => r.customerId === customer.id);
+
+    const totalSpent = customerPurchases.reduce((acc, p) => acc + p.amount, 0);
+    const totalPrizeCost = customerRedemptions.reduce((acc, r) => acc + (r.cost || 0), 0);
+    const efficiency = totalSpent > 0 ? (totalPrizeCost / totalSpent) * 100 : 0;
+
+    return {
+      customer,
+      purchases: customerPurchases,
+      redemptions: customerRedemptions,
+      totalSpent,
+      totalPrizeCost,
+      efficiency
+    };
+  }, [phone, customers, purchases, redemptions]);
+
+  const foundCustomer = customerMetrics?.customer;
 
   const handleScore = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3993,13 +4017,35 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
   };
 
   const handleRedeem = async () => {
-    if (!foundCustomer) return;
+    if (!foundCustomer || !companyId) return;
     setIsSubmitting(true);
     try {
       const customerRef = doc(db, 'customers', foundCustomer.id);
-      await updateDoc(customerRef, {
-        points: 0
+      
+      // Find current prize and its cost
+      const tiers = [...(rules.rewardTiers || [])].sort((a, b) => b.points - a.points);
+      const currentTier = tiers.find(t => foundCustomer.points >= t.points);
+      const prizeName = currentTier?.prize || 'Brinde Especial';
+      const pointsToRedeem = rules.rewardMode === 'points' ? rules.purchasesForPrize : foundCustomer.points;
+      const prizeCost = currentTier?.cost || 0;
+
+      // Record redemption
+      await addDoc(collection(db, 'redemptions'), {
+        companyId,
+        customerId: foundCustomer.id,
+        prize: prizeName,
+        pointsValue: pointsToRedeem,
+        cost: prizeCost,
+        date: new Date().toISOString()
       });
+
+      // Update customer points
+      await updateDoc(customerRef, {
+        points: rules.rewardMode === 'points' 
+          ? Math.max(0, foundCustomer.points - rules.purchasesForPrize)
+          : 0
+      });
+
       setMessage({ type: 'success', text: `Prêmio resgatado com sucesso para ${foundCustomer.name}!` });
       setShowRedeemConfirm(false);
       setPhone(undefined);
@@ -4026,7 +4072,6 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
         name: newName,
         phone,
         birthDate: newBirthDate,
-        age: calculatedAge,
         points: 0,
         lastPurchaseDate: now,
         createdAt: now
@@ -4070,17 +4115,19 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
           {!showRegister ? (
             <form onSubmit={handleScore} className="space-y-5">
               <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Celular do Cliente</label>
-                <PhoneInput
-                  placeholder="Ex: +55 11 99999-9999"
-                  value={phone}
-                  onChange={setPhone}
-                  defaultCountry="BR"
-                  className="PhoneInput dark text-sm text-white"
-                />
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest leading-none mb-2 block">DIGITE SEU NÚMERO DE CELULAR</label>
+                <div className="bg-gray-900 border border-gray-800 rounded-2xl px-4 py-2 transition-all focus-within:border-primary">
+                  <PhoneInput
+                    placeholder="Ex: (11) 99999-9999"
+                    value={phone}
+                    onChange={setPhone}
+                    defaultCountry="BR"
+                    className="PhoneInput dark text-sm text-white font-bold"
+                  />
+                </div>
               </div>
 
-              {phone && !foundCustomer && (
+              {phone && phone.replace(/\D/g, '').length >= 10 && !foundCustomer && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-blue-900/20 border border-blue-800/50 p-3 rounded-xl flex items-start gap-2">
                   <AlertCircle className="text-blue-400 shrink-0" size={16} />
                   <div className="flex-1">
@@ -4098,24 +4145,42 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
 
               {foundCustomer && (
                 <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-green-900/20 p-3 rounded-xl border border-green-800/50">
-                  <div className="flex justify-between items-center">
+                  <div className="flex justify-between items-center mb-3">
                     <div>
                       <p className="text-xs text-green-200 font-black uppercase tracking-tight">{foundCustomer.name}</p>
-                      <p className="text-[10px] text-green-400 font-bold">Pontos: {foundCustomer.points}</p>
+                      <p className="text-[10px] text-green-400 font-bold">Saldo: {rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(foundCustomer.points)}` : `${foundCustomer.points} Pontos`}</p>
                     </div>
-                    <div className="flex gap-0.5">
+                  </div>
+
+                  {/* Customer Metrics Overlay for Mobile */}
+                  {customerMetrics && (
+                    <div className="grid grid-cols-2 gap-2 mb-3">
+                      <div className="p-2 bg-black/40 rounded-lg border border-white/5 text-center">
+                        <p className="text-[7px] text-gray-500 font-bold uppercase tracking-widest leading-none mb-1">Custo</p>
+                        <p className="text-[10px] text-white font-black">R$ {formatCurrency(customerMetrics.totalPrizeCost)}</p>
+                      </div>
+                      <div className="p-2 bg-black/40 rounded-lg border border-white/5 text-center">
+                        <p className="text-[7px] text-gray-500 font-bold uppercase tracking-widest leading-none mb-1">Eficiência</p>
+                        <p className="text-[10px] text-green-400 font-black">{customerMetrics.efficiency.toFixed(1)}%</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {rules.rewardMode === 'points' && (
+                    <div className="flex gap-0.5 justify-center mb-3">
                       {[...Array(rules.purchasesForPrize)].map((_, i) => (
                         <div 
                           key={i} 
                           className={cn(
                             "w-1.5 h-1.5 rounded-full",
-                            i < foundCustomer.points ? "bg-primary" : "bg-gray-800"
+                            i < foundCustomer.points ? "bg-primary shadow-[0_0_5px_rgba(var(--primary-rgb),0.5)]" : "bg-gray-800"
                           )} 
                         />
                       ))}
                     </div>
-                  </div>
-                  {foundCustomer.points >= rules.purchasesForPrize && (
+                  )}
+
+                  {foundCustomer.points >= rules.purchasesForPrize && rules.rewardMode === 'points' && (
                     <div className="mt-3 p-2 bg-primary/10 rounded-lg border border-primary/20">
                       <div className="flex items-center gap-1.5 text-primary font-black text-[10px] animate-pulse mb-2 uppercase tracking-widest">
                         <Trophy size={12} />
@@ -4182,7 +4247,7 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
                 disabled={isSubmitting || !foundCustomer} 
                 className="w-full py-3.5 font-black uppercase tracking-widest text-xs shadow-xl shadow-primary/20"
               >
-                {isSubmitting ? 'Processando...' : 'Confirmar Pontos'}
+                {isSubmitting ? 'Processando...' : (rules.rewardMode === 'cashback' ? 'Confirmar Cashback' : 'Confirmar Pontos')}
               </Button>
             </form>
           ) : (
@@ -4247,9 +4312,9 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
       </div>
 
       {/* Desktop Sequential Flow Layout (Hidden on Mobile) */}
-      <div className="hidden lg:flex flex-col items-center w-full max-w-5xl bg-white rounded-[3rem] p-16 shadow-2xl border border-gray-100 overflow-hidden relative">
+      <div className="hidden lg:flex flex-col items-center w-full max-w-5xl bg-white rounded-[3rem] p-16 shadow-2xl border border-gray-100 overflow-hidden relative min-h-[600px] justify-center">
         <AnimatePresence mode="wait">
-          {!phone || (phone.replace(/\D/g, '').length < 8) ? (
+          {!foundCustomer && !showRegister ? (
             <motion.div 
               key="step-phone"
               initial={{ opacity: 0, x: 100 }}
@@ -4258,18 +4323,35 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
               className="w-full space-y-12 text-center"
             >
               <div className="space-y-4">
-                <h2 className="text-5xl font-black text-gray-900 tracking-tighter uppercase leading-none">Dite o Celular</h2>
-                <p className="text-xl text-gray-400 font-medium tracking-tight">Comece o atendimento identificando o cliente pelo número do WhatsApp.</p>
+                <h2 className="text-5xl font-black text-gray-900 tracking-tighter uppercase leading-none">DIGITE SEU NÚMERO DE CELULAR</h2>
+                <p className="text-xl text-gray-400 font-medium tracking-tight">Utilize o número do WhatsApp para localizar ou cadastrar o cliente.</p>
               </div>
               <div className="max-w-2xl mx-auto p-4 bg-gray-50 rounded-[2.5rem] border-4 border-gray-100 focus-within:border-primary transition-all shadow-inner scale-110">
                 <PhoneInput
-                  placeholder="Seu celular aqui..."
+                  placeholder="Ex: +55 11 99999-9999"
                   value={phone}
                   onChange={setPhone}
                   defaultCountry="BR"
                   className="PhoneInput desktop-phone-input"
+                  autoFocus
                 />
               </div>
+
+              {phone && phone.replace(/\D/g, '').length >= 10 && !foundCustomer && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="space-y-6"
+                >
+                  <p className="text-lg text-amber-600 font-bold">Cliente não localizado em nossa base de dados.</p>
+                  <Button 
+                    onClick={() => setShowRegister(true)}
+                    className="px-12 py-6 rounded-3xl font-black uppercase tracking-widest text-lg shadow-xl shadow-primary/20"
+                  >
+                    Cadastrar Novo Cliente
+                  </Button>
+                </motion.div>
+              )}
             </motion.div>
           ) : showRegister ? (
             <motion.div 
@@ -4376,7 +4458,7 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
                       disabled={isSubmitting || !amount} 
                       className="w-full py-10 rounded-[3rem] font-black uppercase tracking-[0.3em] text-2xl shadow-3xl shadow-primary/40 relative overflow-hidden group/btn"
                     >
-                      <span className="relative z-10">{isSubmitting ? 'Processando...' : 'Confirmar Pontos'}</span>
+                      <span className="relative z-10">{isSubmitting ? 'Processando...' : (rules.rewardMode === 'cashback' ? 'Confirmar Cashback' : 'Confirmar Pontos')}</span>
                       <motion.div className="absolute inset-0 bg-white/20 translate-y-full group-hover/btn:translate-y-0 transition-transform" />
                     </Button>
                   </div>
@@ -4388,8 +4470,28 @@ function ScoreTab({ rules, customers, appUser, companyId }: { rules: LoyaltyRule
                 <div className="bg-gray-50 p-8 rounded-[2.5rem] border border-gray-100 space-y-6">
                    <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest text-center border-b border-gray-200 pb-4">Status no Programa</h3>
                    
+                   {/* Customer Analytics Metrics */}
+                   {customerMetrics && (
+                     <div className="space-y-4 pt-2">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="p-4 bg-white rounded-3xl border border-gray-100 shadow-sm text-center">
+                            <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1 leading-none">Custo ao Lojista</p>
+                            <p className="text-lg font-black text-primary">R$ {formatCurrency(customerMetrics.totalPrizeCost)}</p>
+                          </div>
+                          <div className="p-4 bg-white rounded-3xl border border-gray-100 shadow-sm text-center">
+                            <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1 leading-none">Eficiência</p>
+                            <p className="text-lg font-black text-green-600">{customerMetrics.efficiency.toFixed(1)}%</p>
+                          </div>
+                        </div>
+                        <div className="p-4 bg-white rounded-3xl border border-gray-100 shadow-sm">
+                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1 text-center">LTV (Total Consumido)</p>
+                          <p className="text-xl font-black text-gray-900 text-center tracking-tight">R$ {formatCurrency(customerMetrics.totalSpent)}</p>
+                        </div>
+                     </div>
+                   )}
+
                    {/* Progress Visualizer */}
-                   <div className="space-y-4">
+                   <div className="space-y-4 pt-4 border-t border-gray-100">
                       {rules.rewardMode === 'points' && (
                         <div className="grid grid-cols-5 gap-2">
                           {[...Array(rules.purchasesForPrize)].map((_, i) => (
@@ -6358,6 +6460,10 @@ function RewardsTab({ rules, isAdmin, onUpdateRules, onboardingMode, onOnboardin
                     <div className="flex-[2] space-y-1.5 w-full">
                       <label className="text-[10px] font-bold text-gray-400 uppercase">Prêmio</label>
                       <input type="text" value={tier.prize} onChange={(e) => updateTier(index, 'prize', e.target.value)} disabled={isLocked} placeholder="Ex: Vale Compras R$ 50" className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50" />
+                    </div>
+                    <div className="flex-1 space-y-1.5 w-full">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase">Custo (R$)</label>
+                      <input type="number" value={tier.cost || 0} onChange={(e) => updateTier(index, 'cost', e.target.value)} disabled={isLocked} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50" />
                     </div>
                     <div className="flex-1 space-y-1.5 w-full">
                       <label className="text-[10px] font-bold text-gray-400 uppercase">Dias/Expira</label>

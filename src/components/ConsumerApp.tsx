@@ -470,8 +470,8 @@ export default function ConsumerApp() {
           </div>
           <div>
             <h2 className="text-xl font-black text-gray-900 tracking-tight">Meus Pontos</h2>
-            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">
-              Olá, {customerRecords[0]?.name?.split(' ')[0] || 'Cliente'}, hoje é {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}
+            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest leading-relaxed">
+              Olá, {customerRecords[0]?.name?.split(' ')[0] || 'Cliente'}, hoje é {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/^\w/, (c) => c.toUpperCase())}
             </p>
           </div>
         </div>
@@ -530,14 +530,14 @@ export default function ConsumerApp() {
                           )}
                         </div>
                         <div className="flex-1">
-                          <h5 className="font-black text-gray-900 tracking-tight leading-none">
+                          <h5 className="font-black text-gray-900 tracking-tight leading-none text-base">
                             {store?.companyProfile?.companyName || 'Loja Parceira'}
                           </h5>
-                          <p className="text-[9px] text-gray-400 font-bold uppercase mt-1">
-                            {store?.campaignName || 'Programa de Fidelidade'}
-                          </p>
                           <p className="text-[11px] font-black text-green-600 uppercase tracking-widest mt-2">
-                            {store?.rewardMode === 'cashback' ? 'CASHBACK' : 'PONTOS'}
+                             {store?.rewardMode === 'cashback' ? 'CASHBACK' : 'PONTOS'}
+                          </p>
+                          <p className="text-[8px] text-gray-400 font-bold uppercase mt-1 opacity-70">
+                            {store?.campaignName || 'Programa de Fidelidade'}
                           </p>
                         </div>
                         <div className="text-right">
@@ -809,6 +809,20 @@ export default function ConsumerApp() {
                           <p className="text-[10px] text-gray-500 font-bold">
                             Mínimo necessário: R$ {formatCurrency(stores[selectedStore]?.cashbackConfig?.minActivationValue || 0)}
                           </p>
+                          {/* Expiration Info for Cashback */}
+                          {stores[selectedStore]?.cashbackConfig?.expiryDays && (
+                            <p className="text-[9px] text-amber-600 font-black uppercase mt-1">
+                              Expira em {stores[selectedStore].cashbackConfig.expiryDays} dias
+                              {(() => {
+                                const record = customerRecords.find(r => r.companyId === selectedStore);
+                                if (record?.lastPurchaseDate) {
+                                  const daysLeft = Math.max(0, stores[selectedStore].cashbackConfig.expiryDays - differenceInDays(new Date(), parseISO(record.lastPurchaseDate)));
+                                  return ` • Faltam ${daysLeft} dias`;
+                                }
+                                return '';
+                              })()}
+                            </p>
+                          )}
                         </div>
                       </div>
                       {(customerRecords.find(r => r.companyId === selectedStore)?.points || 0) >= (stores[selectedStore]?.cashbackConfig?.minActivationValue || 0) && (
@@ -843,6 +857,20 @@ export default function ConsumerApp() {
                             <div>
                               <p className="text-sm font-bold text-gray-900">{tier.prize}</p>
                               <p className="text-[10px] text-gray-500 font-bold">{tier.points} pontos necessários</p>
+                              {/* Expiration Info for Points */}
+                              {stores[selectedStore]?.pointsExpiryDays && (
+                                <p className="text-[9px] text-amber-600 font-black uppercase mt-1">
+                                  Expira em {stores[selectedStore].pointsExpiryDays} dias
+                                  {(() => {
+                                    const record = customerRecords.find(r => r.companyId === selectedStore);
+                                    if (record?.lastPurchaseDate) {
+                                      const daysLeft = Math.max(0, stores[selectedStore].pointsExpiryDays - differenceInDays(new Date(), parseISO(record.lastPurchaseDate)));
+                                      return ` • Faltam ${daysLeft} dias`;
+                                    }
+                                    return '';
+                                  })()}
+                                </p>
+                              )}
                             </div>
                           </div>
                           {isUnlocked && (
