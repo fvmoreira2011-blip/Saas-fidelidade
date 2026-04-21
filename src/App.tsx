@@ -4008,27 +4008,34 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
       
       const now = new Date().toISOString();
 
-      // Check for point expiry
+      // Check for point expiry (Separate logic for Points and Cashback)
       let currentPoints = foundCustomer.points;
       let currentCashback = foundCustomer.cashbackBalance || 0;
-      if ((currentPoints > 0 || currentCashback > 0) && foundCustomer.lastPurchaseDate) {
+      
+      if (foundCustomer.lastPurchaseDate) {
         const lastPurchase = parseISO(foundCustomer.lastPurchaseDate);
         const daysSinceLast = differenceInDays(new Date(), lastPurchase);
         
-        // Find the tier the customer is currently in
-        const tiers = [...(rules.rewardTiers || [])].sort((a, b) => b.points - a.points);
-        const currentTier = tiers.find(t => currentPoints >= t.points);
+        // 1. Points Expiry
+        if (currentPoints > 0) {
+          const tiers = [...(rules.rewardTiers || [])].sort((a, b) => b.points - a.points);
+          const currentTier = tiers.find(t => currentPoints >= t.points);
+          const pointsExpiryDays = currentTier?.expiryDays || rules.maxDaysBetweenPurchases || 999;
+          if (daysSinceLast > pointsExpiryDays) {
+            currentPoints = 0;
+          }
+        }
         
-        // Use tier expiry if available, otherwise use general rule
-        const expiryDays = currentTier?.expiryDays || rules.maxDaysBetweenPurchases;
-        
-        if (daysSinceLast > expiryDays) {
-          currentPoints = 0; // Reset points if expired
-          currentCashback = 0; // Reset cashback if expired
+        // 2. Cashback Expiry
+        if (currentCashback > 0) {
+          const cashbackExpiryDays = rules.cashbackConfig?.expiryDays || 90;
+          if (daysSinceLast > cashbackExpiryDays) {
+            currentCashback = 0;
+          }
         }
       }
 
-      // Update customer points
+      // Update customer balances
       const customerRef = doc(db, 'customers', foundCustomer.id);
       const newPoints = currentPoints + pointsEarned;
       const newCashback = currentCashback + cashbackEarned;
@@ -4076,7 +4083,8 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
         customerName: foundCustomer.name,
         amount: val,
         date: now,
-        pointsEarned
+        pointsEarned,
+        cashbackEarned
       });
 
       setMessage({ 
@@ -4543,15 +4551,29 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
                     <p className="text-xl text-gray-500 font-bold tracking-tight">Saldo Atual:</p>
                     <div className="flex flex-wrap gap-4">
                       {foundCustomer.points > 0 && (
-                        <div className="bg-primary/10 px-4 py-2 rounded-2xl border border-primary/20">
-                          <p className="text-xs font-black text-primary uppercase">Pontos</p>
-                          <p className="text-2xl font-black text-primary leading-none">{foundCustomer.points} PTS</p>
+                        <div className={cn(
+                          "px-4 py-2 rounded-2xl border transition-all",
+                          rules.rewardMode === 'points' ? "bg-primary/10 border-primary/20" : "bg-gray-100 border-gray-200 opacity-60"
+                        )}>
+                          <p className={cn("text-xs font-black uppercase", rules.rewardMode === 'points' ? "text-primary" : "text-gray-500")}>
+                            {rules.rewardMode === 'points' ? 'Pontos Atuais' : 'Pontos Acumulados'}
+                          </p>
+                          <p className={cn("text-2xl font-black leading-none", rules.rewardMode === 'points' ? "text-primary" : "text-gray-700")}>
+                            {Math.floor(foundCustomer.points)} PTS
+                          </p>
                         </div>
                       )}
                       {(foundCustomer.cashbackBalance || 0) > 0 && (
-                        <div className="bg-green-100 px-4 py-2 rounded-2xl border border-green-200">
-                          <p className="text-xs font-black text-green-600 uppercase">Cashback</p>
-                          <p className="text-2xl font-black text-green-700 leading-none">R$ {formatCurrency(foundCustomer.cashbackBalance || 0)}</p>
+                        <div className={cn(
+                          "px-4 py-2 rounded-2xl border transition-all",
+                          rules.rewardMode === 'cashback' ? "bg-green-100 border-green-200" : "bg-gray-100 border-gray-200 opacity-60"
+                        )}>
+                          <p className={cn("text-xs font-black uppercase", rules.rewardMode === 'cashback' ? "text-green-600" : "text-gray-500")}>
+                            {rules.rewardMode === 'cashback' ? 'Cashback Atual' : 'Cashback Acumulado'}
+                          </p>
+                          <p className={cn("text-2xl font-black leading-none", rules.rewardMode === 'cashback' ? "text-green-700" : "text-gray-700")}>
+                            R$ {formatCurrency(foundCustomer.cashbackBalance || 0)}
+                          </p>
                         </div>
                       )}
                       {foundCustomer.points <= 0 && (!foundCustomer.cashbackBalance || foundCustomer.cashbackBalance <= 0) && (
@@ -4887,8 +4909,22 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
                   <h3 className="font-bold text-gray-900 leading-tight">{customer.name}</h3>
                   <p className="text-[10px] text-gray-500 font-bold uppercase">{customer.phone}</p>
                 </div>
-                <div className="bg-primary/10 text-primary px-3 py-1 rounded-lg text-[10px] font-black">
-                  {customer.points} PTS
+                <div className="flex flex-col items-end gap-1">
+                  {customer.points > 0 && (
+                    <div className="bg-primary/10 text-primary px-3 py-1 rounded-lg text-[10px] font-black">
+                      {Math.floor(customer.points)} PTS
+                    </div>
+                  )}
+                  {(customer.cashbackBalance || 0) > 0 && (
+                    <div className="bg-green-100 text-green-700 px-3 py-1 rounded-lg text-[10px] font-black">
+                      R$ {formatCurrency(customer.cashbackBalance || 0)}
+                    </div>
+                  )}
+                  {customer.points <= 0 && (!customer.cashbackBalance || customer.cashbackBalance <= 0) && (
+                    <div className="bg-gray-100 text-gray-400 px-3 py-1 rounded-lg text-[10px] font-black">
+                      0 PTS
+                    </div>
+                  )}
                 </div>
               </div>
               
@@ -5301,10 +5337,14 @@ function NotifyTab({ customers, rules, companyId }: { customers: Customer[]; rul
       const birthDate = c.birthDate ? parseISO(c.birthDate) : null;
       const isBirthdayToday = birthDate ? (birthDate.getMonth() === now.getMonth() && birthDate.getDate() === now.getDate()) : false;
       
-      // Check prize near
+      // Check prize/cashback near
       const tiers = [...(rules.rewardTiers || [])].sort((a, b) => a.points - b.points);
       const nextTier = tiers.find(t => t.points > c.points);
       const pointsNeeded = nextTier ? nextTier.points - c.points : 999;
+      
+      const minActivation = rules.cashbackConfig?.minActivationValue || 0;
+      const currentCashback = c.cashbackBalance || 0;
+      const cashbackNeeded = Math.max(0, minActivation - currentCashback);
 
       if (filter === 'inactivity_1w') return daysSince >= 7 && daysSince < 14;
       if (filter === 'inactivity_2w') return daysSince >= 14 && daysSince < 30;
@@ -5318,8 +5358,14 @@ function NotifyTab({ customers, rules, companyId }: { customers: Customer[]; rul
         return bThisYear >= start && bThisYear <= end;
       }
       if (filter === 'birthday_month') return birthDate ? birthDate.getMonth() === now.getMonth() : false;
-      if (filter === 'prize_near_3') return pointsNeeded <= 3;
-      if (filter === 'prize_near_4') return pointsNeeded <= 4;
+      
+      if (rules.rewardMode === 'points') {
+        if (filter === 'prize_near_3') return pointsNeeded <= 3;
+        if (filter === 'prize_near_4') return pointsNeeded <= 4;
+      } else {
+        if (filter === 'prize_near_3') return cashbackNeeded > 0 && cashbackNeeded <= 10;
+        if (filter === 'prize_near_4') return cashbackNeeded > 10 && cashbackNeeded <= 20;
+      }
       
       return true;
     });
@@ -5421,13 +5467,22 @@ function NotifyTab({ customers, rules, companyId }: { customers: Customer[]; rul
 
       <div className="flex flex-wrap gap-2">
         <button onClick={() => setFilter('all')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", filter === 'all' ? "bg-primary text-white" : "bg-gray-800 text-gray-400")}>Todos</button>
-        <button onClick={() => setFilter('inactivity_1w')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", filter === 'inactivity_1w' ? "bg-yellow-600 text-white" : "bg-gray-800 text-gray-400")}>+1 Semana Inativo</button>
-        <button onClick={() => setFilter('inactivity_2w')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", filter === 'inactivity_2w' ? "bg-orange-600 text-white" : "bg-gray-800 text-gray-400")}>+2 Semanas Inativo</button>
+        <button onClick={() => setFilter('inactivity_1w')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", filter === 'inactivity_1w' ? "bg-yellow-600 text-white" : "bg-gray-800 text-gray-400")}>+1 Semana Inativa</button>
+        <button onClick={() => setFilter('inactivity_2w')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", filter === 'inactivity_2w' ? "bg-orange-600 text-white" : "bg-gray-800 text-gray-400")}>+2 Semanas Inativas</button>
         <button onClick={() => setFilter('inactivity_1m')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", filter === 'inactivity_1m' ? "bg-red-600 text-white" : "bg-gray-800 text-gray-400")}>+1 Mês Inativo</button>
         <button onClick={() => setFilter('birthday_today')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", filter === 'birthday_today' ? "bg-pink-600 text-white" : "bg-gray-800 text-gray-400")}>Aniversário Hoje</button>
         <button onClick={() => setFilter('birthday_week')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", filter === 'birthday_week' ? "bg-pink-600/50 text-white" : "bg-gray-800 text-gray-400")}>Aniversário na Semana</button>
-        <button onClick={() => setFilter('prize_near_3')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", filter === 'prize_near_3' ? "bg-green-600 text-white" : "bg-gray-800 text-gray-400")}>Faltam 3 Pontos</button>
-        <button onClick={() => setFilter('prize_near_4')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", filter === 'prize_near_4' ? "bg-green-600/50 text-white" : "bg-gray-800 text-gray-400")}>Faltam 4 Pontos</button>
+        {rules.rewardMode === 'points' ? (
+          <>
+            <button onClick={() => setFilter('prize_near_3')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", filter === 'prize_near_3' ? "bg-green-600 text-white" : "bg-gray-800 text-gray-400")}>Faltam 3 Pontos</button>
+            <button onClick={() => setFilter('prize_near_4')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", filter === 'prize_near_4' ? "bg-green-600/50 text-white" : "bg-gray-800 text-gray-400")}>Faltam 4 Pontos</button>
+          </>
+        ) : (
+          <>
+            <button onClick={() => setFilter('prize_near_3')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", filter === 'prize_near_3' ? "bg-green-600 text-white" : "bg-gray-800 text-gray-400")}>Faltam R$ 10 p/ Resgate</button>
+            <button onClick={() => setFilter('prize_near_4')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", filter === 'prize_near_4' ? "bg-green-600/50 text-white" : "bg-gray-800 text-gray-400")}>Faltam R$ 20 p/ Resgate</button>
+          </>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -5450,13 +5505,21 @@ function NotifyTab({ customers, rules, companyId }: { customers: Customer[]; rul
                   <p className="text-[10px] text-gray-500 font-bold uppercase">{customer.phone}</p>
                 </div>
               </div>
-              <div className="text-right">
-                <p className="text-sm font-black text-primary">
-                  {customer.points > 0 && <span>{Math.floor(customer.points)} PTS</span>}
-                  {customer.points > 0 && (customer.cashbackBalance || 0) > 0 && <span className="mx-1">•</span>}
-                  {(customer.cashbackBalance || 0) > 0 && <span>R$ {formatCurrency(customer.cashbackBalance || 0)}</span>}
-                  {customer.points <= 0 && (!customer.cashbackBalance || customer.cashbackBalance <= 0) && <span>0 PTS</span>}
-                </p>
+              <div className="text-right space-y-1">
+                {customer.points > 0 && (
+                  <p className="text-xs font-black text-primary">
+                    {Math.floor(customer.points)} PTS
+                  </p>
+                )}
+                {(customer.cashbackBalance || 0) > 0 && (
+                  <p className="text-xs font-black text-green-600">
+                    R$ {formatCurrency(customer.cashbackBalance || 0)}
+                  </p>
+                )}
+                {customer.points <= 0 && (!customer.cashbackBalance || customer.cashbackBalance <= 0) && (
+                  <p className="text-xs font-black text-gray-400">0 PTS</p>
+                )}
+                
                 <div className="mt-1 flex justify-end">
                   <div className="flex flex-wrap gap-2 justify-end">
                     {(() => {
@@ -6068,7 +6131,8 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
               </div>
               <div className="text-right">
                 <p className="text-sm font-bold text-primary">R$ {formatCurrency(p.amount)}</p>
-                <p className="text-[10px] text-green-600">+{p.pointsEarned} ponto</p>
+                {p.pointsEarned > 0 && <p className="text-[10px] text-green-600">+{p.pointsEarned} ponto(s)</p>}
+                {(p as any).cashbackEarned > 0 && <p className="text-[10px] text-green-600">+R$ {formatCurrency((p as any).cashbackEarned)} cashback</p>}
               </div>
             </div>
           ))}
@@ -6267,13 +6331,20 @@ function PromotionTab({ customers, purchases }: { customers: Customer[]; purchas
                         <p className="text-[10px] text-gray-500">{c.phone}</p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-xs font-bold text-primary">
-                        {c.points > 0 && <span>{Math.floor(c.points)} PTS</span>}
-                        {c.points > 0 && (c.cashbackBalance || 0) > 0 && <span className="mx-1">•</span>}
-                        {(c.cashbackBalance || 0) > 0 && <span>R$ {formatCurrency(c.cashbackBalance || 0)}</span>}
-                        {c.points <= 0 && (!c.cashbackBalance || c.cashbackBalance <= 0) && <span>0 PTS</span>}
-                      </p>
+                    <div className="text-right space-y-1">
+                      {c.points > 0 && (
+                        <p className="text-xs font-black text-primary">
+                          {Math.floor(c.points)} PTS
+                        </p>
+                      )}
+                      {(c.cashbackBalance || 0) > 0 && (
+                        <p className="text-xs font-black text-green-600">
+                          R$ {formatCurrency(c.cashbackBalance || 0)}
+                        </p>
+                      )}
+                      {!(c.points > 0) && !((c.cashbackBalance || 0) > 0) && (
+                         <p className="text-xs font-black text-gray-400">0 PTS</p>
+                      )}
                       <div className="mt-1 flex justify-end">
                         <div className="flex flex-wrap gap-2 justify-end">
                           {(() => {
@@ -6368,22 +6439,24 @@ function PromotionTab({ customers, purchases }: { customers: Customer[]; purchas
 
 function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rules: LoyaltyRule }) {
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [rewardSearch, setRewardSearch] = useState('');
 
   const tiers = useMemo(() => {
     return (rules.rewardTiers || []).sort((a, b) => b.points - a.points);
   }, [rules.rewardTiers]);
 
   const rewardedCustomers = useMemo(() => {
-    return customers.map(customer => {
-      const reachedTier = rules.rewardMode === 'points' ? tiers.find(t => customer.points >= t.points) : null;
-      const currentCashback = customer.cashbackBalance || 0;
-      const hasBalance = rules.rewardMode === 'cashback' && currentCashback > 0;
-      return { ...customer, reachedTier, isRewarded: rules.rewardMode === 'points' ? !!reachedTier : hasBalance };
-    }).filter(c => c.isRewarded).sort((a, b) => {
-      if (rules.rewardMode === 'cashback') return (b.cashbackBalance || 0) - (a.cashbackBalance || 0);
-      return b.points - a.points;
-    });
-  }, [customers, tiers, rules.rewardMode]);
+    return customers
+      .filter(c => {
+        const matchesSearch = c.name.toLowerCase().includes(rewardSearch.toLowerCase()) || 
+                             c.phone.includes(rewardSearch);
+        return matchesSearch;
+      })
+      .sort((a, b) => {
+        if (rules.rewardMode === 'cashback') return (b.cashbackBalance || 0) - (a.cashbackBalance || 0);
+        return b.points - a.points;
+      });
+  }, [customers, rules.rewardMode, rewardSearch]);
 
   const selectedCustomer = useMemo(() => {
     return rewardedCustomers.find(c => c.id === selectedCustomerId) || rewardedCustomers[0];
@@ -6402,7 +6475,19 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Loyalty Card Visualization */}
         <div className="space-y-6">
-          <h3 className="text-sm font-black text-gray-900 uppercase tracking-widest">Cartão Fidelidade Digital</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-black text-gray-900 uppercase tracking-widest">Cartão Fidelidade Digital</h3>
+            <div className="relative w-48">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+              <input 
+                type="text"
+                placeholder="Buscar cliente..."
+                value={rewardSearch}
+                onChange={(e) => setRewardSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 bg-white border border-gray-100 rounded-xl text-[10px] outline-none focus:ring-2 focus:ring-primary shadow-sm"
+              />
+            </div>
+          </div>
           
           <div className="relative aspect-[1.586/1] w-full max-w-md mx-auto">
             {/* The Card Body */}
@@ -6460,14 +6545,26 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
 
               {/* Card Footer */}
               <div className="flex justify-between items-end relative z-10">
-                <div>
-                  <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-1">
-                    {rules.rewardMode === 'cashback' ? 'Cashback Atual' : 'Pontuação Acumulada'}
-                  </p>
-                  <p className="text-2xl font-black text-white tracking-tighter">
-                    {rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(selectedCustomer?.cashbackBalance || 0)}` : `${selectedCustomer?.points || 0}`}
-                    {rules.rewardMode === 'points' && <span className="text-xs font-bold text-primary ml-1">PTS</span>}
-                  </p>
+                <div className="space-y-2">
+                  {selectedCustomer?.points > 0 && (
+                    <div>
+                      <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-0.5">Pontuação Acumulada</p>
+                      <p className="text-xl font-black text-white tracking-tighter leading-none">
+                        {Math.floor(selectedCustomer.points)} <span className="text-xs font-bold text-primary ml-1">PTS</span>
+                      </p>
+                    </div>
+                  )}
+                  {(selectedCustomer?.cashbackBalance || 0) > 0 && (
+                    <div>
+                      <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-0.5">Cashback Atual</p>
+                      <p className="text-xl font-black text-white tracking-tighter leading-none">
+                        R$ {formatCurrency(selectedCustomer?.cashbackBalance || 0)}
+                      </p>
+                    </div>
+                  )}
+                  {!selectedCustomer?.points && !(selectedCustomer?.cashbackBalance > 0) && (
+                    <p className="text-xl font-black text-white/20 uppercase tracking-widest">Sem Saldo</p>
+                  )}
                 </div>
                 <div className="text-right">
                   <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-1">Status do Prêmio</p>
@@ -6475,7 +6572,7 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
                     {rules.rewardMode === 'cashback' 
                       ? ((selectedCustomer?.cashbackBalance || 0) >= (rules.cashbackConfig?.minActivationValue || 0) ? 'RESGATE DISPONÍVEL' : 
                          `FALTAM R$ ${formatCurrency(Math.max(0, (rules.cashbackConfig?.minActivationValue || 0) - (selectedCustomer?.cashbackBalance || 0)))}`)
-                      : (selectedCustomer?.reachedTier?.prize || 'EM PROGRESSO')}
+                      : (tiers.find(t => (selectedCustomer?.points || 0) >= t.points)?.prize || 'EM PROGRESSO')}
                   </p>
                 </div>
               </div>
@@ -6488,17 +6585,34 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
                     {(() => {
                       const lastPurchase = parseISO(selectedCustomer?.lastPurchaseDate || new Date().toISOString());
                       const daysSince = differenceInDays(new Date(), lastPurchase);
-                      const expiry = rules.rewardMode === 'cashback' 
-                        ? (rules.cashbackConfig?.expiryDays || 90) 
-                        : (rules.maxDaysBetweenPurchases || rules.pointsExpiryDays || 999);
+                      
+                      // Show expiry for the active mode's balance, or the primary one if both exist
+                      const activeProgram = rules.rewardMode;
+                      const hasPoints = (selectedCustomer?.points || 0) > 0;
+                      const hasCashback = (selectedCustomer?.cashbackBalance || 0) > 0;
+                      
+                      const pointsExpiry = (rules.maxDaysBetweenPurchases || rules.pointsExpiryDays || 999);
+                      const cashbackExpiry = (rules.cashbackConfig?.expiryDays || 90);
+                      
+                      let expiry = activeProgram === 'cashback' ? cashbackExpiry : pointsExpiry;
+                      
+                      // If the selected mode has no balance but the other does, show other's expiry
+                      if (activeProgram === 'cashback' && !hasCashback && hasPoints) expiry = pointsExpiry;
+                      if (activeProgram === 'points' && !hasPoints && hasCashback) expiry = cashbackExpiry;
+
                       const remaining = Math.max(0, expiry - daysSince);
                       return `Expira em: ${remaining} dias`;
                     })()}
                   </p>
                 </div>
-                {rules.rewardMode === 'cashback' && selectedCustomer?.points < (rules.cashbackConfig?.minActivationValue || 0) && (
+                {rules.rewardMode === 'cashback' && (selectedCustomer?.cashbackBalance || 0) < (rules.cashbackConfig?.minActivationValue || 0) && (
                   <p className="text-[8px] font-black text-yellow-500 uppercase">
-                    Faltam R$ {formatCurrency((rules.cashbackConfig?.minActivationValue || 0) - selectedCustomer.points)} p/ resgate
+                    Faltam R$ {formatCurrency(Math.max(0, (rules.cashbackConfig?.minActivationValue || 0) - (selectedCustomer?.cashbackBalance || 0)))} p/ resgate
+                  </p>
+                )}
+                {rules.rewardMode === 'points' && (selectedCustomer?.points || 0) < (tiers[tiers.length - 1]?.points || 0) && (
+                  <p className="text-[8px] font-black text-yellow-500 uppercase">
+                     Faltam {Math.max(0, (tiers[tiers.length - 1]?.points || 0) - (selectedCustomer?.points || 0))} pts p/ prêmio
                   </p>
                 )}
               </div>
@@ -6551,7 +6665,7 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-bold text-gray-900 truncate">{c.name}</p>
                     <a 
-                      href={`https://wa.me/${c.phone.replace(/\D/g, '')}?text=${encodeURIComponent(`Olá, ${c.name} você foi premiado em nosso programa de fidelidade. Venha em nossa loja e resgate seu prêmio.`)}`}
+                      href={`https://wa.me/${c.phone.replace(/\D/g, '')}?text=${encodeURIComponent(`Olá, ${c.name} você tem ${rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(c.cashbackBalance || 0)} de cashback` : `${Math.floor(c.points)} pontos`} disponível em nosso programa de fidelidade. Venha em nossa loja e resgate seu prêmio.`)}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-green-600 hover:text-green-500 transition-colors"
@@ -6564,21 +6678,23 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
                   <div className="mt-1 inline-flex items-center gap-2">
                     {rules.rewardMode === 'points' ? (
                       <div className="px-2 py-0.5 rounded-full bg-yellow-500 border border-yellow-500 text-[10px] font-black text-white uppercase shadow-lg">
-                        {c.reachedTier?.prize}
+                        {tiers.find(t => c.points >= t.points)?.prize || 'Em Progressso'}
                       </div>
                     ) : (
                       <div className="px-2 py-0.5 rounded-full bg-green-600 border border-green-600 text-[10px] font-black text-white uppercase shadow-lg">
-                        Acúmulo Cashback
+                        Cashback Ativo
                       </div>
                     )}
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-lg font-black text-gray-900 bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-100">
-                    {rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(c.points)}` : c.points}
+                <div className="text-right space-y-1">
+                  <p className="text-lg font-black text-gray-900 bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-100 flex flex-col items-end leading-tight">
+                    {c.points > 0 && <span className="text-primary text-xs">{Math.floor(c.points)} PTS</span>}
+                    {(c.cashbackBalance || 0) > 0 && <span className="text-green-700 text-xs">R$ {formatCurrency(c.cashbackBalance || 0)}</span>}
+                    {!(c.points > 0) && !((c.cashbackBalance || 0) > 0) && <span className="text-gray-400 text-xs">0 PTS</span>}
                   </p>
-                  <p className="text-[8px] text-gray-400 uppercase font-black mt-1 tracking-widest">
-                    {rules.rewardMode === 'cashback' ? 'Saldo' : 'Pontos'}
+                  <p className="text-[8px] text-gray-400 uppercase font-black tracking-widest">
+                    SALDO ATUAL
                   </p>
                 </div>
               </button>
