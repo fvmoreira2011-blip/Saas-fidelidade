@@ -57,7 +57,10 @@ interface CustomerRecord {
   name: string;
   phone: string;
   points: number;
+  cashbackBalance?: number;
+  authUid?: string;
   lastPurchaseDate: string;
+  birthDate?: string;
 }
 
 interface StoreConfig {
@@ -215,89 +218,97 @@ export default function ConsumerApp() {
     setDeferredPrompt(null);
   };
 
+  // Listen for customer changes
+  useEffect(() => {
+    if (!isAuthenticated || customerRecords.length === 0) return;
+
+    const unsubscribers = customerRecords.map(record => {
+      return onSnapshot(doc(db, 'customers', record.id), (snapshot) => {
+        if (snapshot.exists()) {
+          const updatedData = { id: snapshot.id, ...(snapshot.data() as any) } as CustomerRecord;
+          setCustomerRecords(prev => prev.map(r => r.id === updatedData.id ? updatedData : r));
+        }
+      });
+    });
+
+    return () => unsubscribers.forEach(unsub => unsub());
+  }, [isAuthenticated, customerRecords.length]);
+
   // Listen for notifications
   useEffect(() => {
     if (!isAuthenticated || customerRecords.length === 0) return;
 
     const customerIds = customerRecords.map(r => r.id);
+    // Batch notifications listener in groups of 10 to avoid 'in' query limit if needed, 
+    // but here we likely have few stores per user.
     const q = query(collection(db, 'notifications'), where('customerId', 'in', customerIds));
     
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-          const notifs = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as Notification));
-          setNotifications(notifs.sort((a, b) => b.date.localeCompare(a.date)));
-          
-          // Browser Notification API
-          if (Notification.permission === 'granted') {
-            snapshot.docChanges().forEach((change) => {
-              if (change.type === 'added') {
-                const data = change.doc.data();
-                const store = stores[data.companyId];
-                const companyLogo = store?.companyProfile?.logoURL || store?.companyProfile?.photoURL || 'https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui';
-                
-                new Notification(data.title, { 
-                  body: data.message,
-                  icon: companyLogo
-                });
-              }
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const notifs = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as Notification));
+      setNotifications(notifs.sort((a, b) => b.date.localeCompare(a.date)));
+      
+      // Browser Notification API
+      if (Notification.permission === 'granted') {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === 'added') {
+            const data = change.doc.data();
+            const store = stores[data.companyId];
+            const companyLogo = store?.companyProfile?.logoURL || store?.companyProfile?.photoURL || 'https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui';
+            
+            new Notification(data.title, { 
+              body: data.message,
+              icon: companyLogo
             });
           }
-        }, (error) => {
-          console.error("Notifications listener error:", error);
-          if (error.message.includes("Quota exceeded")) {
-            // Silently fail or show a small toast if we had a toast system
-          }
         });
-
-    // Request permission
-    if (Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
+      }
+    }, (error) => {
+      console.error("Notifications listener error:", error);
+    });
 
     return () => unsubscribe();
-  }, [isAuthenticated, customerRecords]);
+  }, [isAuthenticated, customerRecords, stores]);
 
-  const handleLogin = async (phoneToUse?: string) => {
+  const handleLogin = async (phoneToUse?: string, uidToUse?: string) => {
     const finalPhone = phoneToUse || phone;
-    if (!finalPhone) {
-      showToast('Por favor, insira seu número de celular.', 'warning');
-      return;
-    }
-
+    
     setLoading(true);
-    console.log('Tentando login com telefone:', finalPhone);
     try {
-      // Request notification permission on login
-      if (Notification.permission === 'default') {
-        await Notification.requestPermission();
-      }
-
       const allQueries = [];
       
-      // 1. Exact match (usually +55...)
-      allQueries.push(query(collection(db, 'customers'), where('phone', '==', finalPhone)));
-      
-      // 2. Clean digits only
-      const cleanPhone = finalPhone.replace(/\D/g, '');
-      if (cleanPhone !== finalPhone && cleanPhone.length > 0) {
-        allQueries.push(query(collection(db, 'customers'), where('phone', '==', cleanPhone)));
-      }
-      
-      // 3. Without +55 prefix if it exists
-      if (cleanPhone.startsWith('55') && cleanPhone.length > 10) {
-        const localPhone = cleanPhone.substring(2);
-        allQueries.push(query(collection(db, 'customers'), where('phone', '==', localPhone)));
+      if (uidToUse) {
+        allQueries.push(query(collection(db, 'customers'), where('authUid', '==', uidToUse)));
       }
 
-      // 4. With + prefix if missing but looks like E.164
-      if (!finalPhone.startsWith('+') && cleanPhone.length > 10) {
-        allQueries.push(query(collection(db, 'customers'), where('phone', '==', '+' + cleanPhone)));
+      if (finalPhone) {
+        // 1. Exact match
+        allQueries.push(query(collection(db, 'customers'), where('phone', '==', finalPhone)));
+        
+        // 2. Clean digits
+        const cleanPhone = finalPhone.replace(/\D/g, '');
+        if (cleanPhone !== finalPhone && cleanPhone.length > 0) {
+          allQueries.push(query(collection(db, 'customers'), where('phone', '==', cleanPhone)));
+        }
+        
+        // 3. Without +55 prefix
+        if (cleanPhone.startsWith('55') && cleanPhone.length > 10) {
+          allQueries.push(query(collection(db, 'customers'), where('phone', '==', cleanPhone.substring(2))));
+        }
+
+        // 4. With + prefix
+        if (!finalPhone.startsWith('+') && cleanPhone.length > 10) {
+          allQueries.push(query(collection(db, 'customers'), where('phone', '==', '+' + cleanPhone)));
+        }
       }
 
-      // Execute all queries in parallel
+      if (allQueries.length === 0) {
+        if (!uidToUse) setLoading(false);
+        return;
+      }
+
       const snapshots = await Promise.all(allQueries.map(q => getDocs(q)));
-      
-      // Combine results and remove duplicates
       const recordsMap = new Map<string, CustomerRecord>();
+      
       snapshots.forEach(snap => {
         snap.docs.forEach(doc => {
           recordsMap.set(doc.id, { id: doc.id, ...(doc.data() as any) } as CustomerRecord);
@@ -305,64 +316,61 @@ export default function ConsumerApp() {
       });
 
       const records = Array.from(recordsMap.values());
-      console.log(`Encontrados ${records.length} registros para o telefone.`);
 
       if (records.length > 0) {
-        // Fetch store configs for each record
         const storeIds = Array.from(new Set(records.map(r => r.companyId)));
         const storeData: Record<string, StoreConfig> = {};
         const validRecords: CustomerRecord[] = [];
         
         for (const id of storeIds) {
           if (!id) continue;
-          try {
-            const storeDoc = await getDoc(doc(db, 'configs', id));
-            if (storeDoc.exists()) {
-              const data = storeDoc.data() as StoreConfig;
-              // Filter out "Tentaculos" program as requested
-              const companyName = data.companyProfile?.companyName?.toLowerCase() || '';
-              const campaignName = data.campaignName?.toLowerCase() || '';
-              if (companyName.includes('tentaculos') || campaignName.includes('tentaculos')) {
-                continue;
-              }
+          const storeDoc = await getDoc(doc(db, 'configs', id));
+          if (storeDoc.exists()) {
+            const data = storeDoc.data() as StoreConfig;
+            const companyName = data.companyProfile?.companyName?.toLowerCase() || '';
+            const campaignName = data.campaignName?.toLowerCase() || '';
+            if (!companyName.includes('tentaculos') && !campaignName.includes('tentaculos')) {
               storeData[id] = { id, ...data } as StoreConfig;
             }
-          } catch (err) {
-            console.error(`Error fetching store config for ${id}:`, err);
           }
         }
 
-        // Only keep records for which we have a valid (non-filtered) store
         records.forEach(r => {
-          if (storeData[r.companyId]) {
-            validRecords.push(r);
-          }
+          if (storeData[r.companyId]) validRecords.push(r);
         });
 
-        localStorage.setItem('consumer_phone', finalPhone);
+        if (finalPhone) localStorage.setItem('consumer_phone', finalPhone);
         setCustomerRecords(validRecords);
         setStores(storeData);
 
-        // Check if we already have an authUser (secured account)
-        if (auth.currentUser) {
+        if (auth.currentUser || uidToUse) {
           setIsAuthenticated(true);
-          showToast('Bem-vindo de volta!', 'success');
         } else {
-          // Progress to confirmation
           setLoginStep('confirm');
         }
-      } else {
+      } else if (finalPhone) {
         showToast('Nenhum cadastro encontrado com este número.', 'error');
       }
     } catch (error: any) {
-      console.error('Error logging in:', error);
-      if (error.message?.includes("Quota exceeded") || error.message?.includes("resource-exhausted")) {
-        window.dispatchEvent(new CustomEvent('firestore-quota-exceeded'));
-      } else {
-        showToast(`Erro ao acessar o sistema: ${error instanceof Error ? error.message : 'Erro desconhecido'}`, 'error');
-      }
+      console.error('Login error:', error);
+      showToast('Erro ao acessar o sistema.', 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const linkAccount = async (user: User) => {
+    if (customerRecords.length === 0) return;
+    try {
+      const batch = writeBatch(db);
+      customerRecords.forEach(record => {
+        if (!record.authUid) {
+          batch.update(doc(db, 'customers', record.id), { authUid: user.uid });
+        }
+      });
+      await batch.commit();
+    } catch (error) {
+      console.error("Account linking error:", error);
     }
   };
 
@@ -370,12 +378,13 @@ export default function ConsumerApp() {
     setLoading(true);
     const provider = new GoogleAuthProvider();
     try {
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+      await linkAccount(result.user);
       setIsAuthenticated(true);
       showToast('Conta protegida com sucesso!', 'success');
     } catch (error: any) {
       console.error("Google secure error:", error);
-      showToast("Erro ao conectar com Google.", "error");
+      showToast("Erro ao conectar com Google. Se estiver no celular, tente usar o e-mail.", "error");
     } finally {
       setLoading(false);
     }
@@ -386,24 +395,23 @@ export default function ConsumerApp() {
     if (!email || !password) return;
     setLoading(true);
     try {
+      let user;
       if (isRegistering) {
-        await createUserWithEmailAndPassword(auth, email, password);
+        const result = await createUserWithEmailAndPassword(auth, email, password);
+        user = result.user;
         showToast('Conta criada e protegida!', 'success');
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
+        const result = await signInWithEmailAndPassword(auth, email, password);
+        user = result.user;
         showToast('Acesso confirmado!', 'success');
       }
+      if (user) await linkAccount(user);
       setIsAuthenticated(true);
     } catch (error: any) {
       console.error("Email secure error:", error);
-      if (error.code === 'auth/email-already-in-use') {
-        showToast("Este e-mail já está em uso. Tente fazer login.", "warning");
-        setIsRegistering(false);
-      } else if (error.code === 'auth/wrong-password') {
-        showToast("Senha incorreta.", "error");
-      } else {
-        showToast("Erro ao processar acesso.", "error");
-      }
+      const msg = error.code === 'auth/email-already-in-use' ? "E-mail em uso. Faça login." :
+                  error.code === 'auth/wrong-password' ? "Senha incorreta." : "Erro ao processar.";
+      showToast(msg, "error");
     } finally {
       setLoading(false);
     }
@@ -428,12 +436,9 @@ export default function ConsumerApp() {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setAuthUser(user);
-        // If we have a user but weren't "authenticated" in the app sense, 
-        // we should check if they have a phone linked or stored
         const savedPhone = localStorage.getItem('consumer_phone');
-        if (savedPhone && !isAuthenticated) {
-          handleLogin(savedPhone);
-        }
+        // Always attempt to refetch based on UID if available
+        handleLogin(savedPhone || undefined, user.uid);
       } else {
         setAuthUser(null);
       }
@@ -727,12 +732,21 @@ export default function ConsumerApp() {
                           </p>
                         </div>
                         <div className="text-right">
-                          <p className="text-2xl font-black text-green-600">
-                            {store?.rewardMode === 'cashback' ? `R$ ${formatCurrency(record.points)}` : record.points}
-                          </p>
-                          <p className="text-[10px] text-gray-400 font-bold uppercase">
-                            {store?.rewardMode === 'cashback' ? 'Cashback' : 'Pontos'}
-                          </p>
+                          <div className="flex flex-col items-end">
+                            {record.points > 0 && (
+                              <p className={cn("text-lg font-black leading-none", store?.rewardMode === 'points' ? "text-green-600" : "text-gray-400 opacity-50")}>
+                                {record.points} pts
+                              </p>
+                            )}
+                            {(record.cashbackBalance || 0) > 0 && (
+                              <p className={cn("text-lg font-black leading-tight", store?.rewardMode === 'cashback' ? "text-green-600" : "text-gray-400 opacity-50")}>
+                                R$ {formatCurrency(record.cashbackBalance || 0)}
+                              </p>
+                            )}
+                            {record.points <= 0 && (!record.cashbackBalance || record.cashbackBalance <= 0) && (
+                              <p className="text-lg font-black text-gray-300">0.00</p>
+                            )}
+                          </div>
                         </div>
                       </div>
 
@@ -742,7 +756,7 @@ export default function ConsumerApp() {
                           <span className="text-gray-400">Progresso</span>
                           <span className="text-green-600">
                             {store?.rewardMode === 'cashback' 
-                              ? `SALDO: R$ ${formatCurrency(record.points)}`
+                              ? `SALDO: R$ {formatCurrency(record.cashbackBalance || 0)}`
                               : (nextTier ? `${record.points}/${nextTier.points}` : 'Prêmio Máximo!')
                             }
                           </span>
@@ -752,7 +766,7 @@ export default function ConsumerApp() {
                             initial={{ width: 0 }}
                             animate={{ 
                               width: `${store?.rewardMode === 'cashback' 
-                                ? Math.min((record.points / (store.cashbackConfig?.minActivationValue || 1)) * 100, 100)
+                                ? Math.min(((record.cashbackBalance || 0) / (store.cashbackConfig?.minActivationValue || 1)) * 100, 100)
                                 : progress}%` 
                             }}
                             className={cn("h-full rounded-full", store?.rewardMode === 'cashback' ? "bg-green-600" : "bg-green-500")}
@@ -810,7 +824,7 @@ export default function ConsumerApp() {
                             const minDays = store.cashbackConfig?.minRedeemDays || 0;
                             const daysSinceLast = record.lastPurchaseDate ? differenceInDays(new Date(), parseISO(record.lastPurchaseDate)) : 999;
                             
-                            if (record.points < minRedeem) {
+                            if ((record.cashbackBalance || 0) < minRedeem) {
                               showToast(`Saldo insuficiente. Mínimo para resgate: R$ ${formatCurrency(minRedeem)}`, "info");
                               return;
                             }
@@ -831,14 +845,14 @@ export default function ConsumerApp() {
                         className={cn(
                           "w-full mt-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
                           store?.rewardMode === 'cashback'
-                            ? (record.points > 0 && 
-                               record.points >= (store.cashbackConfig?.minActivationValue || 0) &&
+                            ? ((record.cashbackBalance || 0) > 0 && 
+                               (record.cashbackBalance || 0) >= (store.cashbackConfig?.minActivationValue || 0) &&
                                (record.lastPurchaseDate ? differenceInDays(new Date(), parseISO(record.lastPurchaseDate)) : 999) >= (store.cashbackConfig?.minRedeemDays || 0)
                                 ? "bg-green-600 text-white shadow-lg shadow-green-600/20 hover:bg-green-700"
                                 : "bg-gray-100 text-gray-400")
-                            : (store?.rewardTiers?.some(t => t.points <= record.points))
+                            : (store?.rewardTiers?.some(t => t.points <= record.points)
                               ? "bg-green-500 text-white shadow-lg shadow-green-500/20 hover:bg-green-600"
-                              : "bg-gray-100 text-gray-400"
+                              : "bg-gray-100 text-gray-400")
                         )}
                       >
                         {store?.rewardMode === 'cashback' ? 'Resgatar Cashback' : 'Resgatar Prêmio'}
@@ -964,14 +978,19 @@ export default function ConsumerApp() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-gray-50 p-6 rounded-3xl text-center border border-gray-100">
-                  <p className="text-3xl font-black text-green-600">
-                    {stores[selectedStore]?.rewardMode === 'cashback' 
-                      ? `R$ ${formatCurrency(customerRecords.find(r => r.companyId === selectedStore)?.points || 0)}` 
-                      : customerRecords.find(r => r.companyId === selectedStore)?.points}
-                  </p>
-                  <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">
-                    {stores[selectedStore]?.rewardMode === 'cashback' ? 'Saldo Cashback' : 'Saldo Atual'}
-                  </p>
+                  <div className="flex flex-col items-center">
+                    {(customerRecords.find(r => r.companyId === selectedStore)?.points || 0) > 0 && (
+                      <p className={cn("text-2xl font-black", stores[selectedStore]?.rewardMode === 'points' ? "text-green-600" : "text-gray-400")}>
+                        {customerRecords.find(r => r.companyId === selectedStore)?.points} pts
+                      </p>
+                    )}
+                    {(customerRecords.find(r => r.companyId === selectedStore)?.cashbackBalance || 0) > 0 && (
+                      <p className={cn("text-2xl font-black", stores[selectedStore]?.rewardMode === 'cashback' ? "text-green-600" : "text-gray-400")}>
+                        R$ {formatCurrency(customerRecords.find(r => r.companyId === selectedStore)?.cashbackBalance || 0)}
+                      </p>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Saldo Atual</p>
                 </div>
                 <div className="bg-gray-50 p-6 rounded-3xl text-center border border-gray-100">
                   <p className="text-3xl font-black text-gray-900">{stores[selectedStore]?.rewardTiers?.length || 0}</p>

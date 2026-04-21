@@ -166,6 +166,8 @@ interface Customer {
   name: string;
   phone: string;
   points: number;
+  cashbackBalance?: number;
+  authUid?: string;
   age?: number;
   birthDate?: string;
   lastPurchaseDate: string;
@@ -1306,18 +1308,19 @@ function AppContent() {
       const currentCustomers = customersRef.current;
       
       for (const customer of currentCustomers) {
-        if (customer.points > 0) {
+        if (customer.points > 0 || (customer.cashbackBalance && customer.cashbackBalance > 0)) {
           const lastDate = parseISO(customer.lastPurchaseDate);
           const daysSince = differenceInDays(now, lastDate);
           
           if (daysSince > rules.maxDaysBetweenPurchases) {
-            // Reset points
+            // Reset both if expired
             try {
               await updateDoc(doc(db, 'customers', customer.id), {
-                points: 0
+                points: 0,
+                cashbackBalance: 0
               });
             } catch (error) {
-              console.error("Error resetting points for customer:", customer.id, error);
+              console.error("Error resetting balances for customer:", customer.id, error);
             }
           }
         }
@@ -3988,10 +3991,11 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
     try {
       const val = parseFloat(amount);
       let pointsEarned = 0;
+      let cashbackEarned = 0;
       
       if (rules.rewardMode === 'cashback') {
         if (val >= (rules.cashbackConfig?.minActivationValue || 0)) {
-          pointsEarned = val * ((rules.cashbackConfig?.percentage || 0) / 100);
+          cashbackEarned = val * ((rules.cashbackConfig?.percentage || 0) / 100);
         }
       } else {
         if (val >= (rules.minPurchaseValue || 0)) {
@@ -4006,7 +4010,8 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
 
       // Check for point expiry
       let currentPoints = foundCustomer.points;
-      if (currentPoints > 0 && foundCustomer.lastPurchaseDate) {
+      let currentCashback = foundCustomer.cashbackBalance || 0;
+      if ((currentPoints > 0 || currentCashback > 0) && foundCustomer.lastPurchaseDate) {
         const lastPurchase = parseISO(foundCustomer.lastPurchaseDate);
         const daysSinceLast = differenceInDays(new Date(), lastPurchase);
         
@@ -4019,25 +4024,29 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
         
         if (daysSinceLast > expiryDays) {
           currentPoints = 0; // Reset points if expired
+          currentCashback = 0; // Reset cashback if expired
         }
       }
 
       // Update customer points
       const customerRef = doc(db, 'customers', foundCustomer.id);
       const newPoints = currentPoints + pointsEarned;
+      const newCashback = currentCashback + cashbackEarned;
+      
       await updateDoc(customerRef, {
         points: newPoints,
+        cashbackBalance: newCashback,
         lastPurchaseDate: now
       });
 
-      // Send notification if points earned
-      if (pointsEarned > 0) {
+      // Send notification if something earned
+      if (pointsEarned > 0 || cashbackEarned > 0) {
         await addDoc(collection(db, 'notifications'), {
           customerId: foundCustomer.id,
           companyId,
           title: rules.rewardMode === 'cashback' ? 'Você ganhou cashback!' : 'Você ganhou pontos!',
           message: rules.rewardMode === 'cashback' 
-            ? `Parabéns! Você acaba de ganhar R$ ${formatCurrency(pointsEarned)} de cashback na ${rules.companyProfile?.companyName || 'nossa loja'}. Seu saldo agora é de R$ ${formatCurrency(newPoints)}.`
+            ? `Parabéns! Você acaba de ganhar R$ ${formatCurrency(cashbackEarned)} de cashback na ${rules.companyProfile?.companyName || 'nossa loja'}. Seu saldo agora é de R$ ${formatCurrency(newCashback)}.`
             : `Parabéns! Você acaba de ganhar ${pointsEarned} ponto(s) na ${rules.companyProfile?.companyName || 'nossa loja'}. Seu saldo agora é de ${newPoints} pontos.`,
           type: 'points',
           date: now,
@@ -4093,12 +4102,22 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
     try {
       const customerRef = doc(db, 'customers', foundCustomer.id);
       
-      // Find current prize and its cost
-      const tiers = [...(rules.rewardTiers || [])].sort((a, b) => b.points - a.points);
-      const currentTier = tiers.find(t => foundCustomer.points >= t.points);
-      const prizeName = currentTier?.prize || 'Brinde Especial';
-      const pointsToRedeem = rules.rewardMode === 'points' ? rules.purchasesForPrize : foundCustomer.points;
-      const prizeCost = currentTier?.cost || 0;
+      const isCashback = rules.rewardMode === 'cashback';
+      let prizeName = 'Brinde Especial';
+      let pointsToRedeem = 0;
+      let prizeCost = 0;
+
+      if (isCashback) {
+        prizeName = 'Resgate de Cashback';
+        pointsToRedeem = foundCustomer.cashbackBalance || 0;
+        prizeCost = pointsToRedeem;
+      } else {
+        const tiers = [...(rules.rewardTiers || [])].sort((a, b) => b.points - a.points);
+        const currentTier = tiers.find(t => foundCustomer.points >= t.points);
+        prizeName = currentTier?.prize || 'Brinde Especial';
+        pointsToRedeem = rules.purchasesForPrize || 10;
+        prizeCost = currentTier?.cost || 0;
+      }
 
       // Record redemption
       await addDoc(collection(db, 'redemptions'), {
@@ -4110,12 +4129,18 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
         date: new Date().toISOString()
       });
 
-      // Update customer points
-      await updateDoc(customerRef, {
-        points: rules.rewardMode === 'points' 
-          ? Math.max(0, foundCustomer.points - rules.purchasesForPrize)
-          : 0
-      });
+      // Update customer balances
+      if (isCashback) {
+        await updateDoc(customerRef, {
+          cashbackBalance: 0,
+          lastPurchaseDate: new Date().toISOString()
+        });
+      } else {
+        await updateDoc(customerRef, {
+          points: Math.max(0, foundCustomer.points - (rules.purchasesForPrize || 10)),
+          lastPurchaseDate: new Date().toISOString()
+        });
+      }
 
       setMessage({ type: 'success', text: `Prêmio resgatado com sucesso para ${foundCustomer.name}!` });
       setShowRedeemConfirm(false);
@@ -4227,7 +4252,10 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
                   <div className="flex justify-between items-center mb-3">
                     <div>
                       <p className="text-xs text-green-200 font-black uppercase tracking-tight">{foundCustomer.name}</p>
-                      <p className="text-[10px] text-green-400 font-bold">Saldo: {rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(foundCustomer.points)}` : `${foundCustomer.points} Pontos`}</p>
+                      <div className="flex gap-2 mt-1">
+                        {foundCustomer.points > 0 && <p className="text-[9px] text-green-400 font-bold">P: {foundCustomer.points}</p>}
+                        {(foundCustomer.cashbackBalance || 0) > 0 && <p className="text-[9px] text-green-400 font-bold">C: R${formatCurrency(foundCustomer.cashbackBalance || 0)}</p>}
+                      </div>
                     </div>
                   </div>
 
@@ -4511,8 +4539,25 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
                     <span className="text-lg font-black uppercase tracking-widest">Cliente Identificado!</span>
                   </div>
                   <h2 className="text-6xl font-black text-gray-900 tracking-tighter uppercase leading-none">{foundCustomer.name}</h2>
-                  <div className="flex items-center gap-4">
-                    <p className="text-2xl text-gray-500 font-bold tracking-tight">Saldo Atual: <span className="text-primary font-black text-3xl">{rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(foundCustomer.points)}` : `${foundCustomer.points} Pontos`}</span></p>
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xl text-gray-500 font-bold tracking-tight">Saldo Atual:</p>
+                    <div className="flex flex-wrap gap-4">
+                      {foundCustomer.points > 0 && (
+                        <div className="bg-primary/10 px-4 py-2 rounded-2xl border border-primary/20">
+                          <p className="text-xs font-black text-primary uppercase">Pontos</p>
+                          <p className="text-2xl font-black text-primary leading-none">{foundCustomer.points} PTS</p>
+                        </div>
+                      )}
+                      {(foundCustomer.cashbackBalance || 0) > 0 && (
+                        <div className="bg-green-100 px-4 py-2 rounded-2xl border border-green-200">
+                          <p className="text-xs font-black text-green-600 uppercase">Cashback</p>
+                          <p className="text-2xl font-black text-green-700 leading-none">R$ {formatCurrency(foundCustomer.cashbackBalance || 0)}</p>
+                        </div>
+                      )}
+                      {foundCustomer.points <= 0 && (!foundCustomer.cashbackBalance || foundCustomer.cashbackBalance <= 0) && (
+                        <p className="text-3xl font-black text-gray-200 uppercase tracking-tighter">Sem Saldo</p>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -4621,11 +4666,14 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
                         </>
                       )}
 
-                      {rules.rewardMode === 'cashback' && foundCustomer.points >= (rules.cashbackConfig?.minActivationValue || 0) && (
+                      {rules.rewardMode === 'cashback' && (foundCustomer.cashbackBalance || 0) >= (rules.cashbackConfig?.minActivationValue || 0) && (
                         <div className="p-6 bg-green-50 rounded-3xl border border-green-100 text-center space-y-2">
                            <p className="text-xs font-black text-green-600 uppercase tracking-widest">Saldo de Cashback Disponível</p>
-                           <p className="text-3xl font-black text-gray-900 tracking-tighter">R$ {formatCurrency(foundCustomer.points)}</p>
+                           <p className="text-3xl font-black text-gray-900 tracking-tighter">R$ {formatCurrency(foundCustomer.cashbackBalance || 0)}</p>
                            <p className="text-[10px] text-gray-500 font-medium italic leading-tight">O cliente pode utilizar este valor para abater em novas compras.</p>
+                           <Button onClick={() => setShowRedeemConfirm(true)} disabled={isSubmitting} className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-2xl text-xs font-black">
+                              Utilizar Cashback
+                           </Button>
                         </div>
                       )}
                    </div>
@@ -5404,30 +5452,42 @@ function NotifyTab({ customers, rules, companyId }: { customers: Customer[]; rul
               </div>
               <div className="text-right">
                 <p className="text-sm font-black text-primary">
-                  {rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(customer.points)}` : `${Math.floor(customer.points)} PTS`}
+                  {customer.points > 0 && <span>{Math.floor(customer.points)} PTS</span>}
+                  {customer.points > 0 && (customer.cashbackBalance || 0) > 0 && <span className="mx-1">•</span>}
+                  {(customer.cashbackBalance || 0) > 0 && <span>R$ {formatCurrency(customer.cashbackBalance || 0)}</span>}
+                  {customer.points <= 0 && (!customer.cashbackBalance || customer.cashbackBalance <= 0) && <span>0 PTS</span>}
                 </p>
                 <div className="mt-1 flex justify-end">
-                  <div className="flex items-center gap-1">
-                    <span className="text-[8px] font-black uppercase text-green-600 leading-none">
-                      {rules.rewardMode === 'cashback' ? 'Cashback' : 'Pontos'}
-                    </span>
+                  <div className="flex flex-wrap gap-2 justify-end">
                     {(() => {
                       const lastPurchase = parseISO(customer.lastPurchaseDate || new Date().toISOString());
                       const daysSince = differenceInDays(new Date(), lastPurchase);
-                      const expiry = rules.rewardMode === 'cashback' 
-                        ? (rules.cashbackConfig?.expiryDays || 90) 
-                        : (rules.maxDaysBetweenPurchases || rules.pointsExpiryDays || 999);
-                      const isValid = daysSince <= expiry;
+                      
+                      const pointsExpiry = (rules.maxDaysBetweenPurchases || rules.pointsExpiryDays || 999);
+                      const pointsValid = daysSince <= pointsExpiry && customer.points > 0;
+
+                      const cashbackExpiry = (rules.cashbackConfig?.expiryDays || 90);
+                      const cashbackValid = daysSince <= cashbackExpiry && (customer.cashbackBalance || 0) > 0;
+
                       return (
-                        <div 
-                          className={cn(
-                            "w-4 h-4 rounded-full flex items-center justify-center text-[7px] font-black text-white",
-                            isValid ? "bg-green-500" : "bg-red-500"
+                        <>
+                          {customer.points > 0 && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[8px] font-black uppercase text-gray-400">P</span>
+                              <div className={cn("w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-black text-white", pointsValid ? "bg-green-500" : "bg-red-500")}>
+                                {pointsValid ? 'V' : 'E'}
+                              </div>
+                            </div>
                           )}
-                          title={isValid ? "Válido" : "Expirado"}
-                        >
-                          {isValid ? 'V' : 'E'}
-                        </div>
+                          {(customer.cashbackBalance || 0) > 0 && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[8px] font-black uppercase text-gray-400">C</span>
+                              <div className={cn("w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-black text-white", cashbackValid ? "bg-green-500" : "bg-red-500")}>
+                                {cashbackValid ? 'V' : 'E'}
+                              </div>
+                            </div>
+                          )}
+                        </>
                       );
                     })()}
                   </div>
@@ -6209,30 +6269,44 @@ function PromotionTab({ customers, purchases }: { customers: Customer[]; purchas
                     </div>
                     <div className="text-right">
                       <p className="text-xs font-bold text-primary">
-                        {rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(c.points)}` : `${Math.floor(c.points)} PTS`}
+                        {c.points > 0 && <span>{Math.floor(c.points)} PTS</span>}
+                        {c.points > 0 && (c.cashbackBalance || 0) > 0 && <span className="mx-1">•</span>}
+                        {(c.cashbackBalance || 0) > 0 && <span>R$ {formatCurrency(c.cashbackBalance || 0)}</span>}
+                        {c.points <= 0 && (!c.cashbackBalance || c.cashbackBalance <= 0) && <span>0 PTS</span>}
                       </p>
                       <div className="mt-1 flex justify-end">
-                        <div className="flex items-center gap-1">
-                          <span className="text-[8px] font-black uppercase text-green-600">
-                            {rules.rewardMode === 'cashback' ? 'Cashback' : 'Pontos'}
-                          </span>
+                        <div className="flex flex-wrap gap-2 justify-end">
                           {(() => {
                             const lastPurchase = parseISO(c.lastPurchaseDate || new Date().toISOString());
                             const daysSince = differenceInDays(new Date(), lastPurchase);
-                            const expiry = rules.rewardMode === 'cashback' 
-                              ? (rules.cashbackConfig?.expiryDays || 90) 
-                              : (rules.maxDaysBetweenPurchases || rules.pointsExpiryDays || 999);
-                            const isValid = daysSince <= expiry;
+                            
+                            // Points Expiry
+                            const pointsExpiry = (rules.maxDaysBetweenPurchases || rules.pointsExpiryDays || 999);
+                            const pointsValid = daysSince <= pointsExpiry && c.points > 0;
+
+                            // Cashback Expiry
+                            const cashbackExpiry = (rules.cashbackConfig?.expiryDays || 90);
+                            const cashbackValid = daysSince <= cashbackExpiry && (c.cashbackBalance || 0) > 0;
+
                             return (
-                              <div 
-                                className={cn(
-                                  "w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-black text-white",
-                                  isValid ? "bg-green-500" : "bg-red-500"
+                              <>
+                                {c.points > 0 && (
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-[8px] font-black uppercase text-gray-400">P</span>
+                                    <div className={cn("w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-black text-white", pointsValid ? "bg-green-500" : "bg-red-500")}>
+                                      {pointsValid ? 'V' : 'E'}
+                                    </div>
+                                  </div>
                                 )}
-                                title={isValid ? "Válido" : "Expirado"}
-                              >
-                                {isValid ? 'V' : 'E'}
-                              </div>
+                                {(c.cashbackBalance || 0) > 0 && (
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-[8px] font-black uppercase text-gray-400">C</span>
+                                    <div className={cn("w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-black text-white", cashbackValid ? "bg-green-500" : "bg-red-500")}>
+                                      {cashbackValid ? 'V' : 'E'}
+                                    </div>
+                                  </div>
+                                )}
+                              </>
                             );
                           })()}
                         </div>
@@ -6302,10 +6376,13 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
   const rewardedCustomers = useMemo(() => {
     return customers.map(customer => {
       const reachedTier = rules.rewardMode === 'points' ? tiers.find(t => customer.points >= t.points) : null;
-      // For cashback, we consider rewarded if they have any balance or reached min
-      const hasBalance = rules.rewardMode === 'cashback' && customer.points > 0;
+      const currentCashback = customer.cashbackBalance || 0;
+      const hasBalance = rules.rewardMode === 'cashback' && currentCashback > 0;
       return { ...customer, reachedTier, isRewarded: rules.rewardMode === 'points' ? !!reachedTier : hasBalance };
-    }).filter(c => c.isRewarded).sort((a, b) => b.points - a.points);
+    }).filter(c => c.isRewarded).sort((a, b) => {
+      if (rules.rewardMode === 'cashback') return (b.cashbackBalance || 0) - (a.cashbackBalance || 0);
+      return b.points - a.points;
+    });
   }, [customers, tiers, rules.rewardMode]);
 
   const selectedCustomer = useMemo(() => {
@@ -6388,7 +6465,7 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
                     {rules.rewardMode === 'cashback' ? 'Cashback Atual' : 'Pontuação Acumulada'}
                   </p>
                   <p className="text-2xl font-black text-white tracking-tighter">
-                    {rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(selectedCustomer?.points || 0)}` : `${selectedCustomer?.points || 0}`}
+                    {rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(selectedCustomer?.cashbackBalance || 0)}` : `${selectedCustomer?.points || 0}`}
                     {rules.rewardMode === 'points' && <span className="text-xs font-bold text-primary ml-1">PTS</span>}
                   </p>
                 </div>
@@ -6396,7 +6473,8 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
                   <p className="text-[8px] font-black text-white/40 uppercase tracking-widest mb-1">Status do Prêmio</p>
                   <p className="text-xs font-black text-green-500 uppercase">
                     {rules.rewardMode === 'cashback' 
-                      ? (selectedCustomer?.points >= (rules.cashbackConfig?.minActivationValue || 0) ? 'SALDO DISPONÍVEL' : 'ACUMULANDO SALDO')
+                      ? ((selectedCustomer?.cashbackBalance || 0) >= (rules.cashbackConfig?.minActivationValue || 0) ? 'RESGATE DISPONÍVEL' : 
+                         `FALTAM R$ ${formatCurrency(Math.max(0, (rules.cashbackConfig?.minActivationValue || 0) - (selectedCustomer?.cashbackBalance || 0)))}`)
                       : (selectedCustomer?.reachedTier?.prize || 'EM PROGRESSO')}
                   </p>
                 </div>
