@@ -5693,13 +5693,32 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
   }, [purchases, customers]);
 
   const goalsComparisonData = useMemo(() => {
-    return goals.map(g => {
-      const monthPurchases = purchases.filter(p => format(parseISO(p.date), 'yyyy-MM') === g.month);
-      const actual = monthPurchases.reduce((acc, p) => acc + p.amount, 0);
+    if (!goals || goals.length === 0) return [];
+    
+    // Group goals by month to avoid duplicates if they exist
+    const uniqueGoals = Array.from(new Map(goals.map(g => [g.month, g])).values());
+
+    return uniqueGoals.map(g => {
+      const monthPurchases = purchases.filter(p => {
+        try {
+          return p.date && p.date.substring(0, 7) === g.month;
+        } catch {
+          return false;
+        }
+      });
+      const actual = monthPurchases.reduce((acc, p) => acc + (p.amount || 0), 0);
+      
+      let formattedName = g.month;
+      try {
+        formattedName = format(parseISO(g.month + '-01'), 'MMM/yy', { locale: ptBR });
+      } catch (e) {
+        console.error("Error formatting goal month:", e);
+      }
+
       return {
         month: g.month,
-        name: format(parseISO(g.month + '-01'), 'MMM/yy', { locale: ptBR }),
-        planejado: g.value,
+        name: formattedName,
+        planejado: g.value || 0,
         realizado: actual
       };
     }).sort((a, b) => a.month.localeCompare(b.month)).slice(-6);

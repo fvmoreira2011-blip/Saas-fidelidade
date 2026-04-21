@@ -147,16 +147,18 @@ export default function ConsumerApp() {
       const markAllAsRead = async () => {
         try {
           const unreadNotifs = notifications.filter(n => !n.read);
-          for (const notif of unreadNotifs) {
-            await updateDoc(doc(db, 'notifications', notif.id), { read: true });
-          }
+          const batch = writeBatch(db);
+          unreadNotifs.forEach(notif => {
+            batch.update(doc(db, 'notifications', notif.id), { read: true });
+          });
+          await batch.commit();
         } catch (error) {
           console.error("Error marking notifications as read:", error);
         }
       };
       markAllAsRead();
     }
-  }, [activeView, unreadCount, notifications]);
+  }, [activeView, unreadCount]);
 
   const handleDeleteNotification = async (id: string) => {
     setDeletedIds(prev => {
@@ -377,6 +379,7 @@ export default function ConsumerApp() {
   const handleSecureGoogle = async () => {
     setLoading(true);
     const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
     try {
       const result = await signInWithPopup(auth, provider);
       await linkAccount(result.user);
@@ -384,7 +387,11 @@ export default function ConsumerApp() {
       showToast('Conta protegida com sucesso!', 'success');
     } catch (error: any) {
       console.error("Google secure error:", error);
-      showToast("Erro ao conectar com Google. Se estiver no celular, tente usar o e-mail.", "error");
+      if (error.code === 'auth/popup-blocked') {
+        showToast("Janela bloqueada. Habilite pop-ups para continuar.", "error");
+      } else {
+        showToast("Erro ao conectar com Google. Tente usar o e-mail.", "error");
+      }
     } finally {
       setLoading(false);
     }
@@ -434,17 +441,14 @@ export default function ConsumerApp() {
   // Auth observer
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setAuthUser(user || null);
       if (user) {
-        setAuthUser(user);
         const savedPhone = localStorage.getItem('consumer_phone');
-        // Always attempt to refetch based on UID if available
         handleLogin(savedPhone || undefined, user.uid);
-      } else {
-        setAuthUser(null);
       }
     });
     return () => unsubscribe();
-  }, [isAuthenticated]);
+  }, []);
 
   if (quotaExceeded) {
     return (
@@ -521,6 +525,21 @@ export default function ConsumerApp() {
                     className="w-full bg-gray-900 text-white py-5 rounded-2xl font-black uppercase tracking-[0.2em] text-sm shadow-xl shadow-gray-900/20 hover:bg-black transition-all"
                   >
                     {loading ? 'Buscando...' : 'Acessar Carteira'}
+                  </button>
+
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center px-4"><div className="w-full border-t border-gray-100"></div></div>
+                    <div className="relative flex justify-center text-center">
+                      <span className="bg-white px-2 text-[10px] text-gray-400 font-bold uppercase tracking-widest">ou acesse com</span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleSecureGoogle}
+                    className="w-full bg-white border-2 border-gray-100 p-4 rounded-2xl flex items-center justify-center gap-3 hover:bg-gray-50 transition-all"
+                  >
+                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
+                    <span className="text-xs font-black text-gray-700 uppercase tracking-widest">Gmail / Google</span>
                   </button>
                 </div>
               </motion.div>
