@@ -12,7 +12,16 @@ import {
   updateDoc,
   writeBatch
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  GoogleAuthProvider, 
+  signInWithPopup,
+  onAuthStateChanged,
+  User,
+  signOut
+} from 'firebase/auth';
 import PhoneInput from 'react-phone-number-input';
 import { differenceInDays, parseISO } from 'date-fns';
 import { 
@@ -96,8 +105,13 @@ function formatCurrency(value: number) {
 
 export default function ConsumerApp() {
   const [phone, setPhone] = useState<string | undefined>('');
+  const [loginStep, setLoginStep] = useState<'phone' | 'confirm' | 'secure_choice' | 'email_pass' | 'loading'>('phone');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authUser, setAuthUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
   const [customerRecords, setCustomerRecords] = useState<CustomerRecord[]>([]);
   const [stores, setStores] = useState<Record<string, StoreConfig>>({});
   const [selectedStore, setSelectedStore] = useState<string | null>(null);
@@ -325,11 +339,18 @@ export default function ConsumerApp() {
           }
         });
 
+        localStorage.setItem('consumer_phone', finalPhone);
         setCustomerRecords(validRecords);
         setStores(storeData);
-        setIsAuthenticated(true);
-        localStorage.setItem('consumer_phone', finalPhone);
-        showToast('Bem-vindo de volta!', 'success');
+
+        // Check if we already have an authUser (secured account)
+        if (auth.currentUser) {
+          setIsAuthenticated(true);
+          showToast('Bem-vindo de volta!', 'success');
+        } else {
+          // Progress to confirmation
+          setLoginStep('confirm');
+        }
       } else {
         showToast('Nenhum cadastro encontrado com este número.', 'error');
       }
@@ -345,12 +366,80 @@ export default function ConsumerApp() {
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('consumer_phone');
-    setIsAuthenticated(false);
-    setCustomerRecords([]);
-    setStores({});
+  const handleSecureGoogle = async () => {
+    setLoading(true);
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+      setIsAuthenticated(true);
+      showToast('Conta protegida com sucesso!', 'success');
+    } catch (error: any) {
+      console.error("Google secure error:", error);
+      showToast("Erro ao conectar com Google.", "error");
+    } finally {
+      setLoading(false);
+    }
   };
+
+  const handleSecureEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password) return;
+    setLoading(true);
+    try {
+      if (isRegistering) {
+        await createUserWithEmailAndPassword(auth, email, password);
+        showToast('Conta criada e protegida!', 'success');
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+        showToast('Acesso confirmado!', 'success');
+      }
+      setIsAuthenticated(true);
+    } catch (error: any) {
+      console.error("Email secure error:", error);
+      if (error.code === 'auth/email-already-in-use') {
+        showToast("Este e-mail já está em uso. Tente fazer login.", "warning");
+        setIsRegistering(false);
+      } else if (error.code === 'auth/wrong-password') {
+        showToast("Senha incorreta.", "error");
+      } else {
+        showToast("Erro ao processar acesso.", "error");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      localStorage.removeItem('consumer_phone');
+      setIsAuthenticated(false);
+      setAuthUser(null);
+      setCustomerRecords([]);
+      setStores({});
+      setLoginStep('phone');
+    } catch (err) {
+      console.error("Logout error:", err);
+    }
+  };
+
+  // Auth observer
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setAuthUser(user);
+        // If we have a user but weren't "authenticated" in the app sense, 
+        // we should check if they have a phone linked or stored
+        const savedPhone = localStorage.getItem('consumer_phone');
+        if (savedPhone && !isAuthenticated) {
+          handleLogin(savedPhone);
+        }
+      } else {
+        setAuthUser(null);
+      }
+    });
+    return () => unsubscribe();
+  }, [isAuthenticated]);
 
   if (quotaExceeded) {
     return (
@@ -373,7 +462,6 @@ export default function ConsumerApp() {
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6 font-sans relative overflow-hidden">
-        {/* PWA Install Banner */}
         <AnimatePresence>
           {showInstallBanner && (
             <motion.div 
@@ -393,15 +481,8 @@ export default function ConsumerApp() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button 
-                    onClick={handleInstallClick}
-                    className="bg-green-500 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-green-600 transition-all"
-                  >
-                    Instalar
-                  </button>
-                  <button onClick={() => setShowInstallBanner(false)} className="p-2 text-gray-500 hover:text-white">
-                    <X size={16} />
-                  </button>
+                  <button onClick={handleInstallClick} className="bg-green-500 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-green-600 transition-all">Instalar</button>
+                  <button onClick={() => setShowInstallBanner(false)} className="p-2 text-gray-500 hover:text-white"><X size={16} /></button>
                 </div>
               </div>
             </motion.div>
@@ -413,42 +494,147 @@ export default function ConsumerApp() {
           animate={{ opacity: 1, y: 0 }}
           className="w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl p-8 space-y-8 border border-gray-100"
         >
-          <div className="text-center space-y-4">
-            <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto shadow-lg shadow-green-500/10 overflow-hidden border border-gray-100">
-              <img 
-                src="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" 
-                alt="Logo" 
-                className="w-full h-full object-contain p-2"
-                referrerPolicy="no-referrer"
-              />
-            </div>
-            <h1 className="text-3xl font-black text-gray-900 tracking-tight">Seus Pontos viram Prêmios</h1>
-            <p className="text-gray-500 text-sm font-medium">Acesse todos os seus programas de pontos em um só lugar.</p>
-          </div>
+          <AnimatePresence mode="wait">
+            {loginStep === 'phone' && (
+              <motion.div key="phone" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8">
+                <div className="text-center space-y-4">
+                  <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto shadow-lg shadow-green-500/10 overflow-hidden border border-gray-100">
+                    <img src="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" alt="Logo" className="w-full h-full object-contain p-2" referrerPolicy="no-referrer" />
+                  </div>
+                  <h1 className="text-3xl font-black text-gray-900 tracking-tight">Meus Pontos Fidelidade</h1>
+                  <p className="text-gray-500 text-sm font-medium">Digite seu celular para acessar sua carteira.</p>
+                </div>
 
-          <div className="space-y-6">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Seu Celular</label>
-              <PhoneInput
-                placeholder="(00) 00000-0000"
-                value={phone}
-                onChange={setPhone}
-                defaultCountry="BR"
-                className="PhoneInput consumer-phone-input"
-              />
-            </div>
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Seu Celular</label>
+                    <PhoneInput placeholder="(00) 00000-0000" value={phone} onChange={setPhone} defaultCountry="BR" className="PhoneInput consumer-phone-input" />
+                  </div>
+                  <button
+                    onClick={() => handleLogin(phone)}
+                    disabled={loading || !phone}
+                    className="w-full bg-gray-900 text-white py-5 rounded-2xl font-black uppercase tracking-[0.2em] text-sm shadow-xl shadow-gray-900/20 hover:bg-black transition-all"
+                  >
+                    {loading ? 'Buscando...' : 'Acessar Carteira'}
+                  </button>
+                </div>
+              </motion.div>
+            )}
 
-            <button
-              onClick={() => handleLogin(phone)}
-              disabled={loading || !phone}
-              className="w-full bg-gray-900 text-white py-5 rounded-2xl font-black uppercase tracking-[0.2em] text-sm shadow-xl shadow-gray-900/20 hover:bg-black transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? 'Acessando...' : 'Acesse Aqui'}
-            </button>
-          </div>
+            {loginStep === 'confirm' && (
+              <motion.div key="confirm" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8 text-center">
+                <div className="w-20 h-20 bg-green-50 rounded-full flex items-center justify-center mx-auto text-green-600">
+                  <Smartphone size={40} />
+                </div>
+                <div className="space-y-2">
+                  <h2 className="text-2xl font-black text-gray-900">Este é você?</h2>
+                  <p className="text-3xl font-black text-green-600 uppercase tracking-tighter truncate px-4">
+                    {customerRecords[0]?.name || 'Cliente'}
+                  </p>
+                  <p className="text-sm text-gray-500 font-medium">Localizamos seu cadastro vinculado ao número {phone}.</p>
+                </div>
+                <div className="space-y-3">
+                  <button
+                    onClick={() => setLoginStep('secure_choice')}
+                    className="w-full bg-gray-900 text-white py-5 rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-gray-900/20 hover:bg-black transition-all"
+                  >
+                    Sim, sou eu!
+                  </button>
+                  <button
+                    onClick={() => setLoginStep('phone')}
+                    className="w-full text-gray-400 font-black uppercase tracking-widest text-[10px] py-2"
+                  >
+                    Não é meu nome, voltar
+                  </button>
+                </div>
+              </motion.div>
+            )}
 
+            {loginStep === 'secure_choice' && (
+              <motion.div key="secure" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8 text-center">
+                <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mx-auto text-blue-600">
+                  <Key size={40} />
+                </div>
+                <div className="space-y-2">
+                  <h2 className="text-2xl font-black text-gray-900">Proteja seu Acesso</h2>
+                  <p className="text-sm text-gray-500 font-medium leading-relaxed">
+                    Para sua segurança e para evitar que seu número seja usado por terceiros, vincule um e-mail ou use o Google.
+                  </p>
+                </div>
+                <div className="space-y-4">
+                  <button
+                    onClick={handleSecureGoogle}
+                    className="w-full bg-white border-2 border-gray-100 p-4 rounded-2xl flex items-center justify-center gap-3 hover:bg-gray-50 transition-all group"
+                  >
+                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
+                    <span className="text-sm font-black text-gray-700 uppercase tracking-widest">Continuar com Google</span>
+                  </button>
+                  <button
+                    onClick={() => setLoginStep('email_pass')}
+                    className="w-full bg-gray-900 text-white py-5 rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl"
+                  >
+                    Vincular E-mail e Senha
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {loginStep === 'email_pass' && (
+              <motion.div key="email_pass" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8">
+                <div className="text-center space-y-2">
+                  <h2 className="text-2xl font-black text-gray-900">{isRegistering ? 'Criar Acesso Seguro' : 'Entrar na Conta'}</h2>
+                  <p className="text-sm text-gray-500 font-medium">Crie seus dados para acessos futuros.</p>
+                </div>
+
+                <form onSubmit={handleSecureEmail} className="space-y-6">
+                  <div className="space-y-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">E-mail</label>
+                      <input 
+                        type="email" 
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-primary"
+                        required
+                        placeholder="seu@email.com"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Senha</label>
+                      <input 
+                        type="password" 
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-primary"
+                        required
+                        placeholder="••••••••"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 pt-2">
+                    <button
+                      type="submit"
+                      disabled={loading || !email || !password}
+                      className="w-full bg-gray-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl"
+                    >
+                      {loading ? 'Processando...' : (isRegistering ? 'Criar e Acessar' : 'Entrar')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsRegistering(!isRegistering)}
+                      className="w-full text-[10px] text-gray-500 font-black uppercase tracking-widest"
+                    >
+                      {isRegistering ? 'Já tenho uma conta segura' : 'Cadastrar novo e-mail'}
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          
           <p className="text-center text-[10px] text-gray-400 font-bold uppercase tracking-tighter">
-            Ao entrar você concorda com nossos termos de uso.
+            Plataforma de Relacionamento BuyPass.
           </p>
         </motion.div>
       </div>

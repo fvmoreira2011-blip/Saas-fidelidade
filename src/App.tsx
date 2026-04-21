@@ -960,14 +960,15 @@ function AppContent() {
 
   const isAdminUser = user?.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || user?.email?.toLowerCase() === 'fvmoreira2011@gmail.com' || appUser?.role === 'admin' || appUser?.role === 'superadmin';
   const isSuperAdmin = user?.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || user?.email?.toLowerCase() === 'fvmoreira2011@gmail.com' || appUser?.role === 'superadmin';
+  const isOnboarding = rules.onboardingComplete === false && !isSuperAdmin; 
 
   useEffect(() => {
     if (isAuthReady && isSuperAdmin && activeTab === 'dashboard') {
       setActiveTab('super_admin_profile');
-    } else if (isAuthReady && !isSuperAdmin && (activeTab === 'super_admin_profile' || activeTab === 'super_admin_management' || activeTab === 'painel_master')) {
+    } else if (isAuthReady && !isSuperAdmin && !isOnboarding && (activeTab === 'super_admin_profile' || activeTab === 'super_admin_management' || activeTab === 'painel_master')) {
       setActiveTab('dashboard');
     }
-  }, [isAuthReady, isSuperAdmin, activeTab]);
+  }, [isAuthReady, isSuperAdmin, activeTab, isOnboarding]);
 
   useEffect(() => {
     if (isSuperAdmin) {
@@ -993,8 +994,6 @@ function AppContent() {
 
   const isUserOnly = appUser?.role === 'user';
   const allowedTabs = ['dashboard', ...(rules.allowedUserTabs || [])];
-  // Refined: Onboarding overlay only shows if welcoming or requested, but not for experienced admins who already saw it or superadmins
-  const isOnboarding = rules.onboardingComplete === false && !isSuperAdmin && !isAdminUser; 
   const [onboardingTour, setOnboardingTour] = useState<'welcome' | 'profile' | 'goals' | 'reference_data_ticket' | 'reference_data_revenue' | 'finished' | null>(null);
 
   useEffect(() => {
@@ -1003,15 +1002,41 @@ function AppContent() {
     }
   }, [isOnboarding, onboardingTour]);
 
+  // Enforcement: Force active tab based on onboarding step
+  useEffect(() => {
+    if (isOnboarding && onboardingTour) {
+      if (onboardingTour === 'profile' && activeTab !== 'super_admin_profile') {
+        setActiveTab('super_admin_profile');
+      } else if ((onboardingTour === 'goals' || onboardingTour === 'reference_data_ticket' || onboardingTour === 'reference_data_revenue') && activeTab !== 'goals') {
+        setActiveTab('goals');
+      } else if (onboardingTour === 'rewards' && activeTab !== 'rewards') {
+        setActiveTab('rewards');
+      }
+    }
+  }, [isOnboarding, onboardingTour, activeTab]);
+
   const handleTabChange = (tab: any) => {
     if (isOnboarding) {
+      // If onboarding is active, strongly restrict navigation
       if (onboardingTour === 'welcome') return;
+      
       if (onboardingTour === 'profile' && tab !== 'super_admin_profile') {
-        showToast("Por favor, preencha seu perfil para continuar.", "warning");
+        showToast("Por favor, preencha seu perfil para continuar o passo a passo obrigatório.", "warning");
         return;
       }
       if (onboardingTour === 'goals' && tab !== 'goals') {
-        showToast("Por favor, preencha as metas de 12 meses para continuar.", "warning");
+        showToast("Por favor, preencha as metas de 12 meses para continuar o passo a passo obrigatório.", "warning");
+        return;
+      }
+      
+      // Allow specific transitions between onboarding tabs
+      if (onboardingTour === 'profile' && tab === 'super_admin_profile') { setActiveTab(tab); return; }
+      if (onboardingTour === 'goals' && tab === 'goals') { setActiveTab(tab); return; }
+      if (onboardingTour === 'finished') { setActiveTab(tab); return; }
+
+      // If they are in middle of onboarding, they can't just switch to dashboard
+      if (onboardingTour && tab !== 'super_admin_profile' && tab !== 'goals') {
+        showToast("O preenchimento da configuração inicial é obrigatório.", "warning");
         return;
       }
     }
@@ -1420,7 +1445,7 @@ function AppContent() {
                     onClick={handleLogout}
                     className="flex-1 px-8 py-5 rounded-2xl font-black uppercase tracking-widest text-gray-500 hover:text-white transition-all order-2 sm:order-1"
                   >
-                    Voltar depois
+                    Sair e Configurar Depois
                   </button>
                   <button 
                     onClick={() => {
@@ -1429,7 +1454,7 @@ function AppContent() {
                     }}
                     className="flex-1 bg-green-600 px-8 py-5 rounded-2xl font-black uppercase tracking-widest text-white shadow-2xl shadow-green-600/30 hover:bg-green-700 transition-all active:scale-95 order-1 sm:order-2"
                   >
-                    Vamos Lá
+                    Iniciar Configuração Obrigatória
                   </button>
                 </div>
               </div>
@@ -1493,9 +1518,13 @@ function AppContent() {
             {!isSuperAdmin && (
               <button 
                 onClick={() => handleTabChange('company_profile')}
-                className="mt-2 text-[10px] font-bold text-gray-500 hover:text-white hover:underline uppercase tracking-tighter block"
+                disabled={isOnboarding}
+                className={cn(
+                  "mt-2 text-[10px] font-bold uppercase tracking-tighter block",
+                  isOnboarding ? "text-gray-700 cursor-not-allowed" : "text-gray-500 hover:text-white hover:underline"
+                )}
               >
-                SEU PERFIL
+                CONFIGURAÇÃO
               </button>
             )}
           </div>
@@ -1511,36 +1540,36 @@ function AppContent() {
             </>
           ) : (
             <>
-              <SidebarButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<FileText size={20} />} label="Dashboard" />
-              <SidebarButton active={activeTab === 'goals'} onClick={() => handleTabChange('goals')} icon={<Target size={20} />} label="Metas Gerais" />
+              <SidebarButton active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<FileText size={20} />} label="Dashboard" disabled={isOnboarding} />
+              <SidebarButton active={activeTab === 'goals'} onClick={() => handleTabChange('goals')} icon={<Target size={20} />} label="Metas Gerais" disabled={isOnboarding && onboardingTour !== 'goals'} />
               {(!isUserOnly || allowedTabs.includes('customers')) && (
-                <SidebarButton active={activeTab === 'customers'} onClick={() => handleTabChange('customers')} icon={<Users size={20} />} label="Clientes" />
+                <SidebarButton active={activeTab === 'customers'} onClick={() => handleTabChange('customers')} icon={<Users size={20} />} label="Clientes" disabled={isOnboarding} />
               )}
               {(!isUserOnly || allowedTabs.includes('score')) && (
-                <SidebarButton active={activeTab === 'score'} onClick={() => handleTabChange('score')} icon={<PlusCircle size={20} />} label="Pontuar" />
+                <SidebarButton active={activeTab === 'score'} onClick={() => handleTabChange('score')} icon={<PlusCircle size={20} />} label="Pontuar" disabled={isOnboarding} />
               )}
-              <SidebarButton active={activeTab === 'notificar'} onClick={() => handleTabChange('notificar')} icon={<Bell size={20} />} label="Notificar" />
+              <SidebarButton active={activeTab === 'notificar'} onClick={() => handleTabChange('notificar')} icon={<Bell size={20} />} label="Notificar" disabled={isOnboarding} />
               {(!isUserOnly || allowedTabs.includes('rewarded_customers')) && (
-                <SidebarButton active={activeTab === 'rewarded_customers'} onClick={() => handleTabChange('rewarded_customers')} icon={<Award size={20} />} label="Premiados" />
+                <SidebarButton active={activeTab === 'rewarded_customers'} onClick={() => handleTabChange('rewarded_customers')} icon={<Award size={20} />} label="Premiados" disabled={isOnboarding} />
               )}
               {(!isUserOnly || allowedTabs.includes('rewards')) && (
-                <SidebarButton active={activeTab === 'rewards'} onClick={() => handleTabChange('rewards')} icon={<Trophy size={20} />} label="Premiação" />
+                <SidebarButton active={activeTab === 'rewards'} onClick={() => handleTabChange('rewards')} icon={<Trophy size={20} />} label="Premiação" disabled={isOnboarding} />
               )}
               {(!isUserOnly || allowedTabs.includes('seasonal_dates')) && (
-                <SidebarButton active={activeTab === 'seasonal_dates'} onClick={() => handleTabChange('seasonal_dates')} icon={<Calendar size={20} />} label="Datas Sazonais" />
+                <SidebarButton active={activeTab === 'seasonal_dates'} onClick={() => handleTabChange('seasonal_dates')} icon={<Calendar size={20} />} label="Datas Sazonais" disabled={isOnboarding} />
               )}
               {(!isUserOnly || allowedTabs.includes('ltv')) && (
-                <SidebarButton active={activeTab === 'ltv'} onClick={() => handleTabChange('ltv')} icon={<TrendingUp size={20} />} label="LTV" />
+                <SidebarButton active={activeTab === 'ltv'} onClick={() => handleTabChange('ltv')} icon={<TrendingUp size={20} />} label="LTV" disabled={isOnboarding} />
               )}
               {(!isUserOnly || allowedTabs.includes('promotion')) && (
-                <SidebarButton active={activeTab === 'promotion'} onClick={() => handleTabChange('promotion')} icon={<MessageSquare size={20} />} label="Envio WhatsApp" />
+                <SidebarButton active={activeTab === 'promotion'} onClick={() => handleTabChange('promotion')} icon={<MessageSquare size={20} />} label="Envio WhatsApp" disabled={isOnboarding} />
               )}
               {(!isUserOnly || allowedTabs.includes('strategic_analysis')) && (
-                <SidebarButton active={activeTab === 'strategic_analysis'} onClick={() => handleTabChange('strategic_analysis')} icon={<BarChart3 size={20} />} label="Análise Estratégica" />
+                <SidebarButton active={activeTab === 'strategic_analysis'} onClick={() => handleTabChange('strategic_analysis')} icon={<BarChart3 size={20} />} label="Análise Estratégica" disabled={isOnboarding} />
               )}
               {isAdminUser && (
                 <>
-                  <SidebarButton active={activeTab === 'reset'} onClick={() => handleTabChange('reset')} icon={<RotateCcw size={20} />} label="Zerar Sistema" />
+                  <SidebarButton active={activeTab === 'reset'} onClick={() => handleTabChange('reset')} icon={<RotateCcw size={20} />} label="Zerar Sistema" disabled={isOnboarding} />
                 </>
               )}
             </>
@@ -1688,6 +1717,32 @@ function AppContent() {
 
         {/* Main Content */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full pb-24 lg:pb-8">
+          {isOnboarding && onboardingTour !== 'welcome' && onboardingTour !== 'finished' && (
+            <div className="mb-8 p-6 bg-amber-500/10 border-2 border-amber-500/20 rounded-3xl flex flex-col md:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-amber-500 rounded-2xl flex items-center justify-center shrink-0">
+                  <AlertTriangle className="text-black" size={24} />
+                </div>
+                <div>
+                  <h3 className="font-black text-amber-500 uppercase tracking-tight">O preenchimento é obrigatório</h3>
+                  <p className="text-sm text-gray-400 font-medium">Você precisa concluir todas as etapas de configuração para liberar as funcionalidades do sistema.</p>
+                </div>
+              </div>
+              <div className="px-4 py-2 bg-black/40 rounded-xl border border-white/5">
+                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block mb-1">Status do Setup</span>
+                <div className="flex gap-1">
+                  {[1,2,3,4,5].map((s, i) => {
+                    const steps: typeof onboardingTour[] = ['profile', 'goals', 'reference_data_ticket', 'reference_data_revenue', 'finished'];
+                    const currentIndex = steps.indexOf(onboardingTour);
+                    const isActive = i <= currentIndex;
+                    return (
+                      <div key={i} className={cn("h-1.5 w-8 rounded-full transition-all", isActive ? "bg-amber-500" : "bg-gray-800")} />
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
           <AnimatePresence mode="wait">
             {activeTab === 'dashboard' && !isSuperAdmin && <div key="dashboard"><DashboardTab purchases={purchases} customers={customers} rules={rules} goals={goals} appUser={appUser} /></div>}
             {activeTab === 'notificar' && !isSuperAdmin && <div key="notificar"><NotifyTab customers={customers} rules={rules} companyId={selectedCompanyId} /></div>}
@@ -1716,9 +1771,10 @@ function AppContent() {
                   rules={rules} 
                   isAdmin={isAdminUser} 
                   companyId={selectedCompanyId} 
-                  onboardingStep={onboardingTour === 'goals' ? 'onboarding' : 'normal'}
+                  onboardingStep={(onboardingTour === 'goals' || onboardingTour === 'reference_data_ticket' || onboardingTour === 'reference_data_revenue') ? 'onboarding' : 'normal'}
                   onOnboardingComplete={() => {
-                    setOnboardingTour('reference_data_ticket');
+                    setOnboardingTour('rewards');
+                    setActiveTab('rewards');
                   }}
                 />
               </div>
@@ -1954,15 +2010,17 @@ function AppContent() {
   );
 }
 
-function SidebarButton({ active, onClick, icon, label, isSuperAdmin }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; isSuperAdmin?: boolean }) {
+function SidebarButton({ active, onClick, icon, label, isSuperAdmin, disabled }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; isSuperAdmin?: boolean; disabled?: boolean }) {
   return (
     <button 
       onClick={onClick}
+      disabled={disabled}
       className={cn(
         "flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold text-sm w-full text-left",
         active 
           ? "bg-green-500 text-white shadow-lg shadow-green-500/20" 
-          : "text-gray-400 hover:text-white hover:bg-white/10"
+          : "text-gray-400 hover:text-white hover:bg-white/10",
+        disabled && "opacity-20 cursor-not-allowed grayscale"
       )}
       translate="no"
     >
@@ -4072,6 +4130,14 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!companyId) return;
+    
+    const nameParts = newName.trim().split(/\s+/);
+    if (nameParts.length < 2) {
+      setMessage({ type: 'error', text: "Obrigatório informar Nome e Sobrenome." });
+      showToast("Obrigatório informar Nome e Sobrenome.", "warning");
+      return;
+    }
+
     if (!newName || !phone) {
       setMessage({ type: 'error', text: "Preencha o nome e o celular para cadastrar." });
       return;
@@ -4604,7 +4670,29 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
 function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { customers: Customer[]; purchases: Purchase[]; isAdmin: boolean; rules: LoyaltyRule; companyId: string | null }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [isImporting, setIsImporting] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [editPhone, setEditPhone] = useState('');
+  const [editBirthDate, setEditBirthDate] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
   const { showToast } = useToast();
+
+  const handleUpdateCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCustomer || !companyId) return;
+    setIsUpdating(true);
+    try {
+      await updateDoc(doc(db, 'customers', editingCustomer.id), {
+        phone: editPhone,
+        birthDate: editBirthDate
+      });
+      showToast("Dados do cliente atualizados com sucesso!", "success");
+      setEditingCustomer(null);
+    } catch (error) {
+      showToast("Erro ao atualizar dados do cliente.", "error");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   const calculateRFV = (customer: Customer) => {
     const now = new Date();
@@ -4771,17 +4859,96 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-2 border-t border-gray-50">
+              <div className="flex items-center justify-between pt-4 border-t border-gray-50 mt-4">
                 <p className="text-[8px] text-gray-400 font-bold uppercase">Última: {format(parseISO(customer.lastPurchaseDate || new Date().toISOString()), 'dd/MM/yy')}</p>
                 <div className="flex gap-2">
-                   <button className="text-gray-400 hover:text-primary transition-colors"><MessageSquare size={16} /></button>
-                   <button className="text-gray-400 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
+                   <button 
+                    onClick={() => {
+                      setEditingCustomer(customer);
+                      setEditPhone(customer.phone);
+                      setEditBirthDate(customer.birthDate || '');
+                    }}
+                    className="text-gray-400 hover:text-primary transition-colors flex items-center gap-1 text-[10px] uppercase font-black"
+                   >
+                     <Edit size={14} /> Editar
+                   </button>
+                   <button className="text-blue-400 hover:text-blue-500 transition-colors"><MessageSquare size={16} /></button>
                 </div>
               </div>
             </Card>
           );
         })}
       </div>
+
+      <AnimatePresence>
+        {editingCustomer && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl border border-gray-100"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-black text-gray-900 uppercase tracking-tighter">Editar Cadastro</h3>
+                <button onClick={() => setEditingCustomer(null)} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+              </div>
+
+              <form onSubmit={handleUpdateCustomer} className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-1">Nome (Não editável)</label>
+                  <input 
+                    type="text" 
+                    value={editingCustomer.name}
+                    disabled
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-gray-400 font-bold outline-none cursor-not-allowed"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-1 font-sans">Telefone</label>
+                  <PhoneInput
+                    value={editPhone}
+                    onChange={v => setEditPhone(v || '')}
+                    defaultCountry="BR"
+                    className="PhoneInput dark text-sm"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-1">Data de Nascimento</label>
+                  <input 
+                    type="date" 
+                    value={editBirthDate}
+                    onChange={(e) => setEditBirthDate(e.target.value)}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-gray-900 font-bold outline-none focus:ring-2 focus:ring-primary transition-all"
+                    required
+                  />
+                </div>
+
+                <div className="pt-4 flex gap-3">
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => setEditingCustomer(null)}
+                    className="flex-1 py-4 font-black uppercase tracking-widest text-xs"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button 
+                    type="submit" 
+                    disabled={isUpdating}
+                    className="flex-1 py-4 font-black uppercase tracking-widest text-xs"
+                  >
+                    {isUpdating ? 'Salvando...' : 'Salvar Alterações'}
+                  </Button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
@@ -6240,8 +6407,12 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-lg font-black text-gray-900 bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-100">{c.points}</p>
-                  <p className="text-[8px] text-gray-400 uppercase font-black mt-1 tracking-widest">Pontos</p>
+                  <p className="text-lg font-black text-gray-900 bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-100">
+                    {rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(c.points)}` : c.points}
+                  </p>
+                  <p className="text-[8px] text-gray-400 uppercase font-black mt-1 tracking-widest">
+                    {rules.rewardMode === 'cashback' ? 'Saldo' : 'Pontos'}
+                  </p>
                 </div>
               </button>
             ))}
@@ -7376,7 +7547,10 @@ function ResetSystemTab({ companyId, isAdmin }: { companyId: string | null; isAd
         await batch.commit();
       }
 
-      alert("Sistema zerado com sucesso! Todos os dados foram removidos.");
+      // Reset onboarding flag
+      await updateDoc(doc(db, 'configs', companyId), { onboardingComplete: false });
+
+      alert("Sistema zerado com sucesso! Todos os dados foram removidos e o onboarding foi reiniciado.");
       window.location.reload(); // Reload to clear local state
     } catch (err: any) {
       if (err.code === 'auth/wrong-password') {
