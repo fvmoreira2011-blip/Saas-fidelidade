@@ -915,6 +915,9 @@ function AppContent() {
   const [appUser, setAppUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<'business' | 'consumer'>('business');
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'score' | 'customers' | 'rewarded_customers' | 'rewards' | 'seasonal_dates' | 'ltv' | 'goals' | 'promotion' | 'reset' | 'admin' | 'company_profile' | 'plans' | 'super_admin_profile' | 'super_admin_management' | 'painel_master' | 'notificar' | 'redemption_codes'>('dashboard');
   const { toast, showToast, hideToast } = useToast();
   const [confirmModal, setConfirmModal] = useState<{
@@ -949,10 +952,44 @@ function AppContent() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('mode') === 'consumer') {
-      setMode('consumer');
+    const companyId = params.get('companyId');
+
+    if (params.get('mode') === 'consumer' || (companyId && !params.get('admin'))) {
+      window.location.href = `/consumer.html${companyId ? `?companyId=${companyId}` : ''}`;
+      return;
+    }
+
+    // PWA Install logic
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallBanner(true);
+    });
+
+    // iOS detection
+    const userAgent = window.navigator.userAgent.toLowerCase();
+    const isIOSDevice = /iphone|ipad|ipod/.test(userAgent);
+    setIsIOS(isIOSDevice);
+    
+    if (isIOSDevice && !(window.navigator as any).standalone) {
+      setShowInstallBanner(true);
     }
   }, []);
+
+  const handleInstallClick = async () => {
+    if (isIOS) {
+      showToast("No iPhone: Toque em Compartilhar e 'Adicionar à Tela de Início'", "info");
+      return;
+    }
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setDeferredPrompt(null);
+        setShowInstallBanner(false);
+      }
+    }
+  };
   const [contractCancelled, setContractCancelled] = useState(false);
   const [rules, setRules] = useState<LoyaltyRule>(DEFAULT_RULES);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -1509,6 +1546,44 @@ function AppContent() {
           )}
         </AnimatePresence>
 
+        {/* PWA Install Banner */}
+        <AnimatePresence>
+          {showInstallBanner && (
+            <motion.div 
+              initial={{ y: -100, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -100, opacity: 0 }}
+              className="fixed top-4 left-4 right-4 z-[9999] md:left-auto md:right-4 md:w-96"
+            >
+              <div className="bg-white rounded-3xl shadow-2xl border border-gray-100 p-4 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-green-600 rounded-2xl flex items-center justify-center text-white shrink-0 shadow-lg shadow-green-600/20">
+                    <Download size={24} />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-gray-900 leading-tight">Instalar App</h4>
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Acesse mais rápido</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setShowInstallBanner(false)}
+                    className="p-2 text-gray-400 hover:bg-gray-100 rounded-xl transition-all"
+                  >
+                    <X size={18} />
+                  </button>
+                  <button 
+                    onClick={handleInstallClick}
+                    className="bg-green-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-green-600/20 active:scale-95 transition-all"
+                  >
+                    Instalar
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Sidebar for Desktop */}
       <aside className={cn("hidden lg:flex flex-col w-72 sticky top-0 h-screen p-6 z-20 bg-black border-r border-white/10")}>
         <div className="flex items-center gap-4 mb-10 w-full px-2">
@@ -1844,7 +1919,7 @@ function AppContent() {
                     {/* QR Code */}
                     <div className="bg-white p-12 rounded-[4rem] shadow-2xl border-8 border-green-500 mb-12">
                       <QRCodeSVG 
-                        value={`${window.location.origin}/?mode=consumer&companyId=${selectedCompanyId}`}
+                        value={`${window.location.origin}/consumer.html?companyId=${selectedCompanyId}`}
                         size={500}
                         level="H"
                         includeMargin={true}

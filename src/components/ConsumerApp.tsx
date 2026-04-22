@@ -182,6 +182,7 @@ export default function ConsumerApp() {
 
   // Load session if exists
   useEffect(() => {
+    localStorage.setItem('pwa_mode', 'consumer');
     const savedPhone = localStorage.getItem('consumer_phone');
     if (savedPhone) {
       setPhone(savedPhone);
