@@ -183,6 +183,20 @@ export default function ConsumerApp() {
   // Load session if exists
   useEffect(() => {
     localStorage.setItem('pwa_mode', 'consumer');
+    
+    // Sense selected store from URL
+    const params = new URLSearchParams(window.location.search);
+    const companyId = params.get('companyId');
+    if (companyId) {
+      setSelectedStore(companyId);
+      localStorage.setItem('last_company_id', companyId);
+    } else {
+      const lastId = localStorage.getItem('last_company_id');
+      if (lastId) {
+        setSelectedStore(lastId);
+      }
+    }
+
     const savedPhone = localStorage.getItem('consumer_phone');
     if (savedPhone) {
       setPhone(savedPhone);
@@ -480,19 +494,29 @@ export default function ConsumerApp() {
               exit={{ y: -100, opacity: 0 }}
               className="fixed top-0 left-0 right-0 z-50 p-4"
             >
-              <div className="bg-gray-900 text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between gap-4 border border-white/10">
+              <div className="bg-gray-900 text-white p-4 rounded-3xl shadow-2xl flex items-center justify-between gap-4 border border-white/10">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-white rounded-full p-1 shrink-0 overflow-hidden">
+                  <div className="w-12 h-12 bg-white rounded-2xl p-1 shrink-0 overflow-hidden relative">
                     <img src="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" alt="Icon" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                    <div className="absolute top-0 left-0 bg-green-600 rounded-br-lg p-0.5 border-b border-r border-white/20">
+                      <Smartphone size={10} className="text-white" />
+                    </div>
                   </div>
                   <div>
-                    <p className="text-xs font-black uppercase tracking-widest">BuyPass</p>
-                    <p className="text-[10px] text-gray-400 font-bold">Baixe agora nosso aplicativo</p>
+                    <p className="text-xs font-black uppercase tracking-widest text-white">Clientes BuyPass</p>
+                    <p className="text-[9px] text-gray-400 font-bold uppercase tracking-tighter">Programa de Fidelidade</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={handleInstallClick} className="bg-green-500 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-green-600 transition-all">Instalar</button>
-                  <button onClick={() => setShowInstallBanner(false)} className="p-2 text-gray-500 hover:text-white"><X size={16} /></button>
+                  <button 
+                    onClick={handleInstallClick} 
+                    className="bg-green-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-green-700 transition-all shadow-lg shadow-green-600/20 active:scale-95"
+                  >
+                    Instalar
+                  </button>
+                  <button onClick={() => setShowInstallBanner(false)} className="p-2 text-gray-400 hover:text-white transition-colors">
+                    <X size={18} />
+                  </button>
                 </div>
               </div>
             </motion.div>
@@ -508,11 +532,14 @@ export default function ConsumerApp() {
             {loginStep === 'phone' && (
               <motion.div key="phone" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8">
                 <div className="text-center space-y-4">
-                  <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto shadow-lg shadow-green-500/10 overflow-hidden border border-gray-100">
-                    <img src="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" alt="Logo" className="w-full h-full object-contain p-2" referrerPolicy="no-referrer" />
+                  <div className="w-20 h-20 bg-white rounded-[1.5rem] flex items-center justify-center mx-auto shadow-lg shadow-green-500/10 overflow-hidden border border-gray-100 relative">
+                    <img src="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" alt="Logo" className="w-full h-full object-contain p-3" referrerPolicy="no-referrer" />
+                    <div className="absolute top-0 left-0 bg-green-600 p-1 rounded-br-lg">
+                      <Smartphone size={12} className="text-white" />
+                    </div>
                   </div>
-                  <h1 className="text-3xl font-black text-gray-900 tracking-tight">Meus Pontos Fidelidade</h1>
-                  <p className="text-gray-500 text-sm font-medium">Digite seu celular para acessar sua carteira.</p>
+                  <h1 className="text-3xl font-black text-gray-900 tracking-tight italic">Clientes BuyPass</h1>
+                  <p className="text-gray-500 text-sm font-medium uppercase tracking-widest text-[10px]">Sua carteira de benefícios digital</p>
                 </div>
 
                 <div className="space-y-6">

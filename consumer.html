@@ -6,10 +6,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="BuyPass" />
+    <meta name="apple-mobile-web-app-title" content="Clientes BuyPass" />
     <link rel="apple-touch-icon" href="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" />
+    <link rel="manifest" href="/manifest-consumer.json" />
     <meta name="theme-color" content="#16a34a" />
-    <title>BuyPass - Meus Pontos</title>
+    <title>Clientes BuyPass</title>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js', { scope: '/' })
+            .then(reg => console.log('Consumer SW registered!', reg))
+            .catch(err => console.log('Consumer SW failed!', err));
+        });
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

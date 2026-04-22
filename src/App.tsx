@@ -1917,13 +1917,19 @@ function AppContent() {
                     </div>
 
                     {/* QR Code */}
-                    <div className="bg-white p-12 rounded-[4rem] shadow-2xl border-8 border-green-500 mb-12">
+                    <div className="bg-white p-12 rounded-[4rem] shadow-2xl border-8 border-green-500 mb-6">
                       <QRCodeSVG 
-                        value={`${window.location.origin}/consumer.html?companyId=${selectedCompanyId}`}
+                        value={`${window.location.origin}/consumer.html?companyId=${selectedCompanyId || appUser?.uid || ''}`}
                         size={500}
                         level="H"
                         includeMargin={true}
                       />
+                    </div>
+
+                    <div className="mb-12">
+                      <p className="text-xl font-bold text-gray-400 font-mono opacity-50 break-all max-w-4xl">
+                        {`${window.location.origin}/consumer.html?companyId=${selectedCompanyId || appUser?.uid || ''}`}
+                      </p>
                     </div>
 
                     {/* Text */}
