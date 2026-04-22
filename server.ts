@@ -18,7 +18,9 @@ import {
   increment,
   getDoc
 } from 'firebase/firestore';
-import firebaseConfigJson from './firebase-applet-config.json' assert { type: 'json' };
+import { readFileSync } from 'fs';
+
+const firebaseConfigJson = JSON.parse(readFileSync(new URL('./firebase-applet-config.json', import.meta.url), 'utf8'));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
