@@ -114,7 +114,9 @@ import {
   LayoutDashboard,
   UserPlus,
   Calculator,
-  Percent
+  Percent,
+  Pause,
+  Copy
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import 'react-phone-number-input/style.css';
@@ -239,6 +241,13 @@ interface CompanyProfile {
   logoURL?: string;
 }
 
+interface ProgramStatus {
+  status: 'active' | 'paused' | 'ended';
+  validityType: 'custom' | '180days' | '365days' | 'indeterminate';
+  startDate?: string;
+  endDate?: string;
+}
+
 interface LoyaltyRule {
   campaignName?: string;
   purchasesForPrize: number;
@@ -266,6 +275,8 @@ interface LoyaltyRule {
     minRedeemDays: number;
     expiryDays: number;
   };
+  pointsStatus?: ProgramStatus;
+  cashbackStatus?: ProgramStatus;
   currentAvgTicket?: number;
   currentMonthlyRevenue?: number;
   onboardingComplete?: boolean;
@@ -517,6 +528,8 @@ const DEFAULT_RULES: LoyaltyRule = {
     minRedeemDays: 0,
     expiryDays: 90
   },
+  pointsStatus: { status: 'active', validityType: 'indeterminate' },
+  cashbackStatus: { status: 'ended', validityType: 'indeterminate' },
   currentAvgTicket: 0,
   currentMonthlyRevenue: 0,
   onboardingComplete: false,
@@ -1756,10 +1769,12 @@ function AppContent() {
                 <RewardsTab 
                   rules={rules} 
                   goals={goals}
+                  customers={customers}
                   isAdmin={isAdminUser} 
                   onUpdateRules={handleUpdateRules} 
                   onboardingMode={onboardingTour === 'rewards'}
                   onOnboardingFinish={() => setOnboardingTour('finished')}
+                  companyId={selectedCompanyId}
                 />
               </div>
             )}
@@ -1829,7 +1844,7 @@ function AppContent() {
                     {/* QR Code */}
                     <div className="bg-white p-12 rounded-[4rem] shadow-2xl border-8 border-green-500 mb-12">
                       <QRCodeSVG 
-                        value={`${window.location.origin}/consumer.html?companyId=${selectedCompanyId}`}
+                        value={`${window.location.origin}/?mode=consumer&companyId=${selectedCompanyId}`}
                         size={500}
                         level="H"
                         includeMargin={true}
@@ -3978,8 +3993,21 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
   const handleScore = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!companyId) return;
+
+    // Check program status
+    const currentStatus = rules.rewardMode === 'points' ? rules.pointsStatus?.status : rules.cashbackStatus?.status;
+    if (currentStatus === 'paused') {
+      showToast("Este programa está pausado no momento.", "warning");
+      return;
+    }
+    if (currentStatus === 'ended') {
+      showToast("Este programa foi encerrado.", "warning");
+      return;
+    }
+
     if (!foundCustomer) {
       setMessage({ type: 'error', text: "Selecione um cliente cadastrado para pontuar." });
+      showToast("Selecione um cliente cadastrado para pontuar.", "warning");
       return;
     }
     if (!amount || parseFloat(amount) <= 0) {
@@ -4166,8 +4194,8 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
     
     const nameParts = newName.trim().split(/\s+/);
     if (nameParts.length < 2) {
-      setMessage({ type: 'error', text: "Obrigatório informar Nome e Sobrenome." });
-      showToast("Obrigatório informar Nome e Sobrenome.", "warning");
+      setMessage({ type: 'error', text: "Insira nome e sobrenome para finalizar o cadastro" });
+      showToast("Insira nome e sobrenome para finalizar o cadastro", "warning");
       return;
     }
 
@@ -4211,11 +4239,11 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
         {/* App Content inside iPhone */}
         <div className="flex-1 overflow-y-auto custom-scrollbar p-6 pt-10 space-y-6">
           <div className="flex flex-col items-center gap-4 mb-4">
-            <div className="w-16 h-16 rounded-2xl bg-gray-900 border border-gray-800 flex items-center justify-center overflow-hidden shadow-lg">
+            <div className="w-20 h-20 bg-white rounded-2xl border border-gray-100 flex items-center justify-center overflow-hidden shadow-lg p-2">
               {appUser?.logoURL ? (
-                <img src={appUser.logoURL} alt="Logo" className="w-full h-full object-cover" />
+                <img src={appUser.logoURL} alt="Logo" className="w-full h-full object-contain" />
               ) : (
-                <Building2 size={32} className="text-primary" />
+                <Building2 size={36} className="text-primary" />
               )}
             </div>
             <div className="text-center">
@@ -4227,7 +4255,7 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
           {!showRegister ? (
             <form onSubmit={handleScore} className="space-y-5">
               <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest leading-none mb-2 block">DIGITE SEU NÚMERO DE CELULAR</label>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest leading-none mb-2 block tracking-[0.15em]">Digite o celular do cliente</label>
                 <div className="bg-gray-900 border border-gray-800 rounded-2xl px-4 py-2 transition-all focus-within:border-primary">
                   <PhoneInput
                     placeholder="Ex: (11) 99999-9999"
@@ -4441,7 +4469,14 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
               className="w-full space-y-12 text-center"
             >
               <div className="space-y-4">
-                <h2 className="text-5xl font-black text-gray-900 tracking-tighter uppercase leading-none">DIGITE SEU NÚMERO DE CELULAR</h2>
+                <div className="w-32 h-32 bg-white rounded-[2rem] mx-auto shadow-2xl flex items-center justify-center overflow-hidden p-4 mb-4 border border-gray-100">
+                  {appUser?.logoURL ? (
+                    <img src={appUser.logoURL} alt="Logo" className="w-full h-full object-contain" />
+                  ) : (
+                    <Building2 size={48} className="text-primary" />
+                  )}
+                </div>
+                <h2 className="text-5xl font-black text-gray-900 tracking-tighter uppercase leading-none">Digite o celular do cliente</h2>
                 <p className="text-xl text-gray-400 font-medium tracking-tight">Utilize o número do WhatsApp para localizar ou cadastrar o cliente.</p>
               </div>
               <div className="max-w-2xl mx-auto p-4 bg-gray-50 rounded-[2.5rem] border-4 border-gray-100 focus-within:border-primary transition-all shadow-inner scale-110">
@@ -4541,6 +4576,13 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
               className="w-full flex gap-12 items-center"
             >
               <div className="flex-1 space-y-10">
+                <div className="w-24 h-24 bg-white rounded-2xl shadow-lg flex items-center justify-center overflow-hidden p-3 border border-gray-100">
+                  {appUser?.logoURL ? (
+                    <img src={appUser.logoURL} alt="Logo" className="w-full h-full object-contain" />
+                  ) : (
+                    <Building2 size={36} className="text-primary" />
+                  )}
+                </div>
                 <div className="space-y-4">
                   <div className="inline-flex items-center gap-3 bg-green-50 text-green-600 px-6 py-3 rounded-2xl border border-green-100 mb-2">
                     <CheckCircle2 size={24} />
@@ -6731,7 +6773,7 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
   );
 }
 
-function RewardsTab({ rules, goals, isAdmin, onUpdateRules, onboardingMode, onOnboardingFinish }: { rules: LoyaltyRule; goals: Goal[]; isAdmin: boolean; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; onboardingMode?: boolean; onOnboardingFinish?: () => void }) {
+function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardingMode, onOnboardingFinish, companyId }: { rules: LoyaltyRule; goals: Goal[]; customers: Customer[]; isAdmin: boolean; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; onboardingMode?: boolean; onOnboardingFinish?: () => void; companyId: string | null }) {
   const [localTiers, setLocalTiers] = useState<RewardTier[]>(rules.rewardTiers || [{ points: 10, prize: 'Prêmio Padrão', expiryDays: 30 }]);
   const [minPurchaseValue, setMinPurchaseValue] = useState(rules.minPurchaseValue || 0);
   const [extraPointsThreshold, setExtraPointsThreshold] = useState(rules.extraPointsThreshold || 0);
@@ -6744,6 +6786,9 @@ function RewardsTab({ rules, goals, isAdmin, onUpdateRules, onboardingMode, onOn
     expiryDays: 90
   });
   
+  const [pointsStatus, setPointsStatus] = useState<ProgramStatus>(rules.pointsStatus || { status: 'active', validityType: 'indeterminate' });
+  const [cashbackStatus, setCashbackStatus] = useState<ProgramStatus>(rules.cashbackStatus || { status: 'ended', validityType: 'indeterminate' });
+  
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [showReauth, setShowReauth] = useState(false);
@@ -6751,6 +6796,72 @@ function RewardsTab({ rules, goals, isAdmin, onUpdateRules, onboardingMode, onOn
   const [reauthError, setReauthError] = useState('');
   const [isLocked, setIsLocked] = useState(!onboardingMode);
   const [showUnlockConfirm, setShowUnlockConfirm] = useState(false);
+  const { showToast } = useToast();
+  const { askConfirmation } = useConfirm();
+
+  const handleNotifyCustomers = async (type: 'paused' | 'ended', programName: string) => {
+    if (!companyId || customers.length === 0) return;
+    
+    const title = type === 'paused' ? 'Programa Pausado' : 'Programa Encerrado';
+    const message = type === 'paused' 
+      ? `O programa ${programName} foi pausado. Você tem 30 dias para realizar seus resgates na loja.`
+      : `O programa ${programName} foi encerrado. Você tem 30 dias para realizar seus resgates na loja.`;
+
+    try {
+      const batch = writeBatch(db);
+      customers.forEach(customer => {
+        const notifRef = doc(collection(db, 'notifications'));
+        batch.set(notifRef, {
+          customerId: customer.id,
+          companyId,
+          title,
+          message,
+          type: type === 'paused' ? 'inactivity' : 'points',
+          date: new Date().toISOString(),
+          read: false
+        });
+      });
+      await batch.commit();
+      showToast(`Notificação enviada para ${customers.length} clientes.`, "success");
+    } catch (error) {
+      console.error("Error sending bulk notifications:", error);
+      showToast("Erro ao notificar clientes.", "error");
+    }
+  };
+
+  const handleProgramAction = async (action: 'pause' | 'end') => {
+    if (!isAdmin || isLocked) return;
+    
+    const programName = rewardMode === 'points' ? 'Pontos' : 'Cashback';
+    const newStatus = action === 'pause' ? 'paused' : 'ended';
+    
+    askConfirmation(
+      action === 'pause' ? 'Pausar Programa' : 'Encerrar Programa',
+      `Tem certeza que deseja ${action === 'pause' ? 'pausar' : 'encerrar'} o programa de ${programName}? Os clientes serão notificados.`,
+      async () => {
+        setIsSaving(true);
+        try {
+          const updatedRules = { ...rules };
+          if (rewardMode === 'points') {
+            updatedRules.pointsStatus = { ...pointsStatus, status: newStatus };
+            setPointsStatus(updatedRules.pointsStatus);
+          } else {
+            updatedRules.cashbackStatus = { ...cashbackStatus, status: newStatus };
+            setCashbackStatus(updatedRules.cashbackStatus);
+          }
+          
+          await onUpdateRules(updatedRules);
+          await handleNotifyCustomers(newStatus as any, programName);
+          showToast(`Programa de ${programName} ${newStatus === 'paused' ? 'pausado' : 'encerrado'}.`, "success");
+        } catch (error) {
+          console.error("Error updating program status:", error);
+        } finally {
+          setIsSaving(false);
+        }
+      },
+      action === 'end'
+    );
+  };
 
   const addTier = () => {
     if (!isAdmin || isLocked) return;
@@ -6820,7 +6931,9 @@ function RewardsTab({ rules, goals, isAdmin, onUpdateRules, onboardingMode, onOn
         extraPointsThreshold,
         extraPointsAmount,
         rewardMode,
-        cashbackConfig
+        cashbackConfig,
+        pointsStatus,
+        cashbackStatus
       };
       await onUpdateRules(updatedRules);
       setShowSuccess(true);
@@ -6866,40 +6979,180 @@ function RewardsTab({ rules, goals, isAdmin, onUpdateRules, onboardingMode, onOn
             <label className="text-xs font-black text-gray-500 uppercase tracking-widest">Modelo de Campanha Objetivo</label>
             <div className="grid grid-cols-2 gap-4">
               <button 
-                onClick={() => !isLocked && setRewardMode('points')}
+                onClick={() => {
+                  if (pointsStatus.status === 'ended' && cashbackStatus.status === 'ended') {
+                    setRewardMode('points');
+                    setPointsStatus({ ...pointsStatus, status: 'active' });
+                  } else if (rewardMode === 'cashback' && cashbackStatus.status === 'ended') {
+                    setRewardMode('points');
+                    if (pointsStatus.status === 'ended') setPointsStatus({ ...pointsStatus, status: 'active' });
+                  } else {
+                    showToast("Você precisa encerrar o programa atual antes de configurar outro.", "warning");
+                  }
+                }}
                 className={cn(
-                  "p-4 rounded-2xl border-2 transition-all text-left group",
+                  "p-4 rounded-2xl border-2 transition-all text-left group relative",
                   rewardMode === 'points' ? "border-primary bg-primary/5" : "border-gray-100 bg-gray-50 opacity-50 grayscale"
                 )}
-                disabled={isLocked}
+                disabled={isLocked || (rewardMode === 'cashback' && cashbackStatus.status !== 'ended')}
               >
                 <div className="flex items-center justify-between mb-2">
                   <div className={cn("p-2 rounded-lg", rewardMode === 'points' ? "bg-primary text-white" : "bg-gray-200 text-gray-400")}>
                     <Award size={20} />
                   </div>
-                  {rewardMode === 'points' && <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />}
+                  {rewardMode === 'points' && pointsStatus.status === 'active' && <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />}
+                  {rewardMode === 'points' && pointsStatus.status === 'paused' && <Pause size={16} className="text-amber-500" />}
                 </div>
                 <h4 className="font-bold text-gray-900">Programa de Pontos</h4>
                 <p className="text-[10px] text-gray-500 leading-tight mt-1">Clientes acumulam pontos em cada compra e trocam por prêmios definidos.</p>
+                {rewardMode === 'points' && pointsStatus.status === 'paused' && (
+                  <span className="absolute top-2 right-2 px-2 py-0.5 bg-amber-100 text-amber-700 text-[8px] font-black uppercase rounded-full">Pausado</span>
+                )}
               </button>
 
               <button 
-                onClick={() => !isLocked && setRewardMode('cashback')}
+                onClick={() => {
+                  if (pointsStatus.status === 'ended' && cashbackStatus.status === 'ended') {
+                    setRewardMode('cashback');
+                    setCashbackStatus({ ...cashbackStatus, status: 'active' });
+                  } else if (rewardMode === 'points' && pointsStatus.status === 'ended') {
+                    setRewardMode('cashback');
+                    if (cashbackStatus.status === 'ended') setCashbackStatus({ ...cashbackStatus, status: 'active' });
+                  } else {
+                    showToast("Você precisa encerrar o programa atual antes de configurar outro.", "warning");
+                  }
+                }}
                 className={cn(
-                  "p-4 rounded-2xl border-2 transition-all text-left group",
+                  "p-4 rounded-2xl border-2 transition-all text-left group relative",
                   rewardMode === 'cashback' ? "border-green-600 bg-green-50" : "border-gray-100 bg-gray-50 opacity-50 grayscale"
                 )}
-                disabled={isLocked}
+                disabled={isLocked || (rewardMode === 'points' && pointsStatus.status !== 'ended')}
               >
                 <div className="flex items-center justify-between mb-2">
                   <div className={cn("p-2 rounded-lg", rewardMode === 'cashback' ? "bg-green-600 text-white" : "bg-gray-200 text-gray-400")}>
                     <DollarSign size={20} />
                   </div>
-                  {rewardMode === 'cashback' && <div className="w-2 h-2 rounded-full bg-green-600 animate-pulse" />}
+                  {rewardMode === 'cashback' && cashbackStatus.status === 'active' && <div className="w-2 h-2 rounded-full bg-green-600 animate-pulse" />}
+                  {rewardMode === 'cashback' && cashbackStatus.status === 'paused' && <Pause size={16} className="text-amber-500" />}
                 </div>
                 <h4 className="font-bold text-gray-900">Cashback</h4>
                 <p className="text-[10px] text-gray-500 leading-tight mt-1">Clientes recebem um percentual do valor gasto de volta como saldo na loja.</p>
+                {rewardMode === 'cashback' && cashbackStatus.status === 'paused' && (
+                  <span className="absolute top-2 right-2 px-2 py-0.5 bg-amber-100 text-amber-700 text-[8px] font-black uppercase rounded-full">Pausado</span>
+                )}
               </button>
+            </div>
+          </div>
+
+          <div className="h-px bg-gray-100" />
+
+          {/* Program Controls and Validity */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="space-y-4">
+              <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
+                <Settings size={16} />
+                Status e Validade do Programa
+              </h3>
+              
+              <div className="flex items-center gap-3">
+                <Button 
+                  variant="outline" 
+                  onClick={() => handleProgramAction('pause')} 
+                  disabled={isLocked || (rewardMode === 'points' ? pointsStatus.status !== 'active' : cashbackStatus.status !== 'active')}
+                  className="flex-1 border-amber-200 text-amber-700 hover:bg-amber-50 rounded-xl py-4"
+                >
+                  <Pause size={18} className="mr-2" />
+                  Pausar Programa
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => handleProgramAction('end')} 
+                  disabled={isLocked || (rewardMode === 'points' ? pointsStatus.status === 'ended' : cashbackStatus.status === 'ended')}
+                  className="flex-1 border-red-200 text-red-700 hover:bg-red-50 rounded-xl py-4"
+                >
+                  <XCircle size={18} className="mr-2" />
+                  Encerrar Programa
+                </Button>
+              </div>
+
+              <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-4">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Validade do Programa</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: 'custom', label: 'Calendário' },
+                    { id: '180days', label: '180 Dias' },
+                    { id: '365days', label: '365 Dias' },
+                    { id: 'indeterminate', label: 'Indeterminado' }
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      onClick={() => {
+                        const newStatus = { ...(rewardMode === 'points' ? pointsStatus : cashbackStatus), validityType: opt.id as any };
+                        if (rewardMode === 'points') setPointsStatus(newStatus);
+                        else setCashbackStatus(newStatus);
+                      }}
+                      disabled={isLocked}
+                      className={cn(
+                        "px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border-2 transition-all",
+                        (rewardMode === 'points' ? pointsStatus.validityType : cashbackStatus.validityType) === opt.id
+                         ? "border-primary bg-primary text-white" : "border-gray-200 bg-white text-gray-400 hover:border-gray-300"
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+
+                {(rewardMode === 'points' ? pointsStatus.validityType : cashbackStatus.validityType) === 'custom' && (
+                  <div className="grid grid-cols-2 gap-4 mt-4 animate-in fade-in slide-in-from-top-2">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Início</label>
+                      <input 
+                        type="date" 
+                        value={(rewardMode === 'points' ? pointsStatus.startDate : cashbackStatus.startDate) || ''}
+                        onChange={(e) => {
+                          const newStatus = { ...(rewardMode === 'points' ? pointsStatus : cashbackStatus), startDate: e.target.value };
+                          if (rewardMode === 'points') setPointsStatus(newStatus);
+                          else setCashbackStatus(newStatus);
+                        }}
+                        disabled={isLocked}
+                        className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-primary shadow-sm"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Término</label>
+                      <input 
+                        type="date" 
+                        value={(rewardMode === 'points' ? pointsStatus.endDate : cashbackStatus.endDate) || ''}
+                        onChange={(e) => {
+                          const newStatus = { ...(rewardMode === 'points' ? pointsStatus : cashbackStatus), endDate: e.target.value };
+                          if (rewardMode === 'points') setPointsStatus(newStatus);
+                          else setCashbackStatus(newStatus);
+                        }}
+                        disabled={isLocked}
+                        className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-primary shadow-sm"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="p-6 bg-blue-50 rounded-3xl border border-blue-100 flex flex-col justify-center">
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-white rounded-2xl shadow-sm text-blue-600">
+                  <Info size={24} />
+                </div>
+                <div className="space-y-2">
+                  <h4 className="text-sm font-black text-blue-900 uppercase tracking-tight">Regras de Ativação</h4>
+                  <ul className="text-[10px] text-blue-800 font-medium space-y-2 leading-relaxed">
+                    <li>• Apenas 01 programa pode estar ATIVO por vez.</li>
+                    <li>• "Pausar" suspende o acúmulo temporariamente, mas bloqueia troca de modelo.</li>
+                    <li>• "Encerrar" libera a configuração de um NOVO modelo de fidelidade.</li>
+                    <li>• Todos os campos são de preenchimento OBRIGATÓRIO para garantir a integridade do sistema.</li>
+                  </ul>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -8185,6 +8438,22 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
     }
   };
 
+  const [erpKey, setErpKey] = useState(rules.erpKey || '');
+
+  const generateERPKey = () => {
+    const key = 'ERP_' + Math.random().toString(36).substring(2, 10).toUpperCase() + Math.random().toString(36).substring(2, 10).toUpperCase();
+    askConfirmation(
+      "Gerar Nova Chave ERP",
+      "Ao gerar uma nova chave, a integração atual do seu sistema ERP deixará de funcionar até que a nova chave seja atualizada lá. Deseja continuar?",
+      () => {
+        setErpKey(key);
+        onUpdateRules({ ...rules, erpKey: key, companyProfile: profile });
+        showToast("Nova chave ERP gerada!", "success");
+      },
+      true
+    );
+  };
+
   const handleSave = async () => {
     if (!isAdmin) return;
     
@@ -8199,7 +8468,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
 
     setIsSaving(true);
     try {
-      await onUpdateRules({ ...rules, companyProfile: profile });
+      await onUpdateRules({ ...rules, companyProfile: profile, erpKey });
       showToast("Perfil atualizado com sucesso!", "success");
     } catch (error) {
       console.error("Error updating profile:", error);
@@ -8294,6 +8563,28 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
           <h3 className="text-lg font-bold text-gray-900 mb-1">{profile.companyName || 'Nome da Empresa'}</h3>
           <p className="text-xs text-gray-500 mb-8 uppercase tracking-widest">{profile.tradingName || 'Nome Fantasia'}</p>
           
+          <div className="w-full p-4 bg-gray-50 rounded-2xl border border-gray-100 text-left space-y-3 mb-6">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none">Chave ERP / Integração</label>
+              {isAdmin && (
+                <button onClick={generateERPKey} className="text-[9px] font-black text-primary uppercase hover:underline">Gerar Nova</button>
+              )}
+            </div>
+            {erpKey ? (
+              <div className="flex items-center justify-between gap-2 p-2 bg-white border border-gray-200 rounded-lg">
+                <code className="text-[10px] font-bold text-gray-700 truncate">{erpKey}</code>
+                <button onClick={() => { navigator.clipboard.writeText(erpKey); showToast("Chave copiada!", "success"); }} className="p-1 hover:bg-gray-100 rounded text-gray-400">
+                  <Copy size={14} />
+                </button>
+              </div>
+            ) : (
+              <div className="text-[10px] text-gray-400 italic">Nenhuma chave gerada.</div>
+            )}
+            <p className="text-[8px] text-gray-400 leading-tight">
+              A chave de integração deve ser gerada por nós no SaaS e fornecida ao desenvolvedor do seu ERP para habilitar a pontuação automática.
+            </p>
+          </div>
+
           <div className="w-full space-y-6 mb-6 pt-6 border-t border-gray-100">
             <div className="space-y-2 text-left">
               <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] flex items-center justify-between">
