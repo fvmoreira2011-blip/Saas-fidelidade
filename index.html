@@ -8,7 +8,17 @@
     <meta name="apple-mobile-web-app-title" content="BuyPass" />
     <link rel="apple-touch-icon" href="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" />
     <meta name="theme-color" content="#16a34a" />
+    <link rel="manifest" href="/manifest-saas.json" />
     <title>BuyPass - Gestão de Fidelidade</title>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js', { scope: '/' })
+            .then(reg => console.log('SaaS SW registered!', reg))
+            .catch(err => console.log('SaaS SW failed!', err));
+        });
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

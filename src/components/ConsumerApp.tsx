@@ -470,6 +470,8 @@ export default function ConsumerApp() {
       if (user) {
         const savedPhone = localStorage.getItem('consumer_phone');
         handleLogin(savedPhone || undefined, user.uid);
+      } else if (savedPhone && !isAuthenticated) {
+        handleLogin(savedPhone);
       } else {
         setIsAuthenticated(false);
         setCustomerRecords([]);
@@ -582,6 +584,13 @@ export default function ConsumerApp() {
                   >
                     <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
                     <span className="text-xs font-black text-gray-700 uppercase tracking-widest">Gmail / Google</span>
+                  </button>
+
+                  <button
+                    onClick={() => setLoginStep('email_pass')}
+                    className="w-full text-gray-400 font-black uppercase tracking-widest text-[10px] py-1 hover:text-gray-600 transition-all"
+                  >
+                    Ou usar E-mail e Senha
                   </button>
                 </div>
               </motion.div>
