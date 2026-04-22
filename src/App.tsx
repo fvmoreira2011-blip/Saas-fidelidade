@@ -955,9 +955,11 @@ function AppContent() {
     const companyId = params.get('companyId');
     const pathname = window.location.pathname;
 
+    // Multi-brand redirect logic:
+    // If we land on the root and have consumer flags, go to consumer portal
     if (pathname === '/' || pathname === '/index.html') {
       if (params.get('mode') === 'consumer' || (companyId && !params.get('admin'))) {
-        window.location.href = `/consumer.html${companyId ? `?companyId=${companyId}` : ''}`;
+        window.location.replace(`/consumer.html${companyId ? `?companyId=${companyId}` : ''}`);
         return;
       }
     }
@@ -1922,7 +1924,7 @@ function AppContent() {
                     {/* QR Code */}
                     <div className="bg-white p-12 rounded-[4rem] shadow-2xl border-8 border-green-500 mb-6">
                       <QRCodeSVG 
-                        value={`${window.location.origin}/consumer.html?companyId=${selectedCompanyId || appUser?.uid || ''}`}
+                        value={`${window.location.origin}/consumer.html`}
                         size={500}
                         level="H"
                         includeMargin={true}
@@ -1931,7 +1933,7 @@ function AppContent() {
 
                     <div className="mb-12">
                       <p className="text-xl font-bold text-gray-400 font-mono opacity-50 break-all max-w-4xl">
-                        {`${window.location.origin}/consumer.html?companyId=${selectedCompanyId || appUser?.uid || ''}`}
+                        {`${window.location.origin}/consumer.html`}
                       </p>
                     </div>
 
