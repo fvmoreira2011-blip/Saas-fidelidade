@@ -396,16 +396,26 @@ export default function ConsumerApp() {
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
     try {
+      showToast('Abrindo conexão com Google...', 'info');
       const result = await signInWithPopup(auth, provider);
-      await linkAccount(result.user);
-      setIsAuthenticated(true);
-      showToast('Conta protegida com sucesso!', 'success');
+      showToast('Autenticado com sucesso!', 'success');
+      
+      const user = result.user;
+      const savedPhone = localStorage.getItem('consumer_phone');
+      
+      // Attempt login with UID
+      await handleLogin(savedPhone || undefined, user.uid);
     } catch (error: any) {
-      console.error("Google secure error:", error);
+      console.error("Google Auth Error:", error);
+      
       if (error.code === 'auth/popup-blocked') {
-        showToast("Janela bloqueada. Habilite pop-ups para continuar.", "error");
+        showToast("Janela bloqueada! Habilite pop-ups para continuar.", "error");
+      } else if (error.code === 'auth/unauthorized-domain') {
+        showToast("Domínio não autorizado no Firebase Console.", "error");
+      } else if (error.code === 'auth/cancelled-popup-request' || error.code === 'auth/popup-closed-by-user') {
+        showToast("Login cancelado.", "info");
       } else {
-        showToast("Erro ao conectar com Google. Tente usar o e-mail.", "error");
+        showToast(`Erro Google: ${error.code}`, "error");
       }
     } finally {
       setLoading(false);
@@ -460,6 +470,10 @@ export default function ConsumerApp() {
       if (user) {
         const savedPhone = localStorage.getItem('consumer_phone');
         handleLogin(savedPhone || undefined, user.uid);
+      } else {
+        setIsAuthenticated(false);
+        setCustomerRecords([]);
+        setStores({});
       }
     });
     return () => unsubscribe();
