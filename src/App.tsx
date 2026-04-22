@@ -868,8 +868,6 @@ class ErrorBoundary extends Component<any, any> {
   }
 }
 
-import ConsumerApp from './components/ConsumerApp';
-
 function FloatingWhatsApp({ isAdminArea = false }: { isAdminArea?: boolean }) {
   if (isAdminArea) return null;
   
@@ -914,7 +912,6 @@ function AppContent() {
   const [user, setUser] = useState<User | null>(null);
   const [appUser, setAppUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<'business' | 'consumer'>('business');
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
@@ -951,19 +948,6 @@ function AppContent() {
   };
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const companyId = params.get('companyId');
-    const pathname = window.location.pathname;
-
-    // Multi-brand redirect logic:
-    // If we land on the root and have consumer flags, go to consumer portal
-    if (pathname === '/' || pathname === '/index.html') {
-      if (params.get('mode') === 'consumer' || (companyId && !params.get('admin'))) {
-        window.location.replace(`/consumer.html${companyId ? `?companyId=${companyId}` : ''}`);
-        return;
-      }
-    }
-
     // PWA Install logic
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
@@ -1421,10 +1405,6 @@ function AppContent() {
           </div>
         </div>
       );
-    }
-
-    if (mode === 'consumer') {
-      return <ConsumerApp />;
     }
 
     if (!user) {
