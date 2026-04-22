@@ -8580,6 +8580,15 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
             ) : (
               <div className="text-[10px] text-gray-400 italic">Nenhuma chave gerada.</div>
             )}
+            <div className="mt-2 space-y-1">
+              <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest">URL do Webhook</label>
+              <div className="flex items-center justify-between gap-2 p-2 bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+                <code className="text-[9px] font-bold text-primary truncate">{window.location.origin + '/api/erp/loyalty'}</code>
+                <button onClick={() => { navigator.clipboard.writeText(window.location.origin + '/api/erp/loyalty'); showToast("URL copiada!", "success"); }} className="p-1 hover:bg-white/10 rounded text-gray-400">
+                  <Copy size={12} />
+                </button>
+              </div>
+            </div>
             <p className="text-[10px] text-gray-500 font-bold leading-tight pt-2 border-t border-gray-200 mt-2">
               DADOS MAPEADOS (ORIGEM ERP):
             </p>
@@ -8905,6 +8914,23 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
                 readOnly
                 className="w-full bg-gray-50 border border-gray-100 rounded-2xl pl-14 pr-6 py-4 text-gray-900 font-mono text-sm font-bold"
               />
+            </div>
+            <div className="space-y-1.5 mt-4">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">URL de Endpoint (Webhook)</label>
+              <div className="relative">
+                <input 
+                  type="text" 
+                  value={window.location.origin + '/api/erp/loyalty'}
+                  readOnly
+                  className="w-full bg-gray-900 border border-gray-800 rounded-2xl px-6 py-4 text-primary font-mono text-[10px] font-bold"
+                />
+                <button 
+                  onClick={() => { navigator.clipboard.writeText(window.location.origin + '/api/erp/loyalty'); showToast("URL copiada!", "success"); }}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                >
+                  <Copy size={16} />
+                </button>
+              </div>
             </div>
             <div className="mt-4 p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-2">
               <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest leading-none">Dados Mapeados (Mandatórios):</p>

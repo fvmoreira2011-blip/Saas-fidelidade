@@ -754,7 +754,7 @@ export default function ConsumerApp() {
                           <div className="flex flex-col items-end">
                             {record.points > 0 && (
                               <p className={cn("text-lg font-black leading-none", store?.rewardMode === 'points' ? "text-green-600" : "text-gray-400 opacity-50")}>
-                                {record.points} pts
+                                {formatCurrency(record.points)} {store?.rewardMode === 'points' ? 'pts' : ''}
                               </p>
                             )}
                             {(record.cashbackBalance || 0) > 0 && (
@@ -763,7 +763,7 @@ export default function ConsumerApp() {
                               </p>
                             )}
                             {record.points <= 0 && (!record.cashbackBalance || record.cashbackBalance <= 0) && (
-                              <p className="text-lg font-black text-gray-300">0.00</p>
+                              <p className="text-lg font-black text-gray-300">0,00</p>
                             )}
                           </div>
                         </div>
@@ -775,8 +775,8 @@ export default function ConsumerApp() {
                           <span className="text-gray-400">Progresso</span>
                           <span className="text-green-600">
                             {store?.rewardMode === 'cashback' 
-                              ? `SALDO: R$ {formatCurrency(record.cashbackBalance || 0)}`
-                              : (nextTier ? `${record.points}/${nextTier.points}` : 'Prêmio Máximo!')
+                              ? `SALDO: R$ ${formatCurrency(record.cashbackBalance || 0)}`
+                              : (nextTier ? `${formatCurrency(record.points)}/${formatCurrency(nextTier.points)}` : 'Prêmio Máximo!')
                             }
                           </span>
                         </div>
@@ -1000,7 +1000,7 @@ export default function ConsumerApp() {
                   <div className="flex flex-col items-center">
                     {(customerRecords.find(r => r.companyId === selectedStore)?.points || 0) > 0 && (
                       <p className={cn("text-2xl font-black", stores[selectedStore]?.rewardMode === 'points' ? "text-green-600" : "text-gray-400")}>
-                        {customerRecords.find(r => r.companyId === selectedStore)?.points} pts
+                        {formatCurrency(customerRecords.find(r => r.companyId === selectedStore)?.points || 0)} pts
                       </p>
                     )}
                     {(customerRecords.find(r => r.companyId === selectedStore)?.cashbackBalance || 0) > 0 && (
@@ -1049,11 +1049,11 @@ export default function ConsumerApp() {
                           )}
                         </div>
                       </div>
-                      {(customerRecords.find(r => r.companyId === selectedStore)?.points || 0) >= (stores[selectedStore]?.cashbackConfig?.minActivationValue || 0) && (
+                      {(customerRecords.find(r => r.companyId === selectedStore)?.cashbackBalance || 0) >= (stores[selectedStore]?.cashbackConfig?.minActivationValue || 0) && (
                         <button 
                           onClick={() => setRedeemingTier({ 
-                            prize: `Saldo Cashback R$ ${formatCurrency(customerRecords.find(r => r.companyId === selectedStore)?.points || 0)}`,
-                            points: customerRecords.find(r => r.companyId === selectedStore)?.points || 0,
+                            prize: `Saldo Cashback R$ ${formatCurrency(customerRecords.find(r => r.companyId === selectedStore)?.cashbackBalance || 0)}`,
+                            points: customerRecords.find(r => r.companyId === selectedStore)?.cashbackBalance || 0,
                             companyId: selectedStore 
                           })}
                           className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg shadow-green-600/20 active:scale-95 transition-all"
@@ -1080,7 +1080,7 @@ export default function ConsumerApp() {
                             </div>
                             <div>
                               <p className="text-sm font-bold text-gray-900">{tier.prize}</p>
-                              <p className="text-[10px] text-gray-500 font-bold">{tier.points} pontos necessários</p>
+                              <p className="text-[10px] text-gray-500 font-bold">{formatCurrency(tier.points)} pontos necessários</p>
                               {/* Expiration Info for Points */}
                               {stores[selectedStore]?.pointsExpiryDays && (
                                 <p className="text-[9px] text-amber-600 font-black uppercase mt-1">
