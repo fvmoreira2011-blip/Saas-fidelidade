@@ -13,9 +13,10 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
+          // SaaS has the root scope
           navigator.serviceWorker.register('/sw.js', { scope: '/' })
-            .then(reg => console.log('SaaS SW registered!', reg))
-            .catch(err => console.log('SaaS SW failed!', err));
+            .then(reg => console.log('BuyPass SaaS SW registered!', reg))
+            .catch(err => console.error('SaaS SW failure:', err));
         });
       }
     </script>

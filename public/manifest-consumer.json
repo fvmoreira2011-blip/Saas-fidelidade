@@ -1,6 +1,7 @@
 {
+  "id": "buypass-consumer-portal",
   "name": "Clientes BuyPass",
-  "short_name": "Clientes",
+  "short_name": "BuyPass Clientes",
   "description": "Seu programa de fidelidade digital",
   "theme_color": "#16a34a",
   "background_color": "#ffffff",
