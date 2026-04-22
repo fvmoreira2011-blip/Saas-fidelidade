@@ -8580,7 +8580,16 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
             ) : (
               <div className="text-[10px] text-gray-400 italic">Nenhuma chave gerada.</div>
             )}
-            <p className="text-[8px] text-gray-400 leading-tight">
+            <p className="text-[10px] text-gray-500 font-bold leading-tight pt-2 border-t border-gray-200 mt-2">
+              DADOS MAPEADOS (ORIGEM ERP):
+            </p>
+            <ul className="text-[9px] text-gray-400 space-y-1 list-disc ml-3">
+              <li>Nome do Cliente</li>
+              <li>Celular do Cliente</li>
+              <li>Data de Aniversário (ex: 10/10/2026)</li>
+              <li>Valor Bruto da Venda (ex: 1.500,50 ou 150,50)</li>
+            </ul>
+            <p className="text-[8px] text-gray-400 leading-tight italic">
               A chave de integração deve ser gerada por nós no SaaS e fornecida ao desenvolvedor do seu ERP para habilitar a pontuação automática.
             </p>
           </div>
@@ -8897,8 +8906,17 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
                 className="w-full bg-gray-50 border border-gray-100 rounded-2xl pl-14 pr-6 py-4 text-gray-900 font-mono text-sm font-bold"
               />
             </div>
+            <div className="mt-4 p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-2">
+              <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest leading-none">Dados Mapeados (Mandatórios):</p>
+              <ul className="text-[10px] text-gray-400 space-y-1 font-medium list-disc ml-4">
+                <li>Nome Completo do Cliente</li>
+                <li>Número de Celular (WhatsApp)</li>
+                <li>Data de Nascimento (DD/MM/AAAA)</li>
+                <li>Valor Bruto da Venda (ex: 1.500,50)</li>
+              </ul>
+            </div>
             <p className="text-[10px] text-gray-400 italic font-medium leading-relaxed">
-              Esta chave deve ser solicitada ao administrador master do sistema. Ela permite a sincronização de vendas diretamente com o seu ERP via Webhook ou API REST.
+              Esta chave permite a sincronização automática. O ERP deve enviar os dados acima via Webhook ou API REST para processamento imediato de pontos ou cashback.
             </p>
           </div>
 
