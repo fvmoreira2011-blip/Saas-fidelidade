@@ -953,10 +953,13 @@ function AppContent() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const companyId = params.get('companyId');
+    const pathname = window.location.pathname;
 
-    if (params.get('mode') === 'consumer' || (companyId && !params.get('admin'))) {
-      window.location.href = `/consumer.html${companyId ? `?companyId=${companyId}` : ''}`;
-      return;
+    if (pathname === '/' || pathname === '/index.html') {
+      if (params.get('mode') === 'consumer' || (companyId && !params.get('admin'))) {
+        window.location.href = `/consumer.html${companyId ? `?companyId=${companyId}` : ''}`;
+        return;
+      }
     }
 
     // PWA Install logic
