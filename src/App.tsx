@@ -116,6 +116,8 @@ import {
   Calculator,
   Percent,
   Pause,
+  Play,
+  PlayCircle,
   Copy
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -6855,6 +6857,9 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
   const [pointsStatus, setPointsStatus] = useState<ProgramStatus>(rules.pointsStatus || { status: 'active', validityType: 'indeterminate' });
   const [cashbackStatus, setCashbackStatus] = useState<ProgramStatus>(rules.cashbackStatus || { status: 'ended', validityType: 'indeterminate' });
   
+  const isAnyProgramRunning = pointsStatus.status !== 'ended' || cashbackStatus.status !== 'ended';
+  const runningProgramType = pointsStatus.status !== 'ended' ? 'points' : (cashbackStatus.status !== 'ended' ? 'cashback' : null);
+
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [showReauth, setShowReauth] = useState(false);
@@ -6895,30 +6900,34 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
     }
   };
 
-  const handleProgramAction = async (action: 'pause' | 'end') => {
-    if (!isAdmin || isLocked) return;
+  const handleProgramAction = async (action: 'pause' | 'end' | 'resume' | 'start') => {
+    if (!isAdmin) return;
     
     const programName = rewardMode === 'points' ? 'Pontos' : 'Cashback';
-    const newStatus = action === 'pause' ? 'paused' : 'ended';
+    const newStatus = action === 'pause' ? 'paused' : (action === 'resume' || action === 'start' ? 'active' : 'ended');
     
+    const actionLabel = action === 'pause' ? 'Pausar' : (action === 'resume' ? 'Retomar' : (action === 'start' ? 'Ativar' : 'Encerrar'));
+
     askConfirmation(
-      action === 'pause' ? 'Pausar Programa' : 'Encerrar Programa',
-      `Tem certeza que deseja ${action === 'pause' ? 'pausar' : 'encerrar'} o programa de ${programName}? Os clientes serão notificados.`,
+      `${actionLabel} Programa`,
+      `Tem certeza que deseja ${actionLabel.toLowerCase()} o programa de ${programName}? Os clientes serão notificados.`,
       async () => {
         setIsSaving(true);
         try {
           const updatedRules = { ...rules };
           if (rewardMode === 'points') {
             updatedRules.pointsStatus = { ...pointsStatus, status: newStatus };
+            updatedRules.rewardMode = 'points';
             setPointsStatus(updatedRules.pointsStatus);
           } else {
             updatedRules.cashbackStatus = { ...cashbackStatus, status: newStatus };
+            updatedRules.rewardMode = 'cashback';
             setCashbackStatus(updatedRules.cashbackStatus);
           }
           
           await onUpdateRules(updatedRules);
           await handleNotifyCustomers(newStatus as any, programName);
-          showToast(`Programa de ${programName} ${newStatus === 'paused' ? 'pausado' : 'encerrado'}.`, "success");
+          showToast(`Programa de ${programName} ${action === 'start' ? 'ativado' : (newStatus === 'paused' ? 'pausado' : (newStatus === 'active' ? 'retomado' : 'encerrado'))}.`, "success");
         } catch (error) {
           console.error("Error updating program status:", error);
         } finally {
@@ -7045,66 +7054,72 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
             <label className="text-xs font-black text-gray-500 uppercase tracking-widest">Modelo de Campanha Objetivo</label>
             <div className="grid grid-cols-2 gap-4">
               <button 
-                onClick={() => {
-                  if (pointsStatus.status === 'ended' && cashbackStatus.status === 'ended') {
-                    setRewardMode('points');
-                    setPointsStatus({ ...pointsStatus, status: 'active' });
-                  } else if (rewardMode === 'cashback' && cashbackStatus.status === 'ended') {
-                    setRewardMode('points');
-                    if (pointsStatus.status === 'ended') setPointsStatus({ ...pointsStatus, status: 'active' });
-                  } else {
-                    showToast("Você precisa encerrar o programa atual antes de configurar outro.", "warning");
-                  }
-                }}
+                onClick={() => setRewardMode('points')}
                 className={cn(
-                  "p-4 rounded-2xl border-2 transition-all text-left group relative",
-                  rewardMode === 'points' ? "border-primary bg-primary/5" : "border-gray-100 bg-gray-50 opacity-50 grayscale"
+                  "p-5 rounded-2xl border-2 transition-all text-left group relative flex flex-col items-center text-center",
+                  rewardMode === 'points' 
+                    ? (pointsStatus.status === 'active' ? "border-green-500 bg-green-50" : (pointsStatus.status === 'paused' ? "border-amber-500 bg-amber-50" : "border-red-500 bg-red-50"))
+                    : (isAnyProgramRunning && runningProgramType !== 'points' ? "border-gray-100 bg-gray-50 opacity-30 grayscale cursor-not-allowed" : "border-gray-100 bg-gray-50 hover:border-gray-200")
                 )}
-                disabled={isLocked || (rewardMode === 'cashback' && cashbackStatus.status !== 'ended')}
+                disabled={isAnyProgramRunning && runningProgramType !== 'points'}
               >
-                <div className="flex items-center justify-between mb-2">
-                  <div className={cn("p-2 rounded-lg", rewardMode === 'points' ? "bg-primary text-white" : "bg-gray-200 text-gray-400")}>
-                    <Award size={20} />
+                <div className="flex flex-col items-center gap-2 mb-2">
+                  <div className={cn(
+                    "p-3 rounded-2xl shadow-sm", 
+                    rewardMode === 'points' 
+                      ? (pointsStatus.status === 'active' ? "bg-green-600 text-white" : (pointsStatus.status === 'paused' ? "bg-amber-600 text-white" : "bg-red-600 text-white"))
+                      : "bg-gray-200 text-gray-400"
+                  )}>
+                    <Award size={24} />
                   </div>
-                  {rewardMode === 'points' && pointsStatus.status === 'active' && <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />}
-                  {rewardMode === 'points' && pointsStatus.status === 'paused' && <Pause size={16} className="text-amber-500" />}
+                  <div className="flex items-center gap-1.5">
+                    {rewardMode === 'points' && pointsStatus.status === 'active' && <div className="w-2 h-2 rounded-full bg-green-600 animate-pulse" />}
+                    <h4 className={cn("font-black uppercase tracking-widest text-xs", rewardMode === 'points' ? "text-gray-900" : "text-gray-400")}>Pontos</h4>
+                  </div>
                 </div>
-                <h4 className="font-bold text-gray-900">Programa de Pontos</h4>
-                <p className="text-[10px] text-gray-500 leading-tight mt-1">Clientes acumulam pontos em cada compra e trocam por prêmios definidos.</p>
-                {rewardMode === 'points' && pointsStatus.status === 'paused' && (
-                  <span className="absolute top-2 right-2 px-2 py-0.5 bg-amber-100 text-amber-700 text-[8px] font-black uppercase rounded-full">Pausado</span>
+                <p className="text-[9px] text-gray-500 font-bold leading-tight">Clientes acumulam pontos em cada compra e trocam por prêmios.</p>
+                {pointsStatus.status !== 'ended' && (
+                  <span className={cn(
+                    "absolute top-3 right-3 px-2 py-0.5 text-[8px] font-black uppercase rounded-full shadow-sm",
+                    pointsStatus.status === 'active' ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+                  )}>
+                    {pointsStatus.status === 'active' ? 'Ativado' : 'Pausado'}
+                  </span>
                 )}
               </button>
 
               <button 
-                onClick={() => {
-                  if (pointsStatus.status === 'ended' && cashbackStatus.status === 'ended') {
-                    setRewardMode('cashback');
-                    setCashbackStatus({ ...cashbackStatus, status: 'active' });
-                  } else if (rewardMode === 'points' && pointsStatus.status === 'ended') {
-                    setRewardMode('cashback');
-                    if (cashbackStatus.status === 'ended') setCashbackStatus({ ...cashbackStatus, status: 'active' });
-                  } else {
-                    showToast("Você precisa encerrar o programa atual antes de configurar outro.", "warning");
-                  }
-                }}
+                onClick={() => setRewardMode('cashback')}
                 className={cn(
-                  "p-4 rounded-2xl border-2 transition-all text-left group relative",
-                  rewardMode === 'cashback' ? "border-green-600 bg-green-50" : "border-gray-100 bg-gray-50 opacity-50 grayscale"
+                  "p-5 rounded-2xl border-2 transition-all text-left group relative flex flex-col items-center text-center",
+                  rewardMode === 'cashback' 
+                    ? (cashbackStatus.status === 'active' ? "border-green-500 bg-green-50" : (cashbackStatus.status === 'paused' ? "border-amber-500 bg-amber-50" : "border-red-500 bg-red-50"))
+                    : (isAnyProgramRunning && runningProgramType !== 'cashback' ? "border-gray-100 bg-gray-50 opacity-30 grayscale cursor-not-allowed" : "border-gray-100 bg-gray-50 hover:border-gray-200")
                 )}
-                disabled={isLocked || (rewardMode === 'points' && pointsStatus.status !== 'ended')}
+                disabled={isAnyProgramRunning && runningProgramType !== 'cashback'}
               >
-                <div className="flex items-center justify-between mb-2">
-                  <div className={cn("p-2 rounded-lg", rewardMode === 'cashback' ? "bg-green-600 text-white" : "bg-gray-200 text-gray-400")}>
-                    <DollarSign size={20} />
+                <div className="flex flex-col items-center gap-2 mb-2">
+                  <div className={cn(
+                    "p-3 rounded-2xl shadow-sm", 
+                    rewardMode === 'cashback' 
+                      ? (cashbackStatus.status === 'active' ? "bg-green-600 text-white" : (cashbackStatus.status === 'paused' ? "bg-amber-600 text-white" : "bg-red-600 text-white"))
+                      : "bg-gray-200 text-gray-400"
+                  )}>
+                    <DollarSign size={24} />
                   </div>
-                  {rewardMode === 'cashback' && cashbackStatus.status === 'active' && <div className="w-2 h-2 rounded-full bg-green-600 animate-pulse" />}
-                  {rewardMode === 'cashback' && cashbackStatus.status === 'paused' && <Pause size={16} className="text-amber-500" />}
+                  <div className="flex items-center gap-1.5">
+                    {rewardMode === 'cashback' && cashbackStatus.status === 'active' && <div className="w-2 h-2 rounded-full bg-green-600 animate-pulse" />}
+                    <h4 className={cn("font-black uppercase tracking-widest text-xs", rewardMode === 'cashback' ? "text-gray-900" : "text-gray-400")}>Cashback</h4>
+                  </div>
                 </div>
-                <h4 className="font-bold text-gray-900">Cashback</h4>
-                <p className="text-[10px] text-gray-500 leading-tight mt-1">Clientes recebem um percentual do valor gasto de volta como saldo na loja.</p>
-                {rewardMode === 'cashback' && cashbackStatus.status === 'paused' && (
-                  <span className="absolute top-2 right-2 px-2 py-0.5 bg-amber-100 text-amber-700 text-[8px] font-black uppercase rounded-full">Pausado</span>
+                <p className="text-[9px] text-gray-500 font-bold leading-tight">Clientes recebem um percentual do valor gasto como saldo.</p>
+                {cashbackStatus.status !== 'ended' && (
+                  <span className={cn(
+                    "absolute top-3 right-3 px-2 py-0.5 text-[8px] font-black uppercase rounded-full shadow-sm",
+                    cashbackStatus.status === 'active' ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+                  )}>
+                    {cashbackStatus.status === 'active' ? 'Ativado' : 'Pausado'}
+                  </span>
                 )}
               </button>
             </div>
@@ -7115,34 +7130,61 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
           {/* Program Controls and Validity */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="space-y-4">
-              <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
-                <Settings size={16} />
-                Status e Validade do Programa
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="font-black text-gray-900 text-xs uppercase tracking-widest flex items-center gap-2">
+                  <Settings size={16} className="text-primary" />
+                  Geral: {rewardMode === 'points' ? 'Pontos' : 'Cashback'}
+                </h3>
+                <div className={cn(
+                  "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                  (rewardMode === 'points' ? pointsStatus.status : cashbackStatus.status) === 'active' ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                )}>
+                  {(rewardMode === 'points' ? pointsStatus.status : cashbackStatus.status) === 'active' ? 'Ativo' : 'Inativo'}
+                </div>
+              </div>
               
               <div className="flex items-center gap-3">
-                <Button 
-                  variant="outline" 
-                  onClick={() => handleProgramAction('pause')} 
-                  disabled={isLocked || (rewardMode === 'points' ? pointsStatus.status !== 'active' : cashbackStatus.status !== 'active')}
-                  className="flex-1 border-amber-200 text-amber-700 hover:bg-amber-50 rounded-xl py-4"
-                >
-                  <Pause size={18} className="mr-2" />
-                  Pausar Programa
-                </Button>
-                <Button 
-                  variant="outline" 
-                  onClick={() => handleProgramAction('end')} 
-                  disabled={isLocked || (rewardMode === 'points' ? pointsStatus.status === 'ended' : cashbackStatus.status === 'ended')}
-                  className="flex-1 border-red-200 text-red-700 hover:bg-red-50 rounded-xl py-4"
-                >
-                  <XCircle size={18} className="mr-2" />
-                  Encerrar Programa
-                </Button>
+                {(rewardMode === 'points' ? pointsStatus.status : cashbackStatus.status) === 'ended' ? (
+                  <Button 
+                    onClick={() => handleProgramAction('start')}
+                    disabled={isAnyProgramRunning}
+                    className="flex-1 bg-green-600 hover:bg-green-700 text-white rounded-xl py-6 h-auto flex flex-col items-center gap-1 shadow-lg shadow-green-100"
+                  >
+                    <PlayCircle size={24} />
+                    <span className="text-[10px] font-black uppercase tracking-widest">Ativar {rewardMode === 'points' ? 'Pontos' : 'Cashback'}</span>
+                  </Button>
+                ) : (
+                  <>
+                    <Button 
+                      variant="outline" 
+                      onClick={() => handleProgramAction((rewardMode === 'points' ? pointsStatus.status : cashbackStatus.status) === 'paused' ? 'resume' : 'pause')} 
+                      className={cn(
+                        "flex-1 border-amber-200 text-amber-700 hover:bg-amber-50 rounded-xl py-6 h-auto flex flex-col items-center gap-1",
+                        (rewardMode === 'points' ? pointsStatus.status : cashbackStatus.status) === 'paused' && "bg-amber-50 border-amber-500"
+                      )}
+                    >
+                      {(rewardMode === 'points' ? pointsStatus.status : cashbackStatus.status) === 'paused' ? <Play size={20} /> : <Pause size={20} />}
+                      <span className="text-[9px] font-black uppercase tracking-widest">
+                        {(rewardMode === 'points' ? pointsStatus.status : cashbackStatus.status) === 'paused' ? 'Retomar' : 'Pausar'}
+                      </span>
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      onClick={() => handleProgramAction('end')} 
+                      className="flex-1 border-red-200 text-red-700 hover:bg-red-50 rounded-xl py-6 h-auto flex flex-col items-center gap-1"
+                    >
+                      <XCircle size={20} />
+                      <span className="text-[9px] font-black uppercase tracking-widest">Encerrar</span>
+                    </Button>
+                  </>
+                )}
               </div>
 
-              <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-4">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Validade do Programa</label>
+              <div className="p-5 bg-gray-50 rounded-3xl border border-gray-100 space-y-5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Validade Integrada</label>
+                  <Calendar size={14} className="text-gray-300" />
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   {[
                     { id: 'custom', label: 'Calendário' },
