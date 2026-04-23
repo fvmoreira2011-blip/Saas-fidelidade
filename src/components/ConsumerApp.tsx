@@ -70,6 +70,14 @@ interface StoreConfig {
   rewardMode?: 'points' | 'cashback';
   maxDaysBetweenPurchases?: number;
   pointsExpiryDays?: number;
+  pointsStatus?: {
+    status: 'active' | 'paused' | 'ended';
+    endDate?: string;
+  };
+  cashbackStatus?: {
+    status: 'active' | 'paused' | 'ended';
+    endDate?: string;
+  };
   cashbackConfig?: {
     percentage: number;
     minActivationValue: number;
@@ -467,8 +475,8 @@ export default function ConsumerApp() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setAuthUser(user || null);
+      const savedPhone = localStorage.getItem('consumer_phone');
       if (user) {
-        const savedPhone = localStorage.getItem('consumer_phone');
         handleLogin(savedPhone || undefined, user.uid);
       } else if (savedPhone && !isAuthenticated) {
         handleLogin(savedPhone);
@@ -667,7 +675,7 @@ export default function ConsumerApp() {
                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">E-mail</label>
                       <input 
                         type="email" 
-                        value={email}
+                        value={email || ''}
                         onChange={e => setEmail(e.target.value)}
                         className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-primary"
                         required
@@ -678,7 +686,7 @@ export default function ConsumerApp() {
                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Senha</label>
                       <input 
                         type="password" 
-                        value={password}
+                        value={password || ''}
                         onChange={e => setPassword(e.target.value)}
                         className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-primary"
                         required
@@ -794,9 +802,19 @@ export default function ConsumerApp() {
                           <h5 className="font-black text-gray-900 tracking-tight leading-none text-base">
                             {store?.companyProfile?.companyName || 'Loja Parceira'}
                           </h5>
-                          <p className="text-[11px] font-black text-green-600 uppercase tracking-widest mt-2">
-                             {store?.rewardMode === 'cashback' ? 'CASHBACK' : 'PONTOS'}
-                          </p>
+                          <div className="flex flex-wrap items-center gap-2 mt-2">
+                            <p className="text-[11px] font-black text-green-600 uppercase tracking-widest">
+                               {store?.rewardMode === 'cashback' ? 'CASHBACK' : 'PONTOS'}
+                            </p>
+                            {store && (store.rewardMode === 'points' ? store.pointsStatus : store.cashbackStatus)?.status !== 'active' && (
+                              <span className={cn(
+                                "text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-tighter",
+                                (store.rewardMode === 'points' ? store.pointsStatus : store.cashbackStatus)?.status === 'paused' ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"
+                              )}>
+                                {(store.rewardMode === 'points' ? store.pointsStatus : store.cashbackStatus)?.status === 'paused' ? 'Pausado' : 'Encerrado'}
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[8px] text-gray-400 font-bold uppercase mt-1 opacity-70">
                             {store?.campaignName || 'Programa de Fidelidade'}
                           </p>
@@ -856,31 +874,35 @@ export default function ConsumerApp() {
                         {store?.rewardMode === 'cashback' ? (
                           <div className="flex flex-col gap-1">
                             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Validade do Programa</p>
-                            <div className="flex items-center gap-2 text-[10px] font-bold text-amber-600 bg-amber-50 p-2 rounded-xl border border-amber-100">
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-amber-600 bg-amber-50 p-2 rounded-xl border border-amber-100 text-left">
                               <Clock size={12} />
-                              {store.cashbackConfig?.expiryDays 
-                                ? `Expira em ${store.cashbackConfig.expiryDays} dias` 
-                                : 'Sem expiração definida'}
-                              {record.lastPurchaseDate && store.cashbackConfig?.expiryDays && (
-                                <span className="ml-auto opacity-70">
-                                  Faltam {Math.max(0, store.cashbackConfig.expiryDays - differenceInDays(new Date(), parseISO(record.lastPurchaseDate)))} dias
-                                </span>
-                              )}
+                              <div>
+                                {store.cashbackConfig?.expiryDays 
+                                  ? `Saldo expira em ${store.cashbackConfig.expiryDays} dias de inatividade.` 
+                                  : 'Saldo não expira.'}
+                                {record.lastPurchaseDate && store.cashbackConfig?.expiryDays && (
+                                  <p className="text-[9px] opacity-70 mt-1">
+                                    {Math.max(0, store.cashbackConfig.expiryDays - differenceInDays(new Date(), parseISO(record.lastPurchaseDate)))} dias restantes para usar.
+                                  </p>
+                                )}
+                              </div>
                             </div>
                           </div>
                         ) : (
                           <div className="flex flex-col gap-1">
                             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Expiração de Pontos</p>
-                            <div className="flex items-center gap-2 text-[10px] font-bold text-amber-600 bg-amber-50 p-2 rounded-xl border border-amber-100">
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-amber-600 bg-amber-50 p-2 rounded-xl border border-amber-100 text-left">
                               <Clock size={12} />
-                              {(store.maxDaysBetweenPurchases || store.pointsExpiryDays) 
-                                ? `Expira em ${store.maxDaysBetweenPurchases || store.pointsExpiryDays} dias de inatividade` 
-                                : 'Pontos não expiram'}
-                              {record.lastPurchaseDate && (store.maxDaysBetweenPurchases || store.pointsExpiryDays) && (
-                                <span className="ml-auto opacity-70">
-                                  Faltam {Math.max(0, (store.maxDaysBetweenPurchases || store.pointsExpiryDays || 0) - differenceInDays(new Date(), parseISO(record.lastPurchaseDate)))} dias
-                                </span>
-                              )}
+                              <div>
+                                {(store.maxDaysBetweenPurchases || store.pointsExpiryDays) 
+                                  ? `Pontos expiram em ${store.maxDaysBetweenPurchases || store.pointsExpiryDays} dias de inatividade.` 
+                                  : 'Pontos não expiram.'}
+                                {record.lastPurchaseDate && (store.maxDaysBetweenPurchases || store.pointsExpiryDays) && (
+                                  <p className="text-[9px] opacity-70 mt-1">
+                                    {Math.max(0, (store.maxDaysBetweenPurchases || store.pointsExpiryDays || 0) - differenceInDays(new Date(), parseISO(record.lastPurchaseDate)))} dias restantes para usar.
+                                  </p>
+                                )}
+                              </div>
                             </div>
                           </div>
                         )}

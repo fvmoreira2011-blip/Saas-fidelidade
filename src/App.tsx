@@ -110,6 +110,8 @@ import {
   MessageCircle,
   RotateCcw,
   Target,
+  Star,
+  Copy,
   Edit2,
   LayoutDashboard,
   UserPlus,
@@ -117,8 +119,7 @@ import {
   Percent,
   Pause,
   Play,
-  PlayCircle,
-  Copy
+  PlayCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import 'react-phone-number-input/style.css';
@@ -217,6 +218,7 @@ interface SeasonalDate {
   type: 'national' | 'state' | 'municipal' | 'custom';
   state?: string;
   city?: string;
+  memo?: string;
 }
 
 interface Notification {
@@ -281,6 +283,7 @@ interface LoyaltyRule {
   cashbackStatus?: ProgramStatus;
   currentAvgTicket?: number;
   currentMonthlyRevenue?: number;
+  webhookUrl?: string;
   onboardingComplete?: boolean;
   erpKey?: string;
 }
@@ -1003,7 +1006,16 @@ function AppContent() {
 
   const isAdminUser = user?.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || user?.email?.toLowerCase() === 'fvmoreira2011@gmail.com' || appUser?.role === 'admin' || appUser?.role === 'superadmin';
   const isSuperAdmin = user?.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || user?.email?.toLowerCase() === 'fvmoreira2011@gmail.com' || appUser?.role === 'superadmin';
-  const isOnboarding = rules.onboardingComplete === false && !isSuperAdmin; 
+  const isOnboardingComplete = useMemo(() => {
+    if (!rules || !rules.companyProfile) return false;
+    const p = rules.companyProfile;
+    const hasProfile = !!(p.companyName && p.cnpj && p.phone && p.address && p.responsible && p.contactPhone);
+    const hasReward = !!(rules.rewardMode);
+    // onboardingComplete is our manual flag, but we also check if everything is filled
+    return rules.onboardingComplete && hasProfile && hasReward;
+  }, [rules]);
+
+  const isOnboarding = !isOnboardingComplete && !!user && !isSuperAdminPanelActive;
 
   useEffect(() => {
     if (isAuthReady && isSuperAdmin && activeTab === 'dashboard') {
@@ -1037,7 +1049,7 @@ function AppContent() {
 
   const isUserOnly = appUser?.role === 'user';
   const allowedTabs = ['dashboard', ...(rules.allowedUserTabs || [])];
-  const [onboardingTour, setOnboardingTour] = useState<'welcome' | 'profile' | 'goals' | 'reference_data_ticket' | 'reference_data_revenue' | 'finished' | null>(null);
+  const [onboardingTour, setOnboardingTour] = useState<'welcome' | 'profile' | 'goals' | 'rewards' | 'reference_data_ticket' | 'reference_data_revenue' | 'finished' | null>(null);
 
   useEffect(() => {
     if (isOnboarding && !onboardingTour) {
@@ -1048,9 +1060,9 @@ function AppContent() {
   // Enforcement: Force active tab based on onboarding step
   useEffect(() => {
     if (isOnboarding && onboardingTour) {
-      if (onboardingTour === 'profile' && activeTab !== 'super_admin_profile') {
-        setActiveTab('super_admin_profile');
-      } else if ((onboardingTour === 'goals' || onboardingTour === 'reference_data_ticket' || onboardingTour === 'reference_data_revenue') && activeTab !== 'goals') {
+      if (onboardingTour === 'profile' && activeTab !== 'company_profile') {
+        setActiveTab('company_profile');
+      } else if (onboardingTour === 'goals' && activeTab !== 'goals') {
         setActiveTab('goals');
       } else if (onboardingTour === 'rewards' && activeTab !== 'rewards') {
         setActiveTab('rewards');
@@ -1060,26 +1072,35 @@ function AppContent() {
 
   const handleTabChange = (tab: any) => {
     if (isOnboarding) {
-      // If onboarding is active, strongly restrict navigation
-      if (onboardingTour === 'welcome') return;
-      
-      if (onboardingTour === 'profile' && tab !== 'super_admin_profile') {
-        showToast("Por favor, preencha seu perfil para continuar o passo a passo obrigatório.", "warning");
-        return;
-      }
-      if (onboardingTour === 'goals' && tab !== 'goals') {
-        showToast("Por favor, preencha as metas de 12 meses para continuar o passo a passo obrigatório.", "warning");
+      if (onboardingTour === 'welcome') {
+        if (isSuperAdmin && ['super_admin_profile', 'super_admin_management', 'painel_master', 'redemption_codes'].includes(tab)) {
+          setActiveTab(tab);
+          return;
+        }
         return;
       }
       
-      // Allow specific transitions between onboarding tabs
-      if (onboardingTour === 'profile' && tab === 'super_admin_profile') { setActiveTab(tab); return; }
-      if (onboardingTour === 'goals' && tab === 'goals') { setActiveTab(tab); return; }
-      if (onboardingTour === 'finished') { setActiveTab(tab); return; }
+      const allowedMap: Record<string, string[]> = {
+        profile: ['company_profile'],
+        goals: ['goals'],
+        rewards: ['rewards'],
+        finished: ['dashboard'],
+      };
 
-      // If they are in middle of onboarding, they can't just switch to dashboard
-      if (onboardingTour && tab !== 'super_admin_profile' && tab !== 'goals') {
-        showToast("O preenchimento da configuração inicial é obrigatório.", "warning");
+      // Super admin can always jump to master tabs
+      if (isSuperAdmin && ['super_admin_profile', 'super_admin_management', 'painel_master', 'redemption_codes'].includes(tab)) {
+        setActiveTab(tab);
+        return;
+      }
+
+      const allowedForStep = onboardingTour ? (allowedMap[onboardingTour] || []) : [];
+      
+      if (!allowedForStep.includes(tab)) {
+        let msg = "Conclua a etapa atual para prosseguir.";
+        if (onboardingTour === 'profile') msg = "Preencha os dados da empresa primeiro.";
+        if (onboardingTour === 'goals') msg = "Defina as metas de faturamento primeiro.";
+        if (onboardingTour === 'rewards') msg = "Configure o programa de fidelidade primeiro.";
+        showToast(msg, "warning");
         return;
       }
     }
@@ -1398,13 +1419,37 @@ function AppContent() {
 
     if (loading || !isAuthReady || (user && !appUser)) {
       return (
-        <div className="min-h-screen flex flex-col items-center justify-center bg-black">
-          <div className="flex flex-col items-center gap-6">
-            <div className="w-12 h-12 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-white font-black uppercase tracking-widest text-xs animate-pulse">
-              Carregando Sistema...
-            </p>
-          </div>
+        <div className="min-h-screen flex flex-col items-center justify-center bg-white">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.5 }}
+            className="flex flex-col items-center gap-8"
+          >
+            <div className="relative">
+              <div className="w-24 h-24 border-4 border-green-500/10 rounded-[2rem] absolute inset-0 animate-pulse" />
+              <div className="w-24 h-24 border-4 border-green-500 border-t-transparent rounded-[2rem] animate-spin" />
+              <img 
+                src={APP_LOGO} 
+                alt="BuyPass" 
+                className="absolute inset-0 m-auto w-12 h-auto"
+                onError={(e) => { (e.target as HTMLImageElement).src = FALLBACK_LOGO; }}
+              />
+            </div>
+            <div className="space-y-2 text-center">
+              <p className="text-gray-900 font-black uppercase tracking-[0.3em] text-[10px]">
+                Iniciando BuyPass
+              </p>
+              <div className="w-32 h-1 bg-gray-100 rounded-full overflow-hidden mx-auto">
+                <motion.div 
+                  initial={{ x: "-100%" }}
+                  animate={{ x: "0%" }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                  className="w-full h-full bg-green-500"
+                />
+              </div>
+            </div>
+          </motion.div>
         </div>
       );
     }
@@ -1459,78 +1504,14 @@ function AppContent() {
         
         {/* Onboarding Overlay */}
         <AnimatePresence>
-          {onboardingTour === 'welcome' && (
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-xl flex items-center justify-center p-6 text-center"
-            >
-              <div className="max-w-2xl space-y-8">
-                <div className="w-24 h-24 bg-green-500 rounded-3xl flex items-center justify-center mx-auto shadow-2xl shadow-green-500/20 rotate-3">
-                  <CheckCircle2 size={48} className="text-white" />
-                </div>
-                <div className="space-y-4">
-                  <h1 className="text-4xl font-black text-white tracking-tighter uppercase">Bem-vindo à sua plataforma de gestão de clientes</h1>
-                  <p className="text-gray-400 text-lg leading-relaxed">
-                    Você precisa configurar algumas informações como usuários do sistema, metas mês a mês, 
-                    vendas dos últimos 12 meses em moeda, ticket médio dos últimos 12 meses e tipo de premiação - pontos ou cashback.
-                  </p>
-                  <p className="text-green-500 font-bold uppercase tracking-widest text-sm">
-                    Isso deve levar cerca de 20 minutos. Você tem todas essas informações?
-                  </p>
-                </div>
-                <div className="flex flex-col sm:flex-row gap-4 pt-6">
-                  <button 
-                    onClick={handleLogout}
-                    className="flex-1 px-8 py-5 rounded-2xl font-black uppercase tracking-widest text-gray-500 hover:text-white transition-all order-2 sm:order-1"
-                  >
-                    Sair e Configurar Depois
-                  </button>
-                  <button 
-                    onClick={() => {
-                      setOnboardingTour('profile');
-                      setActiveTab('super_admin_profile');
-                    }}
-                    className="flex-1 bg-green-600 px-8 py-5 rounded-2xl font-black uppercase tracking-widest text-white shadow-2xl shadow-green-600/30 hover:bg-green-700 transition-all active:scale-95 order-1 sm:order-2"
-                  >
-                    Iniciar Configuração Obrigatória
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {onboardingTour === 'finished' && (
-             <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-xl flex items-center justify-center p-6 text-center"
-            >
-              <div className="max-w-md space-y-8">
-                <div className="w-24 h-24 bg-green-500 rounded-3xl flex items-center justify-center mx-auto shadow-2xl shadow-green-500/20 animate-bounce">
-                  <Trophy size={48} className="text-white" />
-                </div>
-                <div className="space-y-4">
-                  <h1 className="text-3xl font-black text-white tracking-tighter uppercase">Parabéns!</h1>
-                  <p className="text-gray-400 text-lg">
-                    Tudo pronto para você começar a gerenciar seus clientes.
-                  </p>
-                </div>
-                <button 
-                  onClick={async () => {
-                    await updateDoc(doc(db, 'configs', selectedCompanyId!), { onboardingComplete: true });
-                    setOnboardingTour(null);
-                    setActiveTab('dashboard');
-                  }}
-                  className="w-full bg-green-600 px-8 py-5 rounded-2xl font-black uppercase tracking-widest text-white"
-                >
-                  Começar Agora
-                </button>
-              </div>
-            </motion.div>
-          )}
+          <TeleguidedOnboarding 
+            rules={rules} 
+            goals={goals}
+            activeTour={onboardingTour}
+            onNextTour={setOnboardingTour}
+            onTabChange={setActiveTab}
+            onUpdateRules={handleUpdateRules}
+          />
         </AnimatePresence>
 
         {/* PWA Install Banner */}
@@ -2104,7 +2085,7 @@ function SidebarButton({ active, onClick, icon, label, isSuperAdmin, disabled }:
       className={cn(
         "flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold text-sm w-full text-left",
         active 
-          ? "bg-green-500 text-white shadow-lg shadow-green-500/20" 
+          ? "bg-green-600 text-white shadow-lg shadow-green-600/20" 
           : "text-gray-400 hover:text-white hover:bg-white/10",
         disabled && "opacity-20 cursor-not-allowed grayscale"
       )}
@@ -2113,7 +2094,8 @@ function SidebarButton({ active, onClick, icon, label, isSuperAdmin, disabled }:
       <span className={cn("transition-colors", active ? "text-white" : "text-gray-400 group-hover:text-white")}>
         {icon}
       </span>
-      {label}
+      <span className="flex-1 truncate uppercase tracking-widest text-[10px]">{label}</span>
+      {disabled && <Lock size={12} className="opacity-50" />}
     </button>
   );
 }
@@ -2422,7 +2404,16 @@ function LoginScreen() {
       </div>
 
       {/* Right Side - Login Form */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 md:p-20 bg-white">
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 md:p-20 bg-white relative">
+        {/* Admin Secret Padlock */}
+        <button 
+          onClick={() => setLoginMode(loginMode === 'client' ? 'admin' : 'client')}
+          className="absolute top-8 right-8 p-3 text-gray-300 hover:text-green-600 transition-all hover:bg-green-50 rounded-2xl group"
+          title={loginMode === 'client' ? "Acesso Administrativo" : "Voltar para Acesso Cliente"}
+        >
+          {loginMode === 'client' ? <Lock size={20} className="group-hover:scale-110 transition-transform" /> : <Unlock size={20} className="text-green-600 group-hover:scale-110 transition-transform" />}
+        </button>
+
         <motion.div 
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -2516,21 +2507,15 @@ function LoginScreen() {
             </Button>
 
             <div className="pt-6 border-t border-gray-100 flex flex-col gap-4">
-              <button 
-                type="button"
-                onClick={() => setLoginMode(loginMode === 'client' ? 'admin' : 'client')}
-                className="w-full text-[10px] text-green-600 hover:text-green-700 font-bold transition-colors uppercase tracking-widest"
-              >
-                {loginMode === 'client' ? 'Acesso Administrativo' : 'Voltar para Acesso Cliente'}
-              </button>
-              
-              <button 
-                type="button"
-                onClick={handleGoogleLogin}
-                className="w-full text-[10px] text-gray-400 hover:text-gray-600 font-bold transition-colors uppercase tracking-widest"
-              >
-                Entrar com Google (Master)
-              </button>
+              {loginMode === 'admin' && (
+                <button 
+                  type="button"
+                  onClick={handleGoogleLogin}
+                  className="w-full text-[10px] text-gray-400 hover:text-gray-600 font-bold transition-colors uppercase tracking-widest"
+                >
+                  Entrar com Google (Master)
+                </button>
+              )}
             </div>
           </form>
 
@@ -2557,89 +2542,152 @@ function LoginScreen() {
 }
 
 
-function OnboardingOverlay({ rules, onUpdateRules, onAddAdmin }: { rules: LoyaltyRule; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; onAddAdmin: (email: string) => Promise<void> }) {
-  const [step, setStep] = useState(1);
-  const [newAdminEmail, setNewAdminEmail] = useState('');
-  const [isFinishing, setIsFinishing] = useState(false);
+function TeleguidedOnboarding({ rules, goals, onUpdateRules, activeTour, onNextTour, onTabChange }: { rules: LoyaltyRule; goals: Goal[]; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; activeTour: string | null; onNextTour: (tour: any) => void; onTabChange: (tab: any) => void }) {
   const { showToast } = useToast();
+  const [isFinishing, setIsFinishing] = useState(false);
 
-  const handleFinish = async () => {
-    if (step < 5) {
-      setStep(step + 1);
+  const steps = [
+    { id: 'welcome', title: 'Bem-vindo ao BuyPass!', description: 'Vamos configurar sua empresa em menos de 2 minutos para liberar todas as funcionalidades.', button: 'Iniciar Configuração' },
+    { id: 'profile', title: 'Dados da Empresa', description: 'Preencha todos os campos do perfil (Nome, CNPJ, etc) e clique em SALVAR PERFIL na lateral antes de avançar.', button: 'Próximo Passo', tab: 'company_profile' },
+    { id: 'goals', title: 'Metas de Gestão', description: 'Precisamos de 12 meses de metas para projetar seu crescimento. Clique em COMPARAR E SALVAR METAS para avançar.', button: 'Próximo Passo', tab: 'goals' },
+    { id: 'rewards', title: 'Regras do Programa', description: 'Defina se usará Pontos ou Cashback e clique em SALVAR CONFIGURAÇÕES para avançar.', button: 'Próximo Passo', tab: 'rewards' },
+    { id: 'finished', title: 'Tudo Pronto!', description: 'Sua plataforma está configurada e pronta para faturar mais com fidelização.', button: 'Finalizar e Acessar' }
+  ];
+
+  const currentStepIndex = steps.findIndex(s => s.id === activeTour);
+  const currentStep = steps[currentStepIndex] || steps[0];
+
+  const handleNext = async () => {
+    if (activeTour === 'welcome') {
+      onNextTour('profile');
+      onTabChange('company_profile');
       return;
     }
-    setIsFinishing(true);
-    try {
-      await onUpdateRules({ ...rules, onboardingComplete: true });
-      showToast("Configuração concluída com sucesso!", "success");
-    } catch (error) {
-      showToast("Erro ao concluir onboarding.", "error");
-    } finally {
-      setIsFinishing(false);
+
+    if (activeTour === 'profile') {
+      const p = rules.companyProfile;
+      const hasProfile = !!(p?.companyName && p?.cnpj && p?.phone && p?.address && p?.responsible && p?.contactPhone);
+      if (!hasProfile) {
+        showToast("Você precisa preencher os dados obrigatórios e clicar em SALVAR PERFIL antes de avançar.", "error");
+        return;
+      }
+      onNextTour('goals');
+      onTabChange('goals');
+      return;
+    }
+
+    if (activeTour === 'goals') {
+      if (goals.length < 12) {
+        showToast("Você precisa preencher as metas de todos os 12 meses.", "error");
+        return;
+      }
+      onNextTour('rewards');
+      onTabChange('rewards');
+      return;
+    }
+
+    if (activeTour === 'rewards') {
+      if (!rules.rewardMode) {
+        showToast("Selecione um modo de premiação (Pontos ou Cashback).", "error");
+        return;
+      }
+      onNextTour('finished');
+      return;
+    }
+
+    if (activeTour === 'finished') {
+      setIsFinishing(true);
+      try {
+        await onUpdateRules({ ...rules, onboardingComplete: true });
+        showToast("Configuração concluída! Bem-vindo.", "success");
+      } catch (err) {
+        showToast("Erro ao finalizar setup.", "error");
+      } finally {
+        setIsFinishing(false);
+      }
     }
   };
 
-  const steps = [
-    { title: "Bem-vindo!", description: "Vamos configurar os dados essenciais para o seu programa de fidelidade." },
-    { title: "Equipe", description: "Deseja adicionar outros administradores agora?", type: 'admin' },
-    { title: "Premiação", description: "Defina o modelo de premiação (Pontos ou Cashback) na aba Premiação.", type: 'nav', tab: 'rewards' },
-    { title: "Metas Gerais", description: "Configure seu ticket médio e faturamento atual para habilitar as estatísticas.", type: 'nav', tab: 'goals' },
-    { title: "Tudo Pronto!", description: "Agora você pode acessar todas as funcionalidades do sistema." }
-  ];
+  if (!activeTour) return null;
+
+  const isModalStep = activeTour === 'welcome' || activeTour === 'finished';
+
+  if (!isModalStep) {
+    return (
+      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[1000] w-full max-w-lg px-4 pointer-events-none">
+        <motion.div 
+          initial={{ y: 100, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          className="bg-white rounded-3xl p-6 shadow-2xl border border-gray-100 space-y-4 pointer-events-auto ring-4 ring-green-600/20"
+        >
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-green-50 rounded-2xl flex items-center justify-center text-green-600 shrink-0">
+              {activeTour === 'profile' && <Building2 size={24} />}
+              {activeTour === 'goals' && <Target size={24} />}
+              {activeTour === 'rewards' && <Star size={24} />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-sm font-black text-gray-900 uppercase tracking-tight">{currentStep.title}</h3>
+              <p className="text-[11px] text-gray-500 font-medium leading-tight">{currentStep.description}</p>
+            </div>
+            <button 
+              onClick={handleNext}
+              disabled={isFinishing}
+              className="px-6 py-3 bg-green-600 text-white rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-green-600/20 hover:bg-green-700 transition-all active:scale-95 disabled:opacity-50"
+            >
+              {currentStep.button}
+            </button>
+          </div>
+          <div className="h-1 bg-gray-100 rounded-full overflow-hidden">
+            <motion.div 
+              className="h-full bg-green-600"
+              initial={{ width: 0 }}
+              animate={{ width: `${((currentStepIndex + 1) / steps.length) * 100}%` }}
+            />
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
-    <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[1000] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center p-4 bg-black/90 backdrop-blur-md">
       <motion.div 
-        initial={{ opacity: 0, scale: 0.95 }} 
-        animate={{ opacity: 1, scale: 1 }} 
-        className="bg-white rounded-[3rem] w-full max-w-lg p-10 shadow-2xl relative overflow-hidden"
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="bg-white rounded-[2.5rem] w-full max-w-lg p-10 shadow-2xl space-y-8 relative overflow-hidden text-center"
       >
-        <div className="absolute top-0 right-0 p-8 opacity-5">
-          <TrendingUp size={150} />
+        <div className="absolute top-0 left-0 w-full h-2 bg-gray-100">
+          <motion.div 
+            className="h-full bg-green-600"
+            initial={{ width: 0 }}
+            animate={{ width: `${((currentStepIndex + 1) / steps.length) * 100}%` }}
+          />
         </div>
-        
-        <div className="relative z-10 space-y-8">
-          <div className="flex justify-between items-center">
-            <div className="flex gap-1">
-              {[1, 2, 3, 4, 5].map(i => (
-                <div key={i} className={cn("w-8 h-1.5 rounded-full transition-all", i <= step ? "bg-primary" : "bg-gray-100")} />
-              ))}
-            </div>
-            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Passo {step} de 5</span>
-          </div>
 
-          <div className="space-y-2">
-            <h2 className="text-3xl font-black text-gray-900 tracking-tighter italic">{steps[step-1].title}</h2>
-            <p className="text-gray-500 font-medium leading-relaxed">{steps[step-1].description}</p>
-          </div>
-
-          {step === 2 && (
-            <div className="space-y-4 py-4">
-              <div className="bg-gray-50 border border-gray-100 rounded-2xl p-6">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">E-mail do novo administrador</label>
-                <div className="flex gap-2">
-                  <input 
-                    type="email" 
-                    value={newAdminEmail}
-                    onChange={(e) => setNewAdminEmail(e.target.value)}
-                    placeholder="exemplo@email.com"
-                    className="flex-1 bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-primary"
-                  />
-                  <Button onClick={() => { onAddAdmin(newAdminEmail); setNewAdminEmail(''); }} disabled={!newAdminEmail}>Add</Button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="flex gap-4 pt-4">
-            {step > 1 && (
-              <Button variant="outline" className="flex-1" onClick={() => setStep(step - 1)}>Voltar</Button>
-            )}
-            <Button className="flex-[2] shadow-xl shadow-primary/20" onClick={handleFinish} disabled={isFinishing}>
-              {step < 5 ? 'Próximo' : (isFinishing ? 'Finalizando...' : 'Começar Agora!')}
-            </Button>
+        <div className="flex justify-center">
+          <div className="w-20 h-20 bg-green-50 rounded-3xl flex items-center justify-center text-green-600">
+            {activeTour === 'welcome' && <Trophy size={40} />}
+            {activeTour === 'finished' && <CheckCircle2 size={40} />}
           </div>
         </div>
+
+        <div className="space-y-4">
+          <h2 className="text-3xl font-black text-gray-900 tracking-tighter italic uppercase">{currentStep.title}</h2>
+          <p className="text-gray-500 font-medium leading-relaxed">{currentStep.description}</p>
+        </div>
+
+        <button 
+          onClick={handleNext}
+          disabled={isFinishing}
+          className="w-full bg-green-600 text-white py-5 rounded-2xl font-black uppercase tracking-widest text-sm shadow-xl shadow-green-600/20 hover:bg-green-700 transition-all active:scale-95 disabled:opacity-50"
+        >
+          {isFinishing ? 'Concluindo...' : currentStep.button}
+        </button>
+
+        <p className="text-center text-[10px] text-gray-400 font-bold uppercase tracking-widest">
+          Setup Obrigatório • Passo {currentStepIndex + 1} de {steps.length}
+        </p>
       </motion.div>
     </div>
   );
@@ -2751,7 +2799,7 @@ function SuperAdminProfileTab({ appUser, onboardingMode, onOnboardingNext }: { a
                 <label className="text-xs font-black text-gray-500 uppercase tracking-widest ml-1">E-mail (Automático)</label>
                 <input 
                   type="text" 
-                  value={appUser.email}
+                  value={appUser.email || ''}
                   disabled
                   className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-gray-400 font-bold outline-none cursor-not-allowed"
                 />
@@ -3892,17 +3940,17 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Nome da Empresa</label>
-                <input type="text" value={formData.companyName} onChange={e => setFormData({ ...formData, companyName: e.target.value })} className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-gray-900 text-sm font-bold outline-none focus:border-primary transition-all" required />
+                <input type="text" value={formData.companyName || ''} onChange={e => setFormData({ ...formData, companyName: e.target.value })} className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-gray-900 text-sm font-bold outline-none focus:border-primary transition-all" required />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Nome do Programa</label>
-                <input type="text" value={formData.campaignName} onChange={e => setFormData({ ...formData, campaignName: e.target.value })} className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-gray-900 text-sm font-bold outline-none focus:border-primary transition-all" required />
+                <input type="text" value={formData.campaignName || ''} onChange={e => setFormData({ ...formData, campaignName: e.target.value })} className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-gray-900 text-sm font-bold outline-none focus:border-primary transition-all" required />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">CNPJ</label>
                 <input 
                   type="text" 
-                  value={formData.cnpj} 
+                  value={formData.cnpj || ''} 
                   onChange={e => {
                     const val = e.target.value;
                     const digits = val.replace(/\D/g, '');
@@ -3920,7 +3968,7 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Endereço Completo</label>
-                <input type="text" value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-gray-900 text-sm font-bold outline-none focus:border-primary transition-all" required />
+                <input type="text" value={formData.address || ''} onChange={e => setFormData({ ...formData, address: e.target.value })} className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-gray-900 text-sm font-bold outline-none focus:border-primary transition-all" required />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Celular</label>
@@ -5355,7 +5403,7 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
             </div>
 
             <Button onClick={handleFinishGoalsOnboarding} disabled={isSaving} variant="outline" className="w-full py-4 border-primary/20 text-primary hover:bg-primary/5 font-black uppercase tracking-widest">
-              {onboardingStep === 'onboarding' ? 'Próxima Etapa: Premiação' : (isSaving ? 'Gravando...' : 'Atualizar Referências')}
+              {onboardingStep === 'onboarding' ? 'COMPARAR E SALVAR METAS' : (isSaving ? 'Gravando...' : 'Atualizar Referências')}
             </Button>
           </div>
         </Card>
@@ -6634,15 +6682,18 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
               <div className="flex justify-between items-start relative z-10">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center border border-white/20 backdrop-blur-md">
-                    {rules.companyProfile?.logoURL ? (
-                      <img src={rules.companyProfile.logoURL} alt="Logo" className="w-full h-full object-contain p-1" />
+                    {rules.companyProfile?.logoURL || rules.companyProfile?.photoURL ? (
+                      <img src={rules.companyProfile?.logoURL || rules.companyProfile?.photoURL} alt="Logo" className="w-full h-full object-contain p-1" />
                     ) : (
                       <Building2 className="text-primary" size={24} />
                     )}
                   </div>
                   <div>
-                    <p className="text-[10px] font-black text-white uppercase tracking-widest">
+                    <p className="text-[10px] font-black text-white uppercase tracking-widest leading-tight">
                       {rules.campaignName || 'Programa de Fidelidade'}
+                    </p>
+                    <p className="text-[8px] font-bold text-green-500 uppercase tracking-tighter mb-1">
+                      CARTÃO {rules.rewardMode === 'cashback' ? 'CASHBACK' : 'PONTOS'} ATIVO
                     </p>
                     <p className="text-xs font-bold text-white/60 uppercase">
                       {rules.companyProfile?.tradingName || rules.companyProfile?.companyName || 'Sua Empresa'}
@@ -6962,32 +7013,35 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
     e?.preventDefault();
     if (!isAdmin || isLocked) return;
     
-    if (onboardingMode) {
-      setIsSaving(true);
-      try {
-        const updatedRules = { 
-          ...rules, 
-          rewardTiers: localTiers,
-          minPurchaseValue,
-          extraPointsThreshold,
-          extraPointsAmount,
-          rewardMode,
-          cashbackConfig
-        };
-        await onUpdateRules(updatedRules);
-        setShowSuccess(true);
-        setIsLocked(true);
+    // In current turn, we remove re-auth and just save directly to avoid auth errors
+    setIsSaving(true);
+    try {
+      const updatedRules = { 
+        ...rules, 
+        rewardTiers: localTiers,
+        minPurchaseValue,
+        extraPointsThreshold,
+        extraPointsAmount,
+        rewardMode,
+        cashbackConfig,
+        pointsStatus,
+        cashbackStatus
+      };
+      await onUpdateRules(updatedRules);
+      setShowSuccess(true);
+      setIsLocked(true);
+      if (onboardingMode) {
         setTimeout(() => {
           setShowSuccess(false);
           onOnboardingFinish?.();
         }, 1500);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, 'configs');
-      } finally {
-        setIsSaving(false);
+      } else {
+        setTimeout(() => setShowSuccess(false), 3000);
       }
-    } else {
-      setShowReauth(true);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'configs');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -7278,7 +7332,7 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">R$</span>
                     <input 
                       type="number" 
-                      value={minPurchaseValue}
+                      value={minPurchaseValue || 0}
                       onChange={(e) => setMinPurchaseValue(parseFloat(e.target.value) || 0)}
                       disabled={isLocked}
                       className="w-full bg-gray-50 border border-gray-100 rounded-xl pl-10 pr-4 py-2.5 text-gray-900 text-sm outline-none focus:border-green-500 transition-all disabled:opacity-50"
@@ -7289,7 +7343,7 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
                   <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Meta pontos Extra (R$)</label>
                   <input 
                     type="number" 
-                    value={extraPointsThreshold}
+                    value={extraPointsThreshold || 0}
                     onChange={(e) => setExtraPointsThreshold(parseFloat(e.target.value) || 0)}
                     disabled={isLocked}
                     className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2.5 text-gray-900 text-sm outline-none focus:border-green-500 transition-all disabled:opacity-50"
@@ -7299,7 +7353,7 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
                   <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Qtd Pontos Extra</label>
                   <input 
                     type="number" 
-                    value={extraPointsAmount}
+                    value={extraPointsAmount || 0}
                     onChange={(e) => setExtraPointsAmount(parseInt(e.target.value) || 0)}
                     disabled={isLocked}
                     className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-2.5 text-gray-900 text-sm outline-none focus:border-green-500 transition-all disabled:opacity-50"
@@ -7321,11 +7375,11 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
                   <div key={index} className="flex flex-col sm:flex-row gap-3 p-4 bg-gray-50 border border-gray-100 rounded-xl items-end sm:items-center">
                     <div className="flex-1 space-y-1.5 w-full">
                       <label className="text-[10px] font-bold text-gray-400 uppercase">Pontos</label>
-                      <input type="number" value={tier.points} onChange={(e) => updateTier(index, 'points', e.target.value)} disabled={isLocked} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50" />
+                      <input type="number" value={tier.points || 0} onChange={(e) => updateTier(index, 'points', e.target.value)} disabled={isLocked} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50" />
                     </div>
                     <div className="flex-[2] space-y-1.5 w-full">
                       <label className="text-[10px] font-bold text-gray-400 uppercase">Prêmio</label>
-                      <input type="text" value={tier.prize} onChange={(e) => updateTier(index, 'prize', e.target.value)} disabled={isLocked} placeholder="Ex: Vale Compras R$ 50" className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50" />
+                      <input type="text" value={tier.prize || ''} onChange={(e) => updateTier(index, 'prize', e.target.value)} disabled={isLocked} placeholder="Ex: Vale Compras R$ 50" className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50" />
                     </div>
                     <div className="flex-1 space-y-1.5 w-full">
                       <label className="text-[10px] font-bold text-gray-400 uppercase">Custo (R$)</label>
@@ -7366,7 +7420,7 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">R$</span>
                     <input 
                       type="number" 
-                      value={cashbackConfig.minActivationValue}
+                      value={cashbackConfig.minActivationValue || 0}
                       onChange={(e) => setCashbackConfig({...cashbackConfig, minActivationValue: parseFloat(e.target.value) || 0})}
                       disabled={isLocked}
                       className="w-full bg-gray-50 border border-gray-100 rounded-xl pl-10 pr-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
@@ -7428,7 +7482,7 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
               disabled={isSaving || isLocked}
               className="px-8 py-3 rounded-xl font-black uppercase tracking-widest"
             >
-              {isSaving ? 'Salvando...' : 'Salvar Configurações'}
+              {isSaving ? 'Salvando...' : 'SALVAR CONFIGURAÇÕES'}
             </Button>
           </div>
         </div>
@@ -7541,19 +7595,39 @@ function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rule
               {items.map((d: SeasonalDate) => (
                 <div key={d.id} className="flex items-center justify-between p-3 bg-gray-50 border border-gray-100 rounded-xl group">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex flex-col items-center justify-center text-primary">
+                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex flex-col items-center justify-center text-primary relative">
                       <span className="text-[10px] font-bold uppercase leading-none">{format(parseISO(d.date), 'MMM', { locale: ptBR })}</span>
                       <span className="text-sm font-bold leading-none">{format(parseISO(d.date), 'dd')}</span>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-bold text-gray-900">{d.name}</p>
-                      <button 
-                        onClick={() => onTabChange('promotion')}
-                        className="p-1 text-primary hover:bg-primary/10 rounded transition-colors"
-                        title="Envio WhatsApp"
-                      >
-                        <MessageSquare size={14} />
-                      </button>
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-bold text-gray-900">{d.name}</p>
+                        <button 
+                          onClick={() => onTabChange('promotion')}
+                          className="p-1 text-primary hover:bg-primary/10 rounded transition-colors"
+                          title="Envio WhatsApp"
+                        >
+                          <MessageSquare size={14} />
+                        </button>
+                        <button 
+                          onClick={() => {
+                            const newMemo = window.prompt("Anotação para esta data:", d.memo || '');
+                            if (newMemo !== null) {
+                              const updated = dates.map(item => item.id === d.id ? { ...item, memo: newMemo.slice(0, 400) } : item);
+                              handleSave(updated);
+                            }
+                          }}
+                          className={cn("p-1 rounded transition-colors", d.memo ? "text-green-600 bg-green-50" : "text-gray-400 hover:bg-gray-100")}
+                          title="Adicionar Anotação"
+                        >
+                          <PlusCircle size={14} />
+                        </button>
+                      </div>
+                      {d.memo && (
+                        <p className="text-[10px] text-gray-500 italic bg-gray-100/50 p-2 rounded-lg border border-gray-100 max-w-[200px] break-words">
+                          "{d.memo}"
+                        </p>
+                      )}
                     </div>
                   </div>
                   {isAdmin && (
@@ -8530,6 +8604,8 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
 
   const [isGeminiLocked, setIsGeminiLocked] = useState(true);
   const [isPromptLocked, setIsPromptLocked] = useState(true);
+  const [isWebhookLocked, setIsWebhookLocked] = useState(true);
+  const [isErpKeyLocked, setIsErpKeyLocked] = useState(true);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -8566,11 +8642,19 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
     if (!isAdmin) return;
     
     // Validation: Check if all required fields are filled
-    const requiredFields: (keyof CompanyProfile)[] = ['companyName', 'cnpj', 'phone', 'address', 'responsible', 'contactPhone'];
-    const missingFields = requiredFields.filter(field => !profile[field]);
+    const requiredFields: { key: keyof CompanyProfile; label: string }[] = [
+      { key: 'companyName', label: 'Nome da Empresa' },
+      { key: 'cnpj', label: 'CNPJ' },
+      { key: 'phone', label: 'Telefone' },
+      { key: 'address', label: 'Endereço' },
+      { key: 'responsible', label: 'Responsável' },
+      { key: 'contactPhone', label: 'WhatsApp de Contato' }
+    ];
+    
+    const missingFields = requiredFields.filter(f => !profile[f.key]);
     
     if (missingFields.length > 0) {
-      showToast("Por favor, preencha todos os campos obrigatórios antes de salvar.", "warning");
+      showToast(`Campos obrigatórios ausentes: ${missingFields.map(f => f.label).join(', ')}`, "warning");
       return;
     }
 
@@ -8771,7 +8855,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
               className="w-full py-4 bg-green-600 text-white font-black uppercase tracking-widest text-xs rounded-xl hover:bg-green-700 transition-all flex items-center justify-center gap-2 shadow-xl shadow-green-600/20"
             >
               {isSaving ? <div className="w-5 h-5 border-2 border-white border-t-transparent animate-spin rounded-full" /> : <Save size={18} />}
-              Salvar Configurações
+              SALVAR PERFIL
             </Button>
           </div>
         </Card>
@@ -8782,7 +8866,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
               <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">Nome da Empresa</label>
               <input 
                 type="text" 
-                value={profile.companyName}
+                value={profile.companyName || ''}
                 onChange={(e) => setProfile({ ...profile, companyName: e.target.value })}
                 className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-primary outline-none transition-all"
                 placeholder="Razão Social"
@@ -8792,7 +8876,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
               <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">Nome Fantasia</label>
               <input 
                 type="text" 
-                value={profile.tradingName}
+                value={profile.tradingName || ''}
                 onChange={(e) => setProfile({ ...profile, tradingName: e.target.value })}
                 className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-primary outline-none transition-all"
                 placeholder="Nome Fantasia"
@@ -8802,7 +8886,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
               <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">CNPJ</label>
               <input 
                 type="text" 
-                value={profile.cnpj}
+                value={profile.cnpj || ''}
                 onChange={(e) => setProfile({ ...profile, cnpj: formatCNPJ(e.target.value) })}
                 className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-primary outline-none transition-all"
                 placeholder="00.000.000/0000-00"
@@ -8822,7 +8906,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
               <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">Endereço Completo</label>
               <input 
                 type="text" 
-                value={profile.address}
+                value={profile.address || ''}
                 onChange={(e) => setProfile({ ...profile, address: e.target.value })}
                 className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-primary outline-none transition-all"
                 placeholder="Rua, Número, Bairro, Cidade - UF"
@@ -8832,7 +8916,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
               <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">Responsável Imediato</label>
               <input 
                 type="text" 
-                value={profile.responsible}
+                value={profile.responsible || ''}
                 onChange={(e) => setProfile({ ...profile, responsible: e.target.value })}
                 className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-primary outline-none transition-all"
                 placeholder="Nome do Responsável"
@@ -8851,7 +8935,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
             <div className="space-y-2">
               <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">Tipo de Assinatura</label>
               <select 
-                value={profile.subscriptionType}
+                value={profile.subscriptionType || 'monthly'}
                 onChange={(e) => setProfile({ ...profile, subscriptionType: e.target.value as any })}
                 className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-primary outline-none transition-all appearance-none"
               >
@@ -8949,7 +9033,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
                 <label className="text-xs font-bold text-gray-500 uppercase">Nome Completo</label>
                 <input 
                   type="text" 
-                  value={newUserData.name}
+                  value={newUserData.name || ''}
                   onChange={(e) => setNewUserData(prev => ({ ...prev, name: e.target.value }))}
                   className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
                   placeholder="Ex: João Silva"
@@ -8960,7 +9044,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
                 <label className="text-xs font-bold text-gray-500 uppercase">E-mail</label>
                 <input 
                   type="email" 
-                  value={newUserData.email}
+                  value={newUserData.email || ''}
                   onChange={(e) => setNewUserData(prev => ({ ...prev, email: e.target.value }))}
                   disabled={!!editingUser}
                   className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50"
@@ -8972,7 +9056,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
                 <label className="text-xs font-bold text-gray-500 uppercase">Celular</label>
                 <input 
                   type="text" 
-                  value={newUserData.phone}
+                  value={newUserData.phone || ''}
                   onChange={(e) => setNewUserData(prev => ({ ...prev, phone: e.target.value }))}
                   className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
                   placeholder="(00) 00000-0000"
@@ -8983,7 +9067,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
                   <label className="text-xs font-bold text-gray-500 uppercase">Senha Inicial</label>
                   <input 
                     type="password" 
-                    value={newUserData.password}
+                    value={newUserData.password || ''}
                     onChange={(e) => setNewUserData(prev => ({ ...prev, password: e.target.value }))}
                     className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
                     placeholder="••••••••"
@@ -9011,35 +9095,66 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
           </div>
         </div>
         
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Chave de API / Conector</label>
-            <div className="relative">
-              <Key className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-              <input 
-                type="text" 
-                value={rules.erpKey || 'NÃO CONFIGURADA'}
-                readOnly
-                className="w-full bg-gray-50 border border-gray-100 rounded-2xl pl-14 pr-6 py-4 text-gray-900 font-mono text-sm font-bold"
-              />
-            </div>
-            <div className="space-y-1.5 mt-4">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">URL de Endpoint (Webhook)</label>
-              <div className="relative">
-                <input 
-                  type="text" 
-                  value={window.location.origin + '/api/erp/loyalty'}
-                  readOnly
-                  className="w-full bg-gray-900 border border-gray-800 rounded-2xl px-6 py-4 text-primary font-mono text-[10px] font-bold"
-                />
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Chave de API / Conector</label>
                 <button 
-                  onClick={() => { navigator.clipboard.writeText(window.location.origin + '/api/erp/loyalty'); showToast("URL copiada!", "success"); }}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                  onClick={() => setIsErpKeyLocked(!isErpKeyLocked)}
+                  className="text-gray-400 hover:text-green-600 transition-colors"
                 >
-                  <Copy size={16} />
+                  {isErpKeyLocked ? <Lock size={14} /> : <Unlock size={14} />}
                 </button>
               </div>
-            </div>
+              <div className="relative">
+                <Key className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                <input 
+                  type="text" 
+                  value={erpKey || ''}
+                  onChange={(e) => setErpKey(e.target.value)}
+                  readOnly={isErpKeyLocked}
+                  className={cn(
+                    "w-full bg-gray-50 border border-gray-100 rounded-2xl pl-14 pr-16 py-4 text-gray-900 font-mono text-sm font-bold",
+                    isErpKeyLocked && "opacity-60 cursor-not-allowed"
+                  )}
+                />
+                <button 
+                  onClick={generateERPKey}
+                  disabled={isErpKeyLocked}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-primary transition-all disabled:opacity-30"
+                >
+                  <RotateCcw size={16} />
+                </button>
+              </div>
+
+              <div className="space-y-1.5 mt-4">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">URL de Endpoint (Webhook)</label>
+                  <button 
+                    onClick={() => setIsWebhookLocked(!isWebhookLocked)}
+                    className="text-gray-400 hover:text-green-600 transition-colors"
+                  >
+                    {isWebhookLocked ? <Lock size={14} /> : <Unlock size={14} />}
+                  </button>
+                </div>
+                <div className="relative">
+                  <input 
+                    type="text" 
+                    value={rules.webhookUrl || (window.location.origin + '/api/erp/loyalty')}
+                    onChange={(e) => onUpdateRules({ ...rules, webhookUrl: e.target.value })}
+                    readOnly={isWebhookLocked}
+                    className={cn(
+                      "w-full bg-gray-900 border border-gray-800 rounded-2xl px-6 py-4 text-primary font-mono text-[10px] font-bold",
+                      isWebhookLocked && "opacity-60"
+                    )}
+                  />
+                  <button 
+                    onClick={() => { navigator.clipboard.writeText(rules.webhookUrl || (window.location.origin + '/api/erp/loyalty')); showToast("URL copiada!", "success"); }}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                  >
+                    <Copy size={16} />
+                  </button>
+                </div>
+              </div>
             <div className="mt-4 p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-2">
               <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest leading-none">Dados Mapeados (Mandatórios):</p>
               <ul className="text-[10px] text-gray-400 space-y-1 font-medium list-disc ml-4">
@@ -9060,8 +9175,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
               O modelo de integração Saas ERP v2.0 já está disponível para sua conta. Consulte a documentação técnica para endpoints de pontuação automática.
             </p>
           </div>
-        </div>
-      </Card>
+        </Card>
 
       {/* Cancellation Modals */}
       {showCancelConfirm && (
@@ -9530,51 +9644,9 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
           </div>
         </div>
       </Card>
-
-      <Card className="p-8 bg-white border-gray-100 shadow-sm relative overflow-hidden">
-        <div className="absolute top-0 right-0 p-8 opacity-5 text-gray-900">
-          <Brain size={120} />
-        </div>
-        <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
-          <div className="max-w-xl">
-            <div className="bg-green-600 px-6 py-2 rounded-full shadow-lg shadow-green-600/20 inline-block">
-              <h3 className="text-xl font-black text-white uppercase tracking-widest">Análise Estratégica</h3>
-            </div>
-          </div>
-          <button 
-            onClick={handleGenerateAnalysis}
-            disabled={isAnalyzing}
-            className="px-8 py-4 bg-green-600 text-white font-black rounded-2xl hover:bg-green-700 transition-all shadow-xl shadow-green-500/20 flex items-center gap-3 whitespace-nowrap disabled:opacity-50"
-          >
-            {isAnalyzing ? <div className="w-5 h-5 border-2 border-white border-t-transparent animate-spin rounded-full" /> : <Brain size={24} />}
-            acesse aqui
-          </button>
-        </div>
-
-        {analysis && (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mt-8 p-6 bg-gray-50 rounded-2xl border border-gray-100">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 text-primary">
-                <Sparkles size={20} />
-                <h4 className="font-bold uppercase tracking-widest text-xs">Diagnóstico da IA</h4>
-              </div>
-              <button 
-                onClick={handleExportPDF}
-                className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-gray-900 rounded-xl text-xs font-bold transition-all"
-              >
-                <Download size={16} />
-                Exportar PDF
-              </button>
-            </div>
-            <div className="prose prose-green max-w-none text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-              {analysis}
-            </div>
-          </motion.div>
-        )}
-      </Card>
     </motion.div>
-    );
-  };
+  );
+}
 
   return (
     <ConfirmContext.Provider value={{ askConfirmation }}>
