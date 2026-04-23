@@ -1007,12 +1007,18 @@ function AppContent() {
   const isAdminUser = user?.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || user?.email?.toLowerCase() === 'fvmoreira2011@gmail.com' || appUser?.role === 'admin' || appUser?.role === 'superadmin';
   const isSuperAdmin = user?.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || user?.email?.toLowerCase() === 'fvmoreira2011@gmail.com' || appUser?.role === 'superadmin';
   const isOnboardingComplete = useMemo(() => {
+    // Flag in DB is the absolute truth
+    if (rules?.onboardingComplete === true) return true;
+    
+    // Otherwise calculate based on essential fields
     if (!rules || !rules.companyProfile) return false;
     const p = rules.companyProfile;
     const hasProfile = !!(p.companyName && p.cnpj && p.phone && p.address && p.responsible && p.contactPhone);
     const hasReward = !!(rules.rewardMode);
-    // onboardingComplete is our manual flag, but we also check if everything is filled
-    return rules.onboardingComplete && hasProfile && hasReward;
+    
+    // If they have all critical data, we can consider them done to avoid loops 
+    // even if the final flag wasn't toggled for some reason
+    return hasProfile && hasReward;
   }, [rules]);
 
   const isOnboarding = !isOnboardingComplete && !!user && !isSuperAdminPanelActive;
@@ -1346,6 +1352,109 @@ function AppContent() {
     };
   }, [user?.uid, appUser?.approved, isAdminUser, selectedCompanyId]);
 
+  const handleExportManagementReport = async (startDateStr?: string, endDateStr?: string) => {
+    const { jsPDF } = await import('jspdf');
+    await import('jspdf-autotable');
+    const doc = new jsPDF('p', 'mm', 'a4');
+    
+    const marginSide = 15; // 1.5cm
+    const marginTopBottom = 20; // 2cm
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const contentWidth = pageWidth - (marginSide * 2);
+    
+    const logoUrl = rules.companyProfile?.logoURL || rules.companyProfile?.photoURL || FALLBACK_LOGO;
+    const companyName = rules.companyProfile?.companyName || 'Empresa';
+    
+    const addHeaderFooter = (doc: any) => {
+      // Header
+      if (logoUrl) {
+         try { doc.addImage(logoUrl, 'PNG', marginSide, 8, 12, 12); } catch(e){}
+      }
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Análise estratégica de Gestão de Clientes', marginSide + 15, 15);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.text(companyName, marginSide + 15, 19);
+      
+      doc.setDrawColor(230, 230, 230);
+      doc.line(marginSide, 22, pageWidth - marginSide, 22);
+      
+      // Footer
+      doc.setFontSize(8);
+      doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+    };
+
+    let reportPurchases = purchases;
+    if (startDateStr && endDateStr) {
+       reportPurchases = purchases.filter(p => {
+         const date = p.date;
+         return date >= startDateStr && date <= endDateStr;
+       });
+    }
+
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('1. Resumo do Dashboard', marginSide, 35);
+    
+    const totalRev = reportPurchases.reduce((acc, p) => acc + p.amount, 0);
+    const avgTicket = reportPurchases.length > 0 ? totalRev / reportPurchases.length : 0;
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Período: ${startDateStr || 'Todo'} até ${endDateStr || 'Hoje'}`, marginSide, 42);
+    doc.text(`Vendas Totais: ${reportPurchases.length}`, marginSide, 48);
+    doc.text(`Faturamento: R$ ${formatCurrency(totalRev)}`, marginSide, 54);
+    doc.text(`Ticket Médio: R$ ${formatCurrency(avgTicket)}`, marginSide, 60);
+
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('2. Acompanhamento de Metas', marginSide, 75);
+    
+    const goalsTableData = goals.map(g => {
+       const actual = purchases.filter(p => p.date && p.date.startsWith(g.month)).reduce((acc, p) => acc + p.amount, 0);
+       return [g.month, `R$ ${formatCurrency(g.value)}`, `R$ ${formatCurrency(actual)}`, `${g.value > 0 ? ((actual/g.value)*100).toFixed(1) : 0}%`];
+    }).sort((a, b) => (a[0] as string).localeCompare(b[0] as string));
+
+    (doc as any).autoTable({
+      startY: 82,
+      margin: { left: marginSide, right: marginSide },
+      head: [['Mês', 'Meta Planejada', 'Realizado', '%']],
+      body: goalsTableData,
+      theme: 'grid',
+      headStyles: { fillColor: [34, 197, 94] }
+    });
+
+    let lastY = (doc as any).lastAutoTable.finalY + 15;
+    if (lastY > pageHeight - 40) { doc.addPage(); lastY = 30; }
+    
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('3. Análise Estratégica do Especialista', marginSide, lastY);
+    
+    const cacheKey = `analysis_cache_${selectedCompanyId}`;
+    const cached = localStorage.getItem(cacheKey);
+    let analysisText = rules.geminiApiKey ? "Gere uma análise na aba Estratégia para vê-la aqui." : "Solicite mais informações ao seu gerente de contas.";
+    if (cached) {
+       const parsed = JSON.parse(cached);
+       analysisText = parsed.result;
+    }
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    const splitText = doc.splitTextToSize(analysisText, contentWidth);
+    doc.text(splitText, marginSide, lastY + 10);
+
+    const pageCount = doc.internal.getNumberOfPages();
+    for(let i = 1; i <= pageCount; i++) {
+       doc.setPage(i);
+       addHeaderFooter(doc);
+    }
+
+    doc.save(`Relatorio_Gestao_${companyName}.pdf`);
+  };
+
   const handleUpdateRules = async (newRules: LoyaltyRule) => {
     if (!selectedCompanyId) return;
     try {
@@ -1504,14 +1613,16 @@ function AppContent() {
         
         {/* Onboarding Overlay */}
         <AnimatePresence>
-          <TeleguidedOnboarding 
-            rules={rules} 
-            goals={goals}
-            activeTour={onboardingTour}
-            onNextTour={setOnboardingTour}
-            onTabChange={setActiveTab}
-            onUpdateRules={handleUpdateRules}
-          />
+          {isOnboarding && (
+            <TeleguidedOnboarding 
+              rules={rules} 
+              goals={goals}
+              activeTour={onboardingTour}
+              onNextTour={setOnboardingTour}
+              onTabChange={setActiveTab}
+              onUpdateRules={handleUpdateRules}
+            />
+          )}
         </AnimatePresence>
 
         {/* PWA Install Banner */}
@@ -1803,7 +1914,18 @@ function AppContent() {
             </div>
           )}
           <AnimatePresence mode="wait">
-            {activeTab === 'dashboard' && !isSuperAdmin && <div key="dashboard"><DashboardTab purchases={purchases} customers={customers} rules={rules} goals={goals} appUser={appUser} /></div>}
+            {activeTab === 'dashboard' && !isSuperAdmin && (
+              <div key="dashboard">
+                <DashboardTab 
+                  purchases={purchases} 
+                  customers={customers} 
+                  rules={rules} 
+                  goals={goals} 
+                  appUser={appUser} 
+                  onExportReport={handleExportManagementReport}
+                />
+              </div>
+            )}
             {activeTab === 'notificar' && !isSuperAdmin && <div key="notificar"><NotifyTab customers={customers} rules={rules} companyId={selectedCompanyId} /></div>}
             {activeTab === 'customers' && !isSuperAdmin && <div key="customers"><CustomersTab customers={customers} purchases={purchases} isAdmin={isAdminUser} rules={rules} companyId={selectedCompanyId} /></div>}
             {activeTab === 'rewarded_customers' && !isSuperAdmin && <div key="rewarded_customers"><RewardedCustomersTab customers={customers} rules={rules} /></div>}
@@ -2224,7 +2346,7 @@ function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
 }
 
 function LoginScreen() {
-  const [loginMode, setLoginMode] = useState<'client' | 'admin'>('admin');
+  const [loginMode, setLoginMode] = useState<'client' | 'admin'>('client');
   const [cnpj, setCnpj] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -2545,50 +2667,90 @@ function LoginScreen() {
 function TeleguidedOnboarding({ rules, goals, onUpdateRules, activeTour, onNextTour, onTabChange }: { rules: LoyaltyRule; goals: Goal[]; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; activeTour: string | null; onNextTour: (tour: any) => void; onTabChange: (tab: any) => void }) {
   const { showToast } = useToast();
   const [isFinishing, setIsFinishing] = useState(false);
+  
+  // Local state for wizard progress
+  const [localProfile, setLocalProfile] = useState<CompanyProfile>(rules.companyProfile || {
+    companyName: '',
+    tradingName: '',
+    cnpj: '',
+    phone: '',
+    address: '',
+    responsible: '',
+    contactPhone: ''
+  });
 
   const steps = [
-    { id: 'welcome', title: 'Bem-vindo ao BuyPass!', description: 'Vamos configurar sua empresa em menos de 2 minutos para liberar todas as funcionalidades.', button: 'Iniciar Configuração' },
-    { id: 'profile', title: 'Dados da Empresa', description: 'Preencha todos os campos do perfil (Nome, CNPJ, etc) e clique em SALVAR PERFIL na lateral antes de avançar.', button: 'Próximo Passo', tab: 'company_profile' },
-    { id: 'goals', title: 'Metas de Gestão', description: 'Precisamos de 12 meses de metas para projetar seu crescimento. Clique em COMPARAR E SALVAR METAS para avançar.', button: 'Próximo Passo', tab: 'goals' },
-    { id: 'rewards', title: 'Regras do Programa', description: 'Defina se usará Pontos ou Cashback e clique em SALVAR CONFIGURAÇÕES para avançar.', button: 'Próximo Passo', tab: 'rewards' },
-    { id: 'finished', title: 'Tudo Pronto!', description: 'Sua plataforma está configurada e pronta para faturar mais com fidelização.', button: 'Finalizar e Acessar' }
+    { id: 'welcome', title: 'Bem-vindo ao BuyPass!', description: 'Vamos configurar sua empresa em menos de 2 minutos para liberar todas as funcionalidades.', button: 'Iniciar Agora' },
+    { id: 'profile', title: 'Dados da Empresa', description: 'Preencha as informações básicas para identificação.', button: 'Próximo Passo' },
+    { id: 'goals', title: 'Dê o primeiro passo!', description: 'Para começarmos, precisamos saber o seu faturamento médio mensal e o ticket médio atual.', button: 'Confirmar e Próximo' },
+    { id: 'rewards', title: 'Modelo de Fidelidade', description: 'Escolha como deseja premiar seus clientes.', button: 'Próximo Passo' },
+    { id: 'finished', title: 'Parabéns!', description: 'Seu sistema está pronto para uso. O onboarding nunca mais será exibido para esta conta.', button: 'Finalizar e Acessar Painel' }
   ];
 
   const currentStepIndex = steps.findIndex(s => s.id === activeTour);
   const currentStep = steps[currentStepIndex] || steps[0];
 
+  const [localGoals, setLocalGoals] = useState({
+    monthlyRevenue: rules.currentMonthlyRevenue || 0,
+    avgTicket: rules.currentAvgTicket || 0
+  });
+
+  const handleUpdateProfile = async (updates: Partial<CompanyProfile>) => {
+    const newProfile = { ...localProfile, ...updates };
+    setLocalProfile(newProfile);
+  };
+
   const handleNext = async () => {
     if (activeTour === 'welcome') {
       onNextTour('profile');
-      onTabChange('company_profile');
       return;
     }
 
     if (activeTour === 'profile') {
-      const p = rules.companyProfile;
-      const hasProfile = !!(p?.companyName && p?.cnpj && p?.phone && p?.address && p?.responsible && p?.contactPhone);
-      if (!hasProfile) {
-        showToast("Você precisa preencher os dados obrigatórios e clicar em SALVAR PERFIL antes de avançar.", "error");
+      const hasMissing = !localProfile.companyName || !localProfile.cnpj || !localProfile.phone || !localProfile.address || !localProfile.responsible || !localProfile.contactPhone;
+      if (hasMissing) {
+        showToast("Por favor, preencha todos os campos obrigatórios.", "error");
         return;
       }
-      onNextTour('goals');
-      onTabChange('goals');
+      setIsFinishing(true);
+      try {
+        await onUpdateRules({ 
+          ...rules, 
+          companyProfile: localProfile 
+        });
+        onNextTour('goals');
+      } catch (err) {
+        showToast("Erro ao salvar perfil.", "error");
+      } finally {
+        setIsFinishing(false);
+      }
       return;
     }
 
     if (activeTour === 'goals') {
-      if (goals.length < 12) {
-        showToast("Você precisa preencher as metas de todos os 12 meses.", "error");
+      if (!localGoals.monthlyRevenue || !localGoals.avgTicket) {
+        showToast("Preencha o faturamento e o ticket médio para continuar.", "error");
         return;
       }
-      onNextTour('rewards');
-      onTabChange('rewards');
+      setIsFinishing(true);
+      try {
+        await onUpdateRules({ 
+          ...rules, 
+          currentMonthlyRevenue: localGoals.monthlyRevenue,
+          currentAvgTicket: localGoals.avgTicket
+        });
+        onNextTour('rewards');
+      } catch (err) {
+        showToast("Erro ao salvar metas.", "error");
+      } finally {
+        setIsFinishing(false);
+      }
       return;
     }
 
     if (activeTour === 'rewards') {
       if (!rules.rewardMode) {
-        showToast("Selecione um modo de premiação (Pontos ou Cashback).", "error");
+        showToast("Selecione um modo de premiação.", "error");
         return;
       }
       onNextTour('finished');
@@ -2599,9 +2761,10 @@ function TeleguidedOnboarding({ rules, goals, onUpdateRules, activeTour, onNextT
       setIsFinishing(true);
       try {
         await onUpdateRules({ ...rules, onboardingComplete: true });
-        showToast("Configuração concluída! Bem-vindo.", "success");
+        onNextTour(null);
+        showToast("Configuração concluída!", "success");
       } catch (err) {
-        showToast("Erro ao finalizar setup.", "error");
+        showToast("Erro ao finalizar.", "error");
       } finally {
         setIsFinishing(false);
       }
@@ -2610,53 +2773,14 @@ function TeleguidedOnboarding({ rules, goals, onUpdateRules, activeTour, onNextT
 
   if (!activeTour) return null;
 
-  const isModalStep = activeTour === 'welcome' || activeTour === 'finished';
-
-  if (!isModalStep) {
-    return (
-      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[1000] w-full max-w-lg px-4 pointer-events-none">
-        <motion.div 
-          initial={{ y: 100, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="bg-white rounded-3xl p-6 shadow-2xl border border-gray-100 space-y-4 pointer-events-auto ring-4 ring-green-600/20"
-        >
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-green-50 rounded-2xl flex items-center justify-center text-green-600 shrink-0">
-              {activeTour === 'profile' && <Building2 size={24} />}
-              {activeTour === 'goals' && <Target size={24} />}
-              {activeTour === 'rewards' && <Star size={24} />}
-            </div>
-            <div className="flex-1 min-w-0">
-              <h3 className="text-sm font-black text-gray-900 uppercase tracking-tight">{currentStep.title}</h3>
-              <p className="text-[11px] text-gray-500 font-medium leading-tight">{currentStep.description}</p>
-            </div>
-            <button 
-              onClick={handleNext}
-              disabled={isFinishing}
-              className="px-6 py-3 bg-green-600 text-white rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-green-600/20 hover:bg-green-700 transition-all active:scale-95 disabled:opacity-50"
-            >
-              {currentStep.button}
-            </button>
-          </div>
-          <div className="h-1 bg-gray-100 rounded-full overflow-hidden">
-            <motion.div 
-              className="h-full bg-green-600"
-              initial={{ width: 0 }}
-              animate={{ width: `${((currentStepIndex + 1) / steps.length) * 100}%` }}
-            />
-          </div>
-        </motion.div>
-      </div>
-    );
-  }
-
   return (
-    <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+    <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center p-4 bg-black/95 backdrop-blur-xl">
       <motion.div 
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="bg-white rounded-[2.5rem] w-full max-w-lg p-10 shadow-2xl space-y-8 relative overflow-hidden text-center"
+        className="bg-white rounded-[2.5rem] w-full max-w-xl p-8 md:p-12 shadow-2xl space-y-8 relative overflow-hidden"
       >
+        {/* Progress Bar */}
         <div className="absolute top-0 left-0 w-full h-2 bg-gray-100">
           <motion.div 
             className="h-full bg-green-600"
@@ -2665,29 +2789,180 @@ function TeleguidedOnboarding({ rules, goals, onUpdateRules, activeTour, onNextT
           />
         </div>
 
-        <div className="flex justify-center">
-          <div className="w-20 h-20 bg-green-50 rounded-3xl flex items-center justify-center text-green-600">
-            {activeTour === 'welcome' && <Trophy size={40} />}
-            {activeTour === 'finished' && <CheckCircle2 size={40} />}
+        <div className="text-center space-y-3">
+          <div className="flex justify-center mb-6">
+            <div className="w-16 h-16 bg-green-50 rounded-[1.5rem] flex items-center justify-center text-green-600">
+              {activeTour === 'welcome' && <Trophy size={32} />}
+              {activeTour === 'profile' && <Building2 size={32} />}
+              {activeTour === 'goals' && <Target size={32} />}
+              {activeTour === 'rewards' && <Star size={32} />}
+              {activeTour === 'finished' && <CheckCircle2 size={32} />}
+            </div>
           </div>
+          <h2 className="text-3xl font-black text-gray-900 tracking-tighter uppercase italic">{currentStep.title}</h2>
+          <p className="text-gray-500 font-medium text-sm max-w-sm mx-auto">{currentStep.description}</p>
         </div>
 
-        <div className="space-y-4">
-          <h2 className="text-3xl font-black text-gray-900 tracking-tighter italic uppercase">{currentStep.title}</h2>
-          <p className="text-gray-500 font-medium leading-relaxed">{currentStep.description}</p>
+        <div className="space-y-6 max-h-[50vh] overflow-y-auto px-2 py-4">
+          {activeTour === 'profile' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Nome da Empresa</label>
+                <input 
+                  type="text" 
+                  value={localProfile.companyName}
+                  onChange={e => handleUpdateProfile({ companyName: e.target.value })}
+                  placeholder="Ex: Minha Loja Ltda"
+                  className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 focus:border-green-500 transition-all"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">CNPJ</label>
+                <input 
+                  type="text" 
+                  value={localProfile.cnpj}
+                  onChange={e => handleUpdateProfile({ cnpj: e.target.value })}
+                  placeholder="00.000.000/0001-00"
+                   className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 focus:border-green-500 transition-all"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Telefone Principal</label>
+                <input 
+                  type="text" 
+                  value={localProfile.phone}
+                  onChange={e => handleUpdateProfile({ phone: e.target.value })}
+                  placeholder="(00) 0000-0000"
+                   className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 focus:border-green-500 transition-all"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">WhatsApp de Contato</label>
+                <input 
+                  type="text" 
+                  value={localProfile.contactPhone}
+                  onChange={e => handleUpdateProfile({ contactPhone: e.target.value })}
+                  placeholder="(00) 90000-0000"
+                   className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 focus:border-green-500 transition-all"
+                />
+              </div>
+              <div className="space-y-1.5 md:col-span-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Endereço Completo</label>
+                <input 
+                  type="text" 
+                  value={localProfile.address}
+                  onChange={e => handleUpdateProfile({ address: e.target.value })}
+                  placeholder="Rua, Número, Bairro, Cidade - UF"
+                   className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 focus:border-green-500 transition-all"
+                />
+              </div>
+              <div className="space-y-1.5 md:col-span-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Nome do Responsável</label>
+                <input 
+                  type="text" 
+                  value={localProfile.responsible}
+                  onChange={e => handleUpdateProfile({ responsible: e.target.value })}
+                  placeholder="Quem responderá pelo painel?"
+                   className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 focus:border-green-500 transition-all"
+                />
+              </div>
+            </div>
+          )}
+
+          {activeTour === 'goals' && (
+            <div className="p-6 bg-gray-50 rounded-[2rem] border border-gray-100 space-y-6">
+              <div className="space-y-2">
+                <label className="text-xs font-black text-gray-500 uppercase tracking-wider block ml-1">Faturamento Médio Mensal</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-gray-400 text-sm">R$</span>
+                  <input 
+                    type="number" 
+                    value={localGoals.monthlyRevenue || ''}
+                    onChange={e => setLocalGoals({ ...localGoals, monthlyRevenue: Number(e.target.value) })}
+                    placeholder="0,00"
+                    className="w-full bg-white border border-gray-200 rounded-2xl pl-12 pr-6 py-4 text-lg font-black text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 focus:border-green-500 transition-all"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-black text-gray-500 uppercase tracking-wider block ml-1">Ticket Médio Atual</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-gray-400 text-sm">R$</span>
+                  <input 
+                    type="number" 
+                    value={localGoals.avgTicket || ''}
+                    onChange={e => setLocalGoals({ ...localGoals, avgTicket: Number(e.target.value) })}
+                    placeholder="0,00"
+                    className="w-full bg-white border border-gray-200 rounded-2xl pl-12 pr-6 py-4 text-lg font-black text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 focus:border-green-500 transition-all"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTour === 'rewards' && (
+            <div className="grid grid-cols-2 gap-6">
+              <button 
+                onClick={() => onUpdateRules({ ...rules, rewardMode: 'points' })}
+                className={cn(
+                  "p-8 rounded-[2.5rem] border-2 transition-all flex flex-col items-center gap-4 text-center group",
+                  rules.rewardMode === 'points' ? "bg-green-600 border-green-600 text-white" : "bg-white border-gray-100 text-gray-500 hover:border-green-200"
+                )}
+              >
+                <Award size={40} className={rules.rewardMode === 'points' ? "" : "text-gray-300 group-hover:text-green-500 transition-colors"} />
+                <div className="space-y-1">
+                  <p className="font-black uppercase tracking-tighter text-xl leading-none">Pontos</p>
+                  <p className="text-[10px] font-bold opacity-60">Fidelidade Clássica</p>
+                </div>
+              </button>
+              <button 
+                onClick={() => onUpdateRules({ ...rules, rewardMode: 'cashback' })}
+                className={cn(
+                  "p-8 rounded-[2.5rem] border-2 transition-all flex flex-col items-center gap-4 text-center group",
+                  rules.rewardMode === 'cashback' ? "bg-green-600 border-green-600 text-white" : "bg-white border-gray-100 text-gray-500 hover:border-green-200"
+                )}
+              >
+                <DollarSign size={40} className={rules.rewardMode === 'cashback' ? "" : "text-gray-300 group-hover:text-green-500 transition-colors"} />
+                <div className="space-y-1">
+                  <p className="font-black uppercase tracking-tighter text-xl leading-none">Cashback</p>
+                  <p className="text-[10px] font-bold opacity-60">Dinheiro de Volta</p>
+                </div>
+              </button>
+            </div>
+          )}
+
+          {activeTour === 'finished' && (
+            <div className="bg-green-50 rounded-[2.5rem] p-8 text-center space-y-4 border border-green-100">
+              <div className="inline-flex p-4 bg-green-600 text-white rounded-3xl mb-2">
+                <ShieldCheck size={40} />
+              </div>
+              <p className="text-green-800 font-bold leading-relaxed">
+                Você acaba de elevar o nível da Gestão de Clientes do seu negócio. Explore as ferramentas para crescer suas vendas.
+              </p>
+            </div>
+          )}
         </div>
 
-        <button 
-          onClick={handleNext}
-          disabled={isFinishing}
-          className="w-full bg-green-600 text-white py-5 rounded-2xl font-black uppercase tracking-widest text-sm shadow-xl shadow-green-600/20 hover:bg-green-700 transition-all active:scale-95 disabled:opacity-50"
-        >
-          {isFinishing ? 'Concluindo...' : currentStep.button}
-        </button>
-
-        <p className="text-center text-[10px] text-gray-400 font-bold uppercase tracking-widest">
-          Setup Obrigatório • Passo {currentStepIndex + 1} de {steps.length}
-        </p>
+        <div className="pt-4">
+          <Button 
+            onClick={handleNext}
+            disabled={isFinishing}
+            className="w-full py-6 rounded-3xl text-lg font-black uppercase tracking-widest shadow-2xl shadow-green-600/20 bg-green-600 hover:bg-green-700 text-white transition-all active:scale-95 disabled:opacity-50"
+          >
+            {isFinishing ? 'Salvando...' : currentStep.button}
+          </Button>
+          {(activeTour === 'profile' || activeTour === 'goals' || activeTour === 'rewards') && !isSuperAdmin && (
+             <button 
+              onClick={async () => {
+                await onUpdateRules({ ...rules, onboardingComplete: true });
+                onNextTour(null);
+              }}
+              className="w-full mt-4 text-[10px] text-gray-400 font-bold uppercase tracking-widest hover:text-gray-600 transition-colors"
+             >
+               Pular Configuração (Não Recomendado)
+             </button>
+          )}
+        </div>
       </motion.div>
     </div>
   );
@@ -5286,7 +5561,7 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
     return tkt > 0 ? Math.ceil(rev / tkt) : 0;
   }, [monthlyRevenue, avgTicket]);
 
-  const sortedGoals = [...goals].sort((a, b) => b.month.localeCompare(a.month));
+  const sortedGoals = [...goals].sort((a, b) => a.month.localeCompare(b.month));
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-6 pb-12">
@@ -5735,7 +6010,7 @@ function NotifyTab({ customers, rules, companyId }: { customers: Customer[]; rul
   );
 }
 
-function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchases: Purchase[]; customers: Customer[]; rules: LoyaltyRule; goals: Goal[]; appUser: AppUser | null }) {
+function DashboardTab({ purchases, customers, rules, goals, appUser, onExportReport }: { purchases: Purchase[]; customers: Customer[]; rules: LoyaltyRule; goals: Goal[]; appUser: AppUser | null; onExportReport?: (start?: string, end?: string) => Promise<void> }) {
   const [period, setPeriod] = useState<'all' | 'today' | 'week' | 'month' | 'custom'>('all');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
@@ -5924,19 +6199,34 @@ function DashboardTab({ purchases, customers, rules, goals, appUser }: { purchas
           <h2 className="text-2xl font-black text-gray-900 tracking-tight">Olá, {appUser?.displayName?.split(' ')[0] || rules.companyProfile?.responsible?.split(' ')[0] || 'Administrador'}</h2>
           <p className="text-sm text-gray-500 mt-1">Bem-vindo ao seu Dashboard • {todayFormatted}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Filter size={18} className="text-gray-500" />
-          <select 
-            value={period}
-            onChange={(e) => setPeriod(e.target.value as any)}
-            className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
+        <div className="flex items-center gap-4">
+          <Button 
+            onClick={() => {
+              if (period === 'custom' && startDate && endDate) {
+                onExportReport?.(startDate, endDate);
+              } else {
+                onExportReport?.();
+              }
+            }}
+            className="hidden sm:flex items-center gap-2 px-6 py-2.5 bg-gray-900 border border-gray-800 rounded-xl hover:bg-black transition-all text-sm font-black uppercase tracking-widest text-white shadow-xl shadow-black/10"
           >
-            <option value="all">Todo Período</option>
-            <option value="today">Hoje</option>
-            <option value="week">Última Semana</option>
-            <option value="month">Último Mês</option>
-            <option value="custom">Personalizado</option>
-          </select>
+            <Download size={18} className="text-green-400" />
+            Relatório de Gestão
+          </Button>
+          <div className="flex items-center gap-2">
+            <Filter size={18} className="text-gray-500" />
+            <select 
+              value={period}
+              onChange={(e) => setPeriod(e.target.value as any)}
+              className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-green-500"
+            >
+              <option value="all">Todo Período</option>
+              <option value="today">Hoje</option>
+              <option value="week">Última Semana</option>
+              <option value="month">Último Mês</option>
+              <option value="custom">Personalizado</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -7530,6 +7820,12 @@ function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rule
   const [showAddModal, setShowAddModal] = useState(false);
   const [newDate, setNewDate] = useState<Partial<SeasonalDate>>({ type: 'custom' });
 
+  useEffect(() => {
+    if (rules.seasonalDates) {
+      setDates(rules.seasonalDates);
+    }
+  }, [rules.seasonalDates]);
+
   const handleSave = async (updatedDates: SeasonalDate[]) => {
     if (!isAdmin) return;
     setIsSaving(true);
@@ -7633,7 +7929,7 @@ function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rule
                   {isAdmin && (
                     <button 
                       onClick={() => removeDate(d.id)}
-                      className="p-2 text-red-500 opacity-0 group-hover:opacity-100 hover:bg-red-500/10 rounded-lg transition-all"
+                      className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
                     >
                       <Trash2 size={16} />
                     </button>
