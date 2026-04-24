@@ -130,7 +130,10 @@ export default function ConsumerApp() {
   const [redeemingTier, setRedeemingTier] = useState<any>(null);
   const [redemptionCodeInput, setRedemptionCodeInput] = useState('');
   const [isRedeeming, setIsRedeeming] = useState(false);
-  const [activeView, setActiveView] = useState<'wallet' | 'alerts'>('wallet');
+  const [activeView, setActiveView] = useState<'wallet' | 'alerts' | 'profile'>('wallet');
+  const [programTab, setProgramTab] = useState<'active' | 'completed'>('active');
+  const [isBiometricAvailable, setIsBiometricAvailable] = useState(false);
+  const [isBiometricLoading, setIsBiometricLoading] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -191,6 +194,13 @@ export default function ConsumerApp() {
 
   // Load session if exists
   useEffect(() => {
+    // Biometric availability check
+    if (window.PublicKeyCredential) {
+      PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+        .then(available => setIsBiometricAvailable(available))
+        .catch(() => setIsBiometricAvailable(false));
+    }
+
     localStorage.setItem('pwa_mode', 'consumer');
     
     // Sense selected store from URL
@@ -479,6 +489,8 @@ export default function ConsumerApp() {
     try {
       await signOut(auth);
       localStorage.removeItem('consumer_phone');
+      localStorage.removeItem('biometric_id');
+      localStorage.removeItem('biometric_uid');
       setIsAuthenticated(false);
       setAuthUser(null);
       setCustomerRecords([]);
@@ -486,6 +498,92 @@ export default function ConsumerApp() {
       setLoginStep('phone');
     } catch (err) {
       console.error("Logout error:", err);
+    }
+  };
+
+  const handleBiometricLogin = async () => {
+    if (!isBiometricAvailable) return;
+    setIsBiometricLoading(true);
+    try {
+      const biometricId = localStorage.getItem('biometric_id');
+      if (!biometricId) {
+        showToast("Biometria não configurada.", "warning");
+        return;
+      }
+
+      const idArray = Uint8Array.from(atob(biometricId), c => c.charCodeAt(0));
+
+      const options: CredentialRequestOptions = {
+        publicKey: {
+          challenge: crypto.getRandomValues(new Uint8Array(32)),
+          allowCredentials: [{
+            type: 'public-key',
+            id: idArray
+          }],
+          userVerification: 'required'
+        }
+      };
+
+      const assertion = await navigator.credentials.get(options) as PublicKeyCredential;
+      if (assertion) {
+        const savedPhone = localStorage.getItem('consumer_phone');
+        const savedUid = localStorage.getItem('biometric_uid');
+        if (savedUid) {
+          await handleLogin(savedPhone || undefined, savedUid);
+          showToast("Acesso biométrico confirmado!", "success");
+        } else {
+          showToast("Sessão não encontrada. Por favor, entre com e-mail/senha.", "warning");
+        }
+      }
+    } catch (error) {
+      console.error("Biometric login error:", error);
+      showToast("Falha na biometria. Tente outro método.", "error");
+    } finally {
+      setIsBiometricLoading(false);
+    }
+  };
+
+  const handleRegisterBiometric = async () => {
+    if (!authUser) {
+      showToast("Você precisa estar logado para ativar a biometria.", "warning");
+      return;
+    }
+    
+    try {
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const userID = Uint8Array.from(authUser.uid, c => c.charCodeAt(0));
+      
+      const options: CredentialCreationOptions = {
+        publicKey: {
+          challenge,
+          rp: { name: "BuyPass" },
+          user: {
+            id: userID,
+            name: authUser.email || "Cliente BuyPass",
+            displayName: authUser.displayName || "Cliente BuyPass"
+          },
+          pubKeyCredParams: [{ alg: -7, type: "public-key" }, { alg: -257, type: "public-key" }],
+          timeout: 60000,
+          attestation: "none",
+          authenticatorSelection: {
+            residentKey: "preferred",
+            userVerification: "required"
+          }
+        }
+      };
+
+      const credential = await navigator.credentials.create(options) as PublicKeyCredential;
+      if (credential) {
+        const rawId = new Uint8Array(credential.rawId);
+        const base64Id = btoa(String.fromCharCode(...rawId));
+        localStorage.setItem('biometric_id', base64Id);
+        localStorage.setItem('biometric_uid', authUser.uid);
+        
+        showToast("Biometria ativada com sucesso!", "success");
+      }
+    } catch (error) {
+      console.error("Biometric registration error:", error);
+      showToast("Falha ao configurar biometria.", "error");
     }
   };
 
@@ -596,6 +694,19 @@ export default function ConsumerApp() {
                   >
                     {loading ? 'Buscando...' : 'Acessar Carteira'}
                   </button>
+
+                  {isBiometricAvailable && localStorage.getItem('biometric_id') && (
+                    <button
+                      onClick={handleBiometricLogin}
+                      disabled={isBiometricLoading}
+                      className="w-full bg-white border-2 border-gray-100 p-4 rounded-2xl flex items-center justify-center gap-3 hover:bg-gray-50 transition-all group"
+                    >
+                      <div className="w-8 h-8 bg-green-50 rounded-lg flex items-center justify-center text-green-600">
+                        <Smartphone size={20} />
+                      </div>
+                      <span className="text-xs font-black text-gray-700 uppercase tracking-widest">Acessar com Biometria</span>
+                    </button>
+                  )}
 
                   <div className="relative">
                     <div className="absolute inset-0 flex items-center px-4"><div className="w-full border-t border-gray-100"></div></div>
@@ -782,8 +893,8 @@ export default function ConsumerApp() {
       </header>
 
       <main className="p-6 space-y-6">
-        {activeView === 'wallet' ? (
-          <>
+        {activeView === 'wallet' && (
+          <div className="space-y-6">
             {/* Summary Card */}
             <div className="bg-green-600 rounded-[2rem] p-8 text-white shadow-2xl shadow-green-600/30 relative overflow-hidden">
               <div className="relative z-10 space-y-1">
@@ -795,15 +906,54 @@ export default function ConsumerApp() {
               <Wallet className="absolute -right-4 -bottom-4 text-white/10" size={120} />
             </div>
 
+            {/* Program Tabs */}
+            <div className="flex bg-gray-100 p-1.5 rounded-2xl">
+              <button 
+                onClick={() => setProgramTab('active')}
+                className={cn(
+                  "flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                  programTab === 'active' ? "bg-white text-green-600 shadow-sm" : "text-gray-500"
+                )}
+              >
+                Disponíveis
+              </button>
+              <button 
+                onClick={() => setProgramTab('completed')}
+                className={cn(
+                  "flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                  programTab === 'completed' ? "bg-white text-green-600 shadow-sm" : "text-gray-500"
+                )}
+              >
+                Finalizados
+              </button>
+            </div>
+
             {/* Programs List */}
             <div className="space-y-4">
-              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Seus Programas Ativos</h4>
+              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                {programTab === 'active' ? 'Seus Programas Ativos' : 'Programas Concluídos'}
+              </h4>
               
-              <AnimatePresence>
-                {customerRecords.map((record, index) => {
-                  const store = stores[record.companyId];
-                  const nextTier = store?.rewardTiers?.find(t => t.points > record.points);
-                  const progress = nextTier ? (record.points / nextTier.points) * 100 : 100;
+              <AnimatePresence mode="wait">
+                <motion.div 
+                  key={programTab}
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.98 }}
+                  className="space-y-4"
+                >
+                  {customerRecords.filter(record => {
+                    const store = stores[record.companyId];
+                    const status = (store?.rewardMode === 'points' ? store?.pointsStatus : store?.cashbackStatus)?.status;
+                    if (programTab === 'active') {
+                      return status === 'active';
+                    } else {
+                      return status === 'paused' || status === 'ended';
+                    }
+                  }).map((record, index) => {
+                    const store = stores[record.companyId];
+                    const nextTier = store?.rewardTiers?.find(t => t.points > record.points);
+                    const progress = nextTier ? (record.points / nextTier.points) * 100 : 100;
 
                   return (
                     <motion.div 
@@ -981,10 +1131,12 @@ export default function ConsumerApp() {
                     </motion.div>
                   );
                 })}
+                </motion.div>
               </AnimatePresence>
             </div>
-          </>
-        ) : (
+          </div>
+        )}
+        {activeView === 'alerts' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between ml-1">
               <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Suas Notificações</h4>
@@ -1054,6 +1206,87 @@ export default function ConsumerApp() {
                 </div>
               )}
             </AnimatePresence>
+          </div>
+        )}
+
+        {activeView === 'profile' && (
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+             <div className="text-center space-y-4 pt-4">
+                <div className="relative inline-block">
+                  <div className="w-28 h-28 bg-white rounded-[2.5rem] flex items-center justify-center mx-auto shadow-2xl border-4 border-white overflow-hidden relative z-10">
+                    <img 
+                      src={authUser?.photoURL || `https://ui-avatars.com/api/?name=${authUser?.displayName || authUser?.email || 'User'}&background=random`} 
+                      alt="Profile" 
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="absolute -bottom-2 -right-2 bg-green-500 text-white p-3 rounded-2xl shadow-lg z-20 border-4 border-white">
+                    <Award size={20} />
+                  </div>
+                </div>
+                <div>
+                  <h3 className="text-2xl font-black text-gray-900 tracking-tight uppercase leading-none">
+                    {authUser?.displayName || customerRecords[0]?.name || 'Cliente BuyPass'}
+                  </h3>
+                  <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest mt-2">{authUser?.email}</p>
+                </div>
+             </div>
+
+             <div className="space-y-4">
+               <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Configurações</h4>
+               
+               <div className="bg-white rounded-[2rem] p-4 border border-gray-100 shadow-sm space-y-2">
+                 <div className="flex items-center justify-between gap-4 p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                   <div className="flex items-center gap-4">
+                     <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center text-green-600 shrink-0">
+                       <Smartphone size={20} />
+                     </div>
+                     <div>
+                       <p className="text-sm font-black text-gray-900 tracking-tight leading-none uppercase italic">Biometria</p>
+                       <p className="text-[9px] text-gray-500 font-bold uppercase mt-1 leading-tight">
+                          FaceID / TouchID
+                       </p>
+                     </div>
+                   </div>
+                   {isBiometricAvailable ? (
+                      <button 
+                        onClick={handleRegisterBiometric}
+                        className={cn(
+                          "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                          localStorage.getItem('biometric_id') 
+                            ? "bg-green-100 text-green-700"
+                            : "bg-green-600 text-white shadow-lg shadow-green-600/20 active:scale-95"
+                        )}
+                      >
+                        {localStorage.getItem('biometric_id') ? 'Ativado' : 'Ativar'}
+                      </button>
+                   ) : (
+                     <span className="text-[8px] text-gray-300 font-black uppercase tracking-widest">Incompatível</span>
+                   )}
+                 </div>
+
+                 <button 
+                    onClick={handleLogout}
+                    className="w-full flex items-center justify-between p-4 bg-red-50 text-red-600 rounded-2xl border border-red-100 group transition-all"
+                 >
+                   <div className="flex items-center gap-4 text-left">
+                     <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm shrink-0">
+                       <LogOut size={20} />
+                     </div>
+                     <div>
+                        <span className="text-xs font-black uppercase tracking-widest block">Sair do Aplicativo</span>
+                        <span className="text-[8px] font-bold opacity-70 uppercase tracking-tighter">Encerrar sessão atual</span>
+                     </div>
+                   </div>
+                   <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                 </button>
+               </div>
+
+               <div className="text-center pt-8">
+                 <p className="text-[9px] font-black text-gray-300 uppercase tracking-[0.3em]">Versão 2.4.0</p>
+                 <p className="text-[10px] font-black text-green-600 mt-1 uppercase tracking-widest italic opacity-50">BuyPass Loyalty Experience</p>
+               </div>
+             </div>
           </div>
         )}
       </main>
@@ -1225,42 +1458,6 @@ export default function ConsumerApp() {
         )}
       </AnimatePresence>
 
-      {/* Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-100 px-8 py-4 flex justify-around items-center z-20">
-        <button 
-          onClick={() => setActiveView('wallet')}
-          className={cn("flex flex-col items-center gap-1 transition-all", activeView === 'wallet' ? "text-green-600" : "text-gray-300")}
-        >
-          <Wallet size={24} />
-          <span className="text-[8px] font-black uppercase tracking-widest">Carteira</span>
-        </button>
-        <button 
-          onClick={() => setActiveView('alerts')}
-          className={cn("flex flex-col items-center gap-1 transition-all relative", activeView === 'alerts' ? "text-green-600" : "text-gray-300")}
-        >
-          <div className="relative">
-            <Bell size={24} />
-            {unreadCount > 0 && (
-              <motion.span 
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-black w-4 h-4 flex items-center justify-center rounded-full border-2 border-white shadow-sm"
-              >
-                {unreadCount > 9 ? '9+' : unreadCount}
-              </motion.span>
-            )}
-          </div>
-          <span className="text-[8px] font-black uppercase tracking-widest">Alertas</span>
-        </button>
-        <button 
-          onClick={handleInstallClick}
-          className="text-gray-300 flex flex-col items-center gap-1 hover:text-green-600 transition-all"
-        >
-          <Smartphone size={24} />
-          <span className="text-[8px] font-black uppercase tracking-widest">WebApp</span>
-        </button>
-      </div>
-
       {/* Redemption Code Modal */}
       <AnimatePresence>
         {redeemingTier && (
@@ -1356,6 +1553,52 @@ export default function ConsumerApp() {
           />
         )}
       </AnimatePresence>
+      {/* Footer Navigation */}
+      <footer className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 py-4 z-40">
+        <div className="max-w-md mx-auto flex items-center justify-around">
+          <FooterNavButton 
+            active={activeView === 'wallet'} 
+            onClick={() => setActiveView('wallet')} 
+            icon={<Wallet size={20} />} 
+            label="Carteira" 
+          />
+          <FooterNavButton 
+            active={activeView === 'alerts'} 
+            onClick={() => setActiveView('alerts')} 
+            icon={<div className="relative"><Bell size={20} />{unreadCount > 0 && <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full" />}</div>} 
+            label="Alertas" 
+          />
+          <FooterNavButton 
+            active={activeView === 'profile'} 
+            onClick={() => setActiveView('profile')} 
+            icon={<Key size={20} />} 
+            label="Perfil" 
+          />
+        </div>
+      </footer>
     </div>
+  );
+}
+
+function FooterNavButton({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={cn(
+        "flex flex-col items-center gap-1 transition-all active:scale-90",
+        active ? "text-green-600" : "text-gray-300"
+      )}
+    >
+      <div className={cn(
+        "p-2 rounded-xl transition-all",
+        active ? "bg-green-50 shadow-inner" : ""
+      )}>
+        {icon}
+      </div>
+      <span className={cn(
+        "text-[8px] font-black uppercase tracking-tighter transition-all",
+        active ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1"
+      )}>{label}</span>
+    </button>
   );
 }
