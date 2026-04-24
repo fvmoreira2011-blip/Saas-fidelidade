@@ -21,7 +21,8 @@ import {
   onAuthStateChanged,
   User,
   signOut,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  updateProfile
 } from 'firebase/auth';
 import PhoneInput from 'react-phone-number-input';
 import { differenceInDays, parseISO } from 'date-fns';
@@ -134,6 +135,7 @@ export default function ConsumerApp() {
   const [programTab, setProgramTab] = useState<'active' | 'completed'>('active');
   const [isBiometricAvailable, setIsBiometricAvailable] = useState(false);
   const [isBiometricLoading, setIsBiometricLoading] = useState(false);
+  const [isUpdatingPhoto, setIsUpdatingPhoto] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -551,7 +553,7 @@ export default function ConsumerApp() {
     
     try {
       const challenge = crypto.getRandomValues(new Uint8Array(32));
-      const userID = Uint8Array.from(authUser.uid, c => c.charCodeAt(0));
+      const userID = new Uint8Array(authUser.uid.split('').map(c => c.charCodeAt(0)));
       
       const options: CredentialCreationOptions = {
         publicKey: {
@@ -585,6 +587,35 @@ export default function ConsumerApp() {
       console.error("Biometric registration error:", error);
       showToast("Falha ao configurar biometria.", "error");
     }
+  };
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !authUser) return;
+    
+    if (file.size > 2 * 1024 * 1024) {
+      showToast("A imagem deve ter no máximo 2MB.", "warning");
+      return;
+    }
+
+    setIsUpdatingPhoto(true);
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64 = reader.result as string;
+      try {
+        await updateProfile(authUser, { photoURL: base64 });
+        
+        // Also update the authUid records in firestore if possible to store photo preference
+        // For now, updateProfile is enough for the local authUser state
+        showToast("Foto de perfil atualizada!", "success");
+      } catch (err) {
+        console.error("Photo upload error:", err);
+        showToast("Erro ao atualizar foto.", "error");
+      } finally {
+        setIsUpdatingPhoto(false);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   // Auth observer
@@ -695,18 +726,27 @@ export default function ConsumerApp() {
                     {loading ? 'Buscando...' : 'Acessar Carteira'}
                   </button>
 
-                  {isBiometricAvailable && localStorage.getItem('biometric_id') && (
-                    <button
-                      onClick={handleBiometricLogin}
-                      disabled={isBiometricLoading}
-                      className="w-full bg-white border-2 border-gray-100 p-4 rounded-2xl flex items-center justify-center gap-3 hover:bg-gray-50 transition-all group"
-                    >
-                      <div className="w-8 h-8 bg-green-50 rounded-lg flex items-center justify-center text-green-600">
-                        <Smartphone size={20} />
-                      </div>
-                      <span className="text-xs font-black text-gray-700 uppercase tracking-widest">Acessar com Biometria</span>
-                    </button>
-                  )}
+            {isBiometricAvailable && (
+              <div className="pt-2">
+                <button
+                  onClick={handleBiometricLogin}
+                  disabled={isBiometricLoading}
+                  className="w-full bg-white border-2 border-gray-100 p-4 rounded-2xl flex items-center justify-center gap-3 hover:bg-gray-50 transition-all group"
+                >
+                  <div className="w-8 h-8 bg-green-50 rounded-lg flex items-center justify-center text-green-600">
+                    <Smartphone size={20} />
+                  </div>
+                  <span className="text-xs font-black text-gray-700 uppercase tracking-widest">
+                    {localStorage.getItem('biometric_id') ? 'Acessar com Biometria' : 'Biometria Disponível'}
+                  </span>
+                </button>
+                {!localStorage.getItem('biometric_id') && (
+                  <p className="text-[9px] text-gray-400 font-bold uppercase tracking-widest text-center mt-2">
+                    Acesse com e-mail e ative no seu perfil
+                  </p>
+                )}
+              </div>
+            )}
 
                   <div className="relative">
                     <div className="absolute inset-0 flex items-center px-4"><div className="w-full border-t border-gray-100"></div></div>
@@ -735,11 +775,20 @@ export default function ConsumerApp() {
 
             {loginStep === 'confirm' && (
               <motion.div key="confirm" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8 text-center">
-                <div className="w-20 h-20 bg-green-50 rounded-full flex items-center justify-center mx-auto text-green-600">
-                  <Smartphone size={40} />
+                <div className="relative inline-block">
+                  <div className="w-24 h-24 bg-green-50 rounded-[2rem] flex items-center justify-center mx-auto text-green-600 overflow-hidden shadow-xl border-4 border-white">
+                    {customerRecords.find(r => r.photoURL)?.photoURL ? (
+                      <img src={customerRecords.find(r => r.photoURL)?.photoURL} className="w-full h-full object-cover" alt="User" />
+                    ) : (
+                      <Smartphone size={40} />
+                    )}
+                  </div>
+                  <div className="absolute -bottom-1 -right-1 bg-green-500 text-white p-2 rounded-xl shadow-lg border-2 border-white">
+                    <Award size={16} />
+                  </div>
                 </div>
                 <div className="space-y-2">
-                  <h2 className="text-2xl font-black text-gray-900">Este é você?</h2>
+                  <h2 className="text-2xl font-black text-gray-900 leading-tight">Este é você?</h2>
                   <p className="text-3xl font-black text-green-600 uppercase tracking-tighter truncate px-4">
                     {customerRecords[0]?.name || 'Cliente'}
                   </p>
@@ -867,9 +916,9 @@ export default function ConsumerApp() {
   return (
     <div className="min-h-screen bg-gray-50 font-sans pb-24">
       {/* Header */}
-      <header className="bg-white px-6 py-8 sticky top-0 z-10 border-b border-gray-100 flex items-center justify-between">
+      <header className="bg-white px-6 py-10 sticky top-0 z-10 border-b border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center overflow-hidden border border-gray-100 shadow-sm">
+          <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center overflow-hidden border border-gray-100 shadow-lg shrink-0">
             <img 
               src="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" 
               alt="Logo" 
@@ -877,16 +926,25 @@ export default function ConsumerApp() {
               referrerPolicy="no-referrer"
             />
           </div>
-          <div>
-            <h2 className="text-xl font-black text-gray-900 tracking-tight">Meus Pontos</h2>
-            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest leading-relaxed">
-              Olá, {customerRecords[0]?.name?.split(' ')[0] || 'Cliente'}, hoje é {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/^\w/, (c) => c.toUpperCase())}
-            </p>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl overflow-hidden border-2 border-green-500/20 shadow-sm bg-gray-50 flex items-center justify-center shrink-0">
+               {authUser?.photoURL ? (
+                 <img src={authUser.photoURL} alt="Profile" className="w-full h-full object-cover" />
+               ) : (
+                 <img src={`https://ui-avatars.com/api/?name=${authUser?.displayName || customerRecords[0]?.name || 'U'}&background=random`} className="w-full h-full object-cover" alt="Avatar" />
+               )}
+            </div>
+            <div>
+              <h2 className="text-xl font-black text-gray-900 tracking-tight leading-none uppercase italic">Meus Pontos</h2>
+              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest leading-relaxed mt-1">
+                Olá, {customerRecords[0]?.name?.split(' ')[0] || 'Cliente'}
+              </p>
+            </div>
           </div>
         </div>
         <button 
           onClick={handleLogout}
-          className="p-3 bg-gray-50 text-gray-400 hover:text-red-500 rounded-2xl transition-all"
+          className="p-3 bg-red-50 text-red-500 hover:bg-red-100 rounded-2xl transition-all shadow-sm"
         >
           <LogOut size={20} />
         </button>
@@ -1212,17 +1270,23 @@ export default function ConsumerApp() {
         {activeView === 'profile' && (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
              <div className="text-center space-y-4 pt-4">
-                <div className="relative inline-block">
+                <div className="relative inline-block group">
                   <div className="w-28 h-28 bg-white rounded-[2.5rem] flex items-center justify-center mx-auto shadow-2xl border-4 border-white overflow-hidden relative z-10">
                     <img 
                       src={authUser?.photoURL || `https://ui-avatars.com/api/?name=${authUser?.displayName || authUser?.email || 'User'}&background=random`} 
                       alt="Profile" 
-                      className="w-full h-full object-cover"
+                      className={cn("w-full h-full object-cover", isUpdatingPhoto && "opacity-50")}
                     />
+                    {isUpdatingPhoto && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                        <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    )}
                   </div>
-                  <div className="absolute -bottom-2 -right-2 bg-green-500 text-white p-3 rounded-2xl shadow-lg z-20 border-4 border-white">
+                  <label className="absolute -bottom-2 -right-2 bg-green-500 text-white p-3 rounded-2xl shadow-lg z-20 border-4 border-white cursor-pointer hover:scale-110 active:scale-95 transition-all">
                     <Award size={20} />
-                  </div>
+                    <input type="file" className="hidden" accept="image/*" onChange={handlePhotoUpload} disabled={isUpdatingPhoto} />
+                  </label>
                 </div>
                 <div>
                   <h3 className="text-2xl font-black text-gray-900 tracking-tight uppercase leading-none">
@@ -1553,7 +1617,6 @@ export default function ConsumerApp() {
           />
         )}
       </AnimatePresence>
-      {/* Footer Navigation */}
       <footer className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 py-4 z-40">
         <div className="max-w-md mx-auto flex items-center justify-around">
           <FooterNavButton 
@@ -1586,7 +1649,7 @@ function FooterNavButton({ active, onClick, icon, label }: { active: boolean, on
       onClick={onClick}
       className={cn(
         "flex flex-col items-center gap-1 transition-all active:scale-90",
-        active ? "text-green-600" : "text-gray-300"
+        active ? "text-green-600" : "text-gray-400"
       )}
     >
       <div className={cn(
@@ -1596,8 +1659,8 @@ function FooterNavButton({ active, onClick, icon, label }: { active: boolean, on
         {icon}
       </div>
       <span className={cn(
-        "text-[8px] font-black uppercase tracking-tighter transition-all",
-        active ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1"
+        "text-[9px] font-black uppercase tracking-tighter transition-all",
+        active ? "opacity-100 translate-y-0" : "opacity-80 translate-y-0"
       )}>{label}</span>
     </button>
   );
