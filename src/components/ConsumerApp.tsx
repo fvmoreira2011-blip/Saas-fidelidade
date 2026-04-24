@@ -20,7 +20,8 @@ import {
   signInWithPopup,
   onAuthStateChanged,
   User,
-  signOut
+  signOut,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import PhoneInput from 'react-phone-number-input';
 import { differenceInDays, parseISO } from 'date-fns';
@@ -457,6 +458,23 @@ export default function ConsumerApp() {
     }
   };
 
+  const handleForgotPassword = async () => {
+    if (!email) {
+      showToast("Digite seu e-mail primeiro.", "warning");
+      return;
+    }
+    setLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, email);
+      showToast("E-mail de recuperação enviado! Verifique sua caixa de entrada.", "success");
+    } catch (error: any) {
+      console.error("Forgot password error:", error);
+      showToast("Erro ao enviar e-mail de recuperação.", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await signOut(auth);
@@ -683,7 +701,18 @@ export default function ConsumerApp() {
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Senha</label>
+                      <div className="flex justify-between items-center ml-1">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Senha</label>
+                        {!isRegistering && (
+                          <button 
+                            type="button"
+                            onClick={handleForgotPassword}
+                            className="text-[9px] text-primary font-black uppercase tracking-widest hover:underline"
+                          >
+                            Esqueci a senha
+                          </button>
+                        )}
+                      </div>
                       <input 
                         type="password" 
                         value={password || ''}

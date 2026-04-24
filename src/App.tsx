@@ -1004,6 +1004,9 @@ function AppContent() {
     return () => window.removeEventListener('firestore-quota-exceeded', handler);
   }, []);
 
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
+  const [isRulesPreloaded, setIsRulesPreloaded] = useState(false);
+  
   const isAdminUser = user?.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || user?.email?.toLowerCase() === 'fvmoreira2011@gmail.com' || appUser?.role === 'admin' || appUser?.role === 'superadmin';
   const isSuperAdmin = user?.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || user?.email?.toLowerCase() === 'fvmoreira2011@gmail.com' || appUser?.role === 'superadmin';
   const isOnboardingComplete = useMemo(() => {
@@ -1021,7 +1024,7 @@ function AppContent() {
     return hasProfile && hasReward;
   }, [rules]);
 
-  const isOnboarding = !isOnboardingComplete && !!user && !isSuperAdminPanelActive;
+  const isOnboarding = isRulesPreloaded && !isOnboardingComplete && !!user && !isSuperAdminPanelActive;
 
   useEffect(() => {
     if (isAuthReady && isSuperAdmin && activeTab === 'dashboard') {
@@ -1041,7 +1044,6 @@ function AppContent() {
       return () => unsubscribe();
     }
   }, [isSuperAdmin]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   
   // Set initial selectedCompanyId
   useEffect(() => {
@@ -1055,7 +1057,7 @@ function AppContent() {
 
   const isUserOnly = appUser?.role === 'user';
   const allowedTabs = ['dashboard', ...(rules.allowedUserTabs || [])];
-  const [onboardingTour, setOnboardingTour] = useState<'welcome' | 'profile' | 'goals' | 'rewards' | 'reference_data_ticket' | 'reference_data_revenue' | 'finished' | null>(null);
+  const [onboardingTour, setOnboardingTour] = useState<'welcome' | 'profile' | 'admins_query' | 'admin_form' | 'campaign_config' | 'goals_month_by_month' | 'finished' | null>(null);
 
   useEffect(() => {
     if (isOnboarding && !onboardingTour) {
@@ -1088,8 +1090,10 @@ function AppContent() {
       
       const allowedMap: Record<string, string[]> = {
         profile: ['company_profile'],
-        goals: ['goals'],
-        rewards: ['rewards'],
+        admins_query: ['super_admin_management'],
+        admin_form: ['super_admin_management'],
+        campaign_config: ['campaign_config'],
+        goals_month_by_month: ['goals'],
         finished: ['dashboard'],
       };
 
@@ -1290,6 +1294,7 @@ function AppContent() {
         }
         
         setRules(data);
+        setIsRulesPreloaded(true);
       } else if (isAdminUser) {
         // Initialize default rules if not exist
         const initialRules = { 
@@ -1297,7 +1302,9 @@ function AppContent() {
           companyId,
           redemptionCode: generateRedemptionCode()
         };
-        setDoc(snapshot.ref, initialRules).catch(err => handleFirestoreError(err, OperationType.WRITE, `configs/${companyId}`));
+        setDoc(snapshot.ref, initialRules).then(() => {
+           setIsRulesPreloaded(true);
+        }).catch(err => handleFirestoreError(err, OperationType.WRITE, `configs/${companyId}`));
       }
     }, (error) => handleFirestoreError(error, OperationType.GET, `configs/${companyId}`));
 
@@ -1354,7 +1361,7 @@ function AppContent() {
 
   const handleExportManagementReport = async (startDateStr?: string, endDateStr?: string) => {
     const { jsPDF } = await import('jspdf');
-    await import('jspdf-autotable');
+    const { default: autoTable } = await import('jspdf-autotable');
     const doc = new jsPDF('p', 'mm', 'a4');
     
     const marginSide = 15; // 1.5cm
@@ -1383,7 +1390,8 @@ function AppContent() {
       
       // Footer
       doc.setFontSize(8);
-      doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+      const str = `Página ${doc.internal.getNumberOfPages()}`;
+      doc.text(str, pageWidth / 2, pageHeight - 10, { align: 'center' });
     };
 
     let reportPurchases = purchases;
@@ -1417,7 +1425,7 @@ function AppContent() {
        return [g.month, `R$ ${formatCurrency(g.value)}`, `R$ ${formatCurrency(actual)}`, `${g.value > 0 ? ((actual/g.value)*100).toFixed(1) : 0}%`];
     }).sort((a, b) => (a[0] as string).localeCompare(b[0] as string));
 
-    (doc as any).autoTable({
+    autoTable(doc, {
       startY: 82,
       margin: { left: marginSide, right: marginSide },
       head: [['Mês', 'Meta Planejada', 'Realizado', '%']],
@@ -1426,12 +1434,32 @@ function AppContent() {
       headStyles: { fillColor: [34, 197, 94] }
     });
 
-    let lastY = (doc as any).lastAutoTable.finalY + 15;
-    if (lastY > pageHeight - 40) { doc.addPage(); lastY = 30; }
+    let currentY = (doc as any).lastAutoTable.finalY + 15;
+    if (currentY > pageHeight - 60) { doc.addPage(); currentY = 30; }
+
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('3. Análise de LTV (Lifetime Value)', marginSide, currentY);
+    
+    // Calculate LTV
+    const customerValueMap = new Map();
+    purchases.forEach(p => {
+       const val = customerValueMap.get(p.customerId) || 0;
+       customerValueMap.set(p.customerId, val + p.amount);
+    });
+    const avgLTV = customerValueMap.size > 0 ? Array.from(customerValueMap.values()).reduce((a, b: any) => a + b, 0) / customerValueMap.size : 0;
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`LTV Médio por Cliente: R$ ${formatCurrency(avgLTV)}`, marginSide, currentY + 8);
+    doc.text(`Base de Clientes Únicos: ${customerValueMap.size}`, marginSide, currentY + 14);
+
+    let nextY = currentY + 25;
+    if (nextY > pageHeight - 40) { doc.addPage(); nextY = 30; }
     
     doc.setFontSize(14);
     doc.setFont('helvetica', 'bold');
-    doc.text('3. Análise Estratégica do Especialista', marginSide, lastY);
+    doc.text('4. Análise Estratégica do Especialista', marginSide, nextY);
     
     const cacheKey = `analysis_cache_${selectedCompanyId}`;
     const cached = localStorage.getItem(cacheKey);
@@ -1444,9 +1472,9 @@ function AppContent() {
     doc.setFontSize(10);
     doc.setFont('helvetica', 'normal');
     const splitText = doc.splitTextToSize(analysisText, contentWidth);
-    doc.text(splitText, marginSide, lastY + 10);
+    doc.text(splitText, marginSide, nextY + 10);
 
-    const pageCount = doc.internal.getNumberOfPages();
+    const pageCount = (doc as any).internal.getNumberOfPages();
     for(let i = 1; i <= pageCount; i++) {
        doc.setPage(i);
        addHeaderFooter(doc);
@@ -1615,6 +1643,7 @@ function AppContent() {
         <AnimatePresence>
           {isOnboarding && (
             <TeleguidedOnboarding 
+              companyId={selectedCompanyId || ''}
               rules={rules} 
               goals={goals}
               activeTour={onboardingTour}
@@ -2664,7 +2693,7 @@ function LoginScreen() {
 }
 
 
-function TeleguidedOnboarding({ rules, goals, onUpdateRules, activeTour, onNextTour, onTabChange }: { rules: LoyaltyRule; goals: Goal[]; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; activeTour: string | null; onNextTour: (tour: any) => void; onTabChange: (tab: any) => void }) {
+function TeleguidedOnboarding({ companyId, rules, goals, onUpdateRules, activeTour, onNextTour, onTabChange }: { companyId: string; rules: LoyaltyRule; goals: Goal[]; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; activeTour: 'welcome' | 'profile' | 'admins_query' | 'admin_form' | 'campaign_config' | 'goals_month_by_month' | 'finished' | null; onNextTour: (tour: any) => void; onTabChange: (tab: any) => void }) {
   const { showToast } = useToast();
   const [isFinishing, setIsFinishing] = useState(false);
   
@@ -2679,21 +2708,39 @@ function TeleguidedOnboarding({ rules, goals, onUpdateRules, activeTour, onNextT
     contactPhone: ''
   });
 
+  const [newAdmin, setNewAdmin] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    password: '',
+    photo: ''
+  });
+
+  const [currentGoalMonthIndex, setCurrentGoalMonthIndex] = useState(0);
+  const next12Months = useMemo(() => {
+    const dates = [];
+    let d = new Date();
+    d.setDate(1); // Start of current month
+    for (let i = 0; i < 12; i++) {
+      dates.push(new Date(d.getFullYear(), d.getMonth() + i, 1));
+    }
+    return dates;
+  }, []);
+
+  const [monthlyGoalsLocal, setMonthlyGoalsLocal] = useState<Goal[]>([]);
+
   const steps = [
     { id: 'welcome', title: 'Bem-vindo ao BuyPass!', description: 'Vamos configurar sua empresa em menos de 2 minutos para liberar todas as funcionalidades.', button: 'Iniciar Agora' },
     { id: 'profile', title: 'Dados da Empresa', description: 'Preencha as informações básicas para identificação.', button: 'Próximo Passo' },
-    { id: 'goals', title: 'Dê o primeiro passo!', description: 'Para começarmos, precisamos saber o seu faturamento médio mensal e o ticket médio atual.', button: 'Confirmar e Próximo' },
-    { id: 'rewards', title: 'Modelo de Fidelidade', description: 'Escolha como deseja premiar seus clientes.', button: 'Próximo Passo' },
+    { id: 'admins_query', title: 'Equipe de Gestão', description: 'Deseja cadastrar mais algum administrador para ajudar na gestão?', button: 'Sim, adicionar' },
+    { id: 'admin_form', title: 'Novo Administrador', description: 'Preencha os dados do novo gestor.', button: 'Salvar e Continuar' },
+    { id: 'campaign_config', title: 'Sua Campanha', description: 'Configure as regras básicas de pontos ou cashback.', button: 'Configurar Regras' },
+    { id: 'goals_month_by_month', title: 'Metas de 12 Meses', description: 'Defina suas metas mensais de faturamento para os próximos 12 meses.', button: 'Finalizar Metas' },
     { id: 'finished', title: 'Parabéns!', description: 'Seu sistema está pronto para uso. O onboarding nunca mais será exibido para esta conta.', button: 'Finalizar e Acessar Painel' }
   ];
 
   const currentStepIndex = steps.findIndex(s => s.id === activeTour);
   const currentStep = steps[currentStepIndex] || steps[0];
-
-  const [localGoals, setLocalGoals] = useState({
-    monthlyRevenue: rules.currentMonthlyRevenue || 0,
-    avgTicket: rules.currentAvgTicket || 0
-  });
 
   const handleUpdateProfile = async (updates: Partial<CompanyProfile>) => {
     const newProfile = { ...localProfile, ...updates };
@@ -2718,7 +2765,7 @@ function TeleguidedOnboarding({ rules, goals, onUpdateRules, activeTour, onNextT
           ...rules, 
           companyProfile: localProfile 
         });
-        onNextTour('goals');
+        onNextTour('admins_query');
       } catch (err) {
         showToast("Erro ao salvar perfil.", "error");
       } finally {
@@ -2727,33 +2774,77 @@ function TeleguidedOnboarding({ rules, goals, onUpdateRules, activeTour, onNextT
       return;
     }
 
-    if (activeTour === 'goals') {
-      if (!localGoals.monthlyRevenue || !localGoals.avgTicket) {
-        showToast("Preencha o faturamento e o ticket médio para continuar.", "error");
+    if (activeTour === 'admins_query') {
+      onNextTour('admin_form');
+      return;
+    }
+
+    if (activeTour === 'admin_form') {
+      if (!newAdmin.name || !newAdmin.email || !newAdmin.password) {
+        showToast("Nome, E-mail e Senha são obrigatórios.", "error");
         return;
       }
       setIsFinishing(true);
       try {
-        await onUpdateRules({ 
-          ...rules, 
-          currentMonthlyRevenue: localGoals.monthlyRevenue,
-          currentAvgTicket: localGoals.avgTicket
+        // Create user document (not auth user yet to avoid logout)
+        const userRef = collection(db, 'users');
+        const q = query(userRef, where('email', '==', newAdmin.email));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+           showToast("Este e-mail já está em uso.", "error");
+           setIsFinishing(false);
+           return;
+        }
+        await addDoc(userRef, {
+          displayName: newAdmin.name,
+          email: newAdmin.email,
+          phone: newAdmin.phone,
+          password: newAdmin.password,
+          photoURL: newAdmin.photo,
+          role: 'admin',
+          companyId: companyId,
+          approved: true,
+          createdAt: new Date().toISOString()
         });
-        onNextTour('rewards');
+        showToast("Administrador convidado com sucesso!", "success");
+        onNextTour('campaign_config');
       } catch (err) {
-        showToast("Erro ao salvar metas.", "error");
+        showToast("Erro ao adicionar administrador.", "error");
       } finally {
         setIsFinishing(false);
       }
       return;
     }
 
-    if (activeTour === 'rewards') {
+    if (activeTour === 'campaign_config') {
       if (!rules.rewardMode) {
         showToast("Selecione um modo de premiação.", "error");
         return;
       }
-      onNextTour('finished');
+      onNextTour('goals_month_by_month');
+      return;
+    }
+
+    if (activeTour === 'goals_month_by_month') {
+      if (currentGoalMonthIndex < 11) {
+        setCurrentGoalMonthIndex(prev => prev + 1);
+        return;
+      }
+      // Save all goals
+      setIsFinishing(true);
+      try {
+        const batch = writeBatch(db);
+        monthlyGoalsLocal.forEach(g => {
+           const ref = doc(collection(db, 'goals'));
+           batch.set(ref, { ...g, companyId: companyId });
+        });
+        await batch.commit();
+        onNextTour('finished');
+      } catch (err) {
+        showToast("Erro ao salvar metas.", "error");
+      } finally {
+        setIsFinishing(false);
+      }
       return;
     }
 
@@ -2769,6 +2860,13 @@ function TeleguidedOnboarding({ rules, goals, onUpdateRules, activeTour, onNextT
         setIsFinishing(false);
       }
     }
+  };
+
+  const handleGoalChange = (monthStr: string, value: number, businessDays: number) => {
+    setMonthlyGoalsLocal(prev => {
+      const filtered = prev.filter(g => g.month !== monthStr);
+      return [...filtered, { id: Math.random().toString(), month: monthStr, value, businessDays, label: `Meta de ${monthStr}` }];
+    });
   };
 
   if (!activeTour) return null;
@@ -2794,8 +2892,10 @@ function TeleguidedOnboarding({ rules, goals, onUpdateRules, activeTour, onNextT
             <div className="w-16 h-16 bg-green-50 rounded-[1.5rem] flex items-center justify-center text-green-600">
               {activeTour === 'welcome' && <Trophy size={32} />}
               {activeTour === 'profile' && <Building2 size={32} />}
-              {activeTour === 'goals' && <Target size={32} />}
-              {activeTour === 'rewards' && <Star size={32} />}
+              {activeTour === 'admins_query' && <UserPlus size={32} />}
+              {activeTour === 'admin_form' && <UserPlus size={32} />}
+              {activeTour === 'campaign_config' && <Award size={32} />}
+              {activeTour === 'goals_month_by_month' && <Target size={32} />}
               {activeTour === 'finished' && <CheckCircle2 size={32} />}
             </div>
           </div>
@@ -2803,7 +2903,7 @@ function TeleguidedOnboarding({ rules, goals, onUpdateRules, activeTour, onNextT
           <p className="text-gray-500 font-medium text-sm max-w-sm mx-auto">{currentStep.description}</p>
         </div>
 
-        <div className="space-y-6 max-h-[50vh] overflow-y-auto px-2 py-4">
+        <div className="space-y-6 max-h-[60vh] overflow-y-auto px-2 py-4">
           {activeTour === 'profile' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-1.5">
@@ -2869,75 +2969,163 @@ function TeleguidedOnboarding({ rules, goals, onUpdateRules, activeTour, onNextT
             </div>
           )}
 
-          {activeTour === 'goals' && (
-            <div className="p-6 bg-gray-50 rounded-[2rem] border border-gray-100 space-y-6">
-              <div className="space-y-2">
-                <label className="text-xs font-black text-gray-500 uppercase tracking-wider block ml-1">Faturamento Médio Mensal</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-gray-400 text-sm">R$</span>
-                  <input 
-                    type="number" 
-                    value={localGoals.monthlyRevenue || ''}
-                    onChange={e => setLocalGoals({ ...localGoals, monthlyRevenue: Number(e.target.value) })}
-                    placeholder="0,00"
-                    className="w-full bg-white border border-gray-200 rounded-2xl pl-12 pr-6 py-4 text-lg font-black text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 focus:border-green-500 transition-all"
-                  />
-                </div>
+          {activeTour === 'admins_query' && (
+            <div className="flex flex-col items-center gap-6 p-8">
+              <div className="w-20 h-20 bg-blue-50 rounded-3xl flex items-center justify-center text-blue-600">
+                <Users size={40} />
               </div>
-              <div className="space-y-2">
-                <label className="text-xs font-black text-gray-500 uppercase tracking-wider block ml-1">Ticket Médio Atual</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-gray-400 text-sm">R$</span>
-                  <input 
-                    type="number" 
-                    value={localGoals.avgTicket || ''}
-                    onChange={e => setLocalGoals({ ...localGoals, avgTicket: Number(e.target.value) })}
-                    placeholder="0,00"
-                    className="w-full bg-white border border-gray-200 rounded-2xl pl-12 pr-6 py-4 text-lg font-black text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 focus:border-green-500 transition-all"
-                  />
-                </div>
+              <div className="flex gap-4 w-full">
+                <Button onClick={() => onNextTour('admin_form')} className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black">SIM, ADICIONAR</Button>
+                <Button onClick={() => onNextTour('campaign_config')} variant="outline" className="flex-1 py-4 border-2 border-gray-100 rounded-2xl font-black">AGORA NÃO</Button>
               </div>
             </div>
           )}
 
-          {activeTour === 'rewards' && (
-            <div className="grid grid-cols-2 gap-6">
-              <button 
-                onClick={() => onUpdateRules({ ...rules, rewardMode: 'points' })}
-                className={cn(
-                  "p-8 rounded-[2.5rem] border-2 transition-all flex flex-col items-center gap-4 text-center group",
-                  rules.rewardMode === 'points' ? "bg-green-600 border-green-600 text-white" : "bg-white border-gray-100 text-gray-500 hover:border-green-200"
+          {activeTour === 'admin_form' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5 md:col-span-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Foto de Perfil (URL)</label>
+                <input type="text" value={newAdmin.photo} onChange={e => setNewAdmin({...newAdmin, photo: e.target.value})} placeholder="https://..." className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-500/10 transition-all" />
+              </div>
+              <div className="space-y-1.5 md:col-span-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Nome Completo</label>
+                <input type="text" value={newAdmin.name} onChange={e => setNewAdmin({...newAdmin, name: e.target.value})} placeholder="Nome do Administrador" className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-500/10 transition-all" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">E-mail</label>
+                <input type="email" value={newAdmin.email} onChange={e => setNewAdmin({...newAdmin, email: e.target.value})} placeholder="email@exemplo.com" className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-500/10 transition-all" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Celular</label>
+                <input type="text" value={newAdmin.phone} onChange={e => setNewAdmin({...newAdmin, phone: e.target.value})} placeholder="(00) 00000-0000" className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-500/10 transition-all" />
+              </div>
+              <div className="space-y-1.5 md:col-span-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Senha Inicial</label>
+                <input type="password" value={newAdmin.password} onChange={e => setNewAdmin({...newAdmin, password: e.target.value})} placeholder="••••••••" className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-500/10 transition-all" />
+              </div>
+            </div>
+          )}
+
+          {activeTour === 'campaign_config' && (
+            <div className="space-y-6">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Nome da Campanha</label>
+                <input type="text" value={rules.campaignName || ''} onChange={e => onUpdateRules({...rules, campaignName: e.target.value})} placeholder="Ex: Fidelidade VIP 2024" className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold outline-none focus:ring-4 focus:ring-green-500/10 transition-all" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <button 
+                  onClick={() => onUpdateRules({ ...rules, rewardMode: 'points' })}
+                  className={cn("p-6 rounded-3xl border-2 transition-all flex flex-col items-center gap-2", rules.rewardMode === 'points' ? "bg-green-600 border-green-600 text-white" : "bg-white border-gray-100 text-gray-500 hover:border-green-200")}
+                >
+                  <Award size={32} />
+                  <span className="font-black uppercase text-xs">Pontos</span>
+                </button>
+                <button 
+                  onClick={() => onUpdateRules({ ...rules, rewardMode: 'cashback' })}
+                  className={cn("p-6 rounded-3xl border-2 transition-all flex flex-col items-center gap-2", rules.rewardMode === 'cashback' ? "bg-green-600 border-green-600 text-white" : "bg-white border-gray-100 text-gray-500 hover:border-green-200")}
+                >
+                  <DollarSign size={32} />
+                  <span className="font-black uppercase text-xs">Cashback</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-3xl">
+                {rules.rewardMode === 'points' ? (
+                  <>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Pontos por Real</label>
+                      <input type="number" value={rules.pointsPerReal} onChange={e => onUpdateRules({...rules, pointsPerReal: Number(e.target.value)})} className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Validade Pontos (Dias)</label>
+                      <input type="number" value={rules.pointsExpiryDays} onChange={e => onUpdateRules({...rules, pointsExpiryDays: Number(e.target.value)})} className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold" />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Cashback %</label>
+                      <input type="number" value={rules.cashbackConfig?.percentage || 0} onChange={e => onUpdateRules({...rules, cashbackConfig: {...(rules.cashbackConfig || {percentage:0, expiryDays:90, minActivationValue:0, minRedeemDays:0}), percentage: Number(e.target.value)}})} className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Validade (Dias)</label>
+                      <input type="number" value={rules.cashbackConfig?.expiryDays || 90} onChange={e => onUpdateRules({...rules, cashbackConfig: {...(rules.cashbackConfig || {percentage:0, expiryDays:90, minActivationValue:0, minRedeemDays:0}), expiryDays: Number(e.target.value)}})} className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold" />
+                    </div>
+                  </>
                 )}
-              >
-                <Award size={40} className={rules.rewardMode === 'points' ? "" : "text-gray-300 group-hover:text-green-500 transition-colors"} />
                 <div className="space-y-1">
-                  <p className="font-black uppercase tracking-tighter text-xl leading-none">Pontos</p>
-                  <p className="text-[10px] font-bold opacity-60">Fidelidade Clássica</p>
+                  <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Mín. Ativação (R$)</label>
+                  <input type="number" value={rules.cashbackConfig?.minActivationValue || 0} onChange={e => onUpdateRules({...rules, cashbackConfig: {...(rules.cashbackConfig || {percentage:0, expiryDays:90, minActivationValue:0, minRedeemDays:0}), minActivationValue: Number(e.target.value)}})} className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold" />
                 </div>
-              </button>
-              <button 
-                onClick={() => onUpdateRules({ ...rules, rewardMode: 'cashback' })}
-                className={cn(
-                  "p-8 rounded-[2.5rem] border-2 transition-all flex flex-col items-center gap-4 text-center group",
-                  rules.rewardMode === 'cashback' ? "bg-green-600 border-green-600 text-white" : "bg-white border-gray-100 text-gray-500 hover:border-green-200"
-                )}
-              >
-                <DollarSign size={40} className={rules.rewardMode === 'cashback' ? "" : "text-gray-300 group-hover:text-green-500 transition-colors"} />
                 <div className="space-y-1">
-                  <p className="font-black uppercase tracking-tighter text-xl leading-none">Cashback</p>
-                  <p className="text-[10px] font-bold opacity-60">Dinheiro de Volta</p>
+                  <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Carência Resgate (Dias)</label>
+                  <input type="number" value={rules.cashbackConfig?.minRedeemDays || 0} onChange={e => onUpdateRules({...rules, cashbackConfig: {...(rules.cashbackConfig || {percentage:0, expiryDays:90, minActivationValue:0, minRedeemDays:0}), minRedeemDays: Number(e.target.value)}})} className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold" />
                 </div>
-              </button>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Cor do Tema</label>
+                <div className="flex items-center gap-3">
+                  <input type="color" value={rules.themeColor || '#000000'} onChange={e => onUpdateRules({...rules, themeColor: e.target.value})} className="w-12 h-12 rounded-xl cursor-pointer border-none p-0 overflow-hidden" />
+                  <input type="text" value={rules.themeColor || '#000000'} onChange={e => onUpdateRules({...rules, themeColor: e.target.value})} className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 text-xs font-mono font-bold" />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Mensagem de Boas-vindas</label>
+                <textarea value={rules.welcomeMessage || ''} onChange={e => onUpdateRules({...rules, welcomeMessage: e.target.value})} rows={2} className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold outline-none focus:ring-4 focus:ring-green-500/10 transition-all" />
+              </div>
+            </div>
+          )}
+
+          {activeTour === 'goals_month_by_month' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-gray-400 uppercase tracking-widest">Etapa {currentGoalMonthIndex + 1} de 12</span>
+                <span className="text-sm font-black text-green-600 uppercase tracking-tighter italic">
+                  {next12Months[currentGoalMonthIndex].toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                </span>
+              </div>
+              
+              <div className="p-6 bg-gray-50 rounded-3xl space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Meta de Faturamento (R$)</label>
+                  <input 
+                    type="number" 
+                    placeholder="0,00"
+                    value={monthlyGoalsLocal.find(g => g.month === format(next12Months[currentGoalMonthIndex], 'yyyy-MM'))?.value || ''}
+                    onChange={e => handleGoalChange(format(next12Months[currentGoalMonthIndex], 'yyyy-MM'), Number(e.target.value), monthlyGoalsLocal.find(g => g.month === format(next12Months[currentGoalMonthIndex], 'yyyy-MM'))?.businessDays || 22)}
+                    className="w-full bg-white border border-gray-200 rounded-2xl px-4 py-4 text-xl font-black text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 transition-all"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Dias Úteis do Mês</label>
+                  <input 
+                    type="number" 
+                    placeholder="22"
+                    value={monthlyGoalsLocal.find(g => g.month === format(next12Months[currentGoalMonthIndex], 'yyyy-MM'))?.businessDays || 22}
+                    onChange={e => handleGoalChange(format(next12Months[currentGoalMonthIndex], 'yyyy-MM'), monthlyGoalsLocal.find(g => g.month === format(next12Months[currentGoalMonthIndex], 'yyyy-MM'))?.value || 0, Number(e.target.value))}
+                    className="w-full bg-white border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 transition-all"
+                  />
+                </div>
+              </div>
+              
+              <div className="flex gap-2">
+                {[...Array(12)].map((_, i) => (
+                  <div key={i} className={cn("h-1 flex-1 rounded-full transition-all", i <= currentGoalMonthIndex ? "bg-green-600" : "bg-gray-100")} />
+                ))}
+              </div>
             </div>
           )}
 
           {activeTour === 'finished' && (
             <div className="bg-green-50 rounded-[2.5rem] p-8 text-center space-y-4 border border-green-100">
               <div className="inline-flex p-4 bg-green-600 text-white rounded-3xl mb-2">
-                <ShieldCheck size={40} />
+                <CheckCircle2 size={40} />
               </div>
               <p className="text-green-800 font-bold leading-relaxed">
-                Você acaba de elevar o nível da Gestão de Clientes do seu negócio. Explore as ferramentas para crescer suas vendas.
+                Configuração realizada com sucesso para os próximos 12 meses.
               </p>
             </div>
           )}
@@ -2949,18 +3137,18 @@ function TeleguidedOnboarding({ rules, goals, onUpdateRules, activeTour, onNextT
             disabled={isFinishing}
             className="w-full py-6 rounded-3xl text-lg font-black uppercase tracking-widest shadow-2xl shadow-green-600/20 bg-green-600 hover:bg-green-700 text-white transition-all active:scale-95 disabled:opacity-50"
           >
-            {isFinishing ? 'Salvando...' : currentStep.button}
+            {isFinishing ? 'Salvando...' : (activeTour === 'goals_month_by_month' && currentGoalMonthIndex < 11 ? 'Próximo Mês' : currentStep.button)}
           </Button>
-          {(activeTour === 'profile' || activeTour === 'goals' || activeTour === 'rewards') && !isSuperAdmin && (
+          {(activeTour === 'profile' || activeTour === 'campaign_config' || activeTour === 'goals_month_by_month') && !isSuperAdmin && (
              <button 
               onClick={async () => {
                 await onUpdateRules({ ...rules, onboardingComplete: true });
                 onNextTour(null);
               }}
               className="w-full mt-4 text-[10px] text-gray-400 font-bold uppercase tracking-widest hover:text-gray-600 transition-colors"
-             >
-               Pular Configuração (Não Recomendado)
-             </button>
+            >
+              Pular Configuração por enquanto
+            </button>
           )}
         </div>
       </motion.div>
