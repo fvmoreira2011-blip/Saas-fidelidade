@@ -1006,12 +1006,30 @@ function AppContent() {
 
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const [isRulesPreloaded, setIsRulesPreloaded] = useState(false);
-  
+  const [isGoalsPreloaded, setIsGoalsPreloaded] = useState(false);
+  const [onboardingTour, setOnboardingTour] = useState<'welcome' | 'profile' | 'admins_query' | 'admin_form' | 'campaign_config' | 'goals_month_by_month' | 'finished' | null>(null);
+
   const isAdminUser = user?.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || user?.email?.toLowerCase() === 'fvmoreira2011@gmail.com' || appUser?.role === 'admin' || appUser?.role === 'superadmin';
   const isSuperAdmin = user?.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || user?.email?.toLowerCase() === 'fvmoreira2011@gmail.com' || appUser?.role === 'superadmin';
+
   const isOnboardingComplete = useMemo(() => {
-    // Flag in DB is the absolute truth
-    if (rules?.onboardingComplete === true) return true;
+    // If we're not ready, we can't say it's complete
+    if (!isRulesPreloaded || !isGoalsPreloaded) return false;
+
+    // Flag in DB is the absolute truth for initial setup
+    if (rules?.onboardingComplete === true) {
+      // Logic for meta cycle renewal: 
+      // If we have goals but they are all in the past, consider onboarding (for goals) incomplete
+      if (goals.length > 0) {
+        const sortedGoals = [...goals].sort((a,b) => b.month.localeCompare(a.month));
+        const lastGoalMonth = sortedGoals[0].month;
+        const currentMonth = format(new Date(), 'yyyy-MM');
+        if (lastGoalMonth < currentMonth) return false;
+      } else {
+        return false;
+      }
+      return true;
+    }
     
     // Otherwise calculate based on essential fields
     if (!rules || !rules.companyProfile) return false;
@@ -1022,9 +1040,24 @@ function AppContent() {
     // If they have all critical data, we can consider them done to avoid loops 
     // even if the final flag wasn't toggled for some reason
     return hasProfile && hasReward;
-  }, [rules]);
+  }, [rules, goals, isRulesPreloaded, isGoalsPreloaded]);
 
-  const isOnboarding = isRulesPreloaded && !isOnboardingComplete && !!user && !isSuperAdminPanelActive;
+  const isOnboarding = isRulesPreloaded && isGoalsPreloaded && !isOnboardingComplete && !!user && !isSuperAdminPanelActive;
+
+  // Determine if specific steps need re-touring
+  useEffect(() => {
+    if (isOnboarding && isRulesPreloaded && !onboardingTour) {
+      const currentMonth = format(new Date(), 'yyyy-MM');
+      const lastGoalMonth = goals.length > 0 ? [...goals].sort((a,b) => b.month.localeCompare(a.month))[0].month : null;
+      
+      // If they had finished setup but goals expired, jump straight to goals tour
+      if (rules?.onboardingComplete && lastGoalMonth && lastGoalMonth < currentMonth) {
+        setOnboardingTour('goals_month_by_month');
+      } else {
+        setOnboardingTour('welcome');
+      }
+    }
+  }, [isOnboarding, isRulesPreloaded, onboardingTour, goals, rules?.onboardingComplete]);
 
   useEffect(() => {
     if (isAuthReady && isSuperAdmin && activeTab === 'dashboard') {
@@ -1057,13 +1090,6 @@ function AppContent() {
 
   const isUserOnly = appUser?.role === 'user';
   const allowedTabs = ['dashboard', ...(rules.allowedUserTabs || [])];
-  const [onboardingTour, setOnboardingTour] = useState<'welcome' | 'profile' | 'admins_query' | 'admin_form' | 'campaign_config' | 'goals_month_by_month' | 'finished' | null>(null);
-
-  useEffect(() => {
-    if (isOnboarding && !onboardingTour) {
-      setOnboardingTour('welcome');
-    }
-  }, [isOnboarding, onboardingTour]);
 
   // Enforcement: Force active tab based on onboarding step
   useEffect(() => {
@@ -1340,8 +1366,12 @@ function AppContent() {
       (snapshot) => {
         const g = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Goal));
         setGoals(g);
+        setIsGoalsPreloaded(true);
       },
-      (error) => handleFirestoreError(error, OperationType.GET, 'goals')
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, 'goals');
+        setIsGoalsPreloaded(true); // Don't block loading on error
+      }
     );
 
     return () => {
@@ -1357,6 +1387,7 @@ function AppContent() {
       setRedemptions([]);
       setGoals([]);
       setIsRulesPreloaded(false);
+      setIsGoalsPreloaded(false);
     };
   }, [user, appUser?.approved, isAdminUser, selectedCompanyId]);
 
@@ -1426,91 +1457,205 @@ function AppContent() {
 
     const totalRev = reportPurchases.reduce((acc, p) => acc + p.amount, 0);
     const avgTicket = reportPurchases.length > 0 ? totalRev / reportPurchases.length : 0;
+    const totalCustomers = custMap.size;
+    const activeCustomers = Array.from(custMap.values()).filter((c: any) => {
+       const recency = (now.getTime() - c.last.getTime()) / (1000 * 60 * 60 * 24);
+       return recency <= 30;
+    }).length;
     
+    // 1. DESEMPENHO GERAL
     doc.setFontSize(16);
     doc.setTextColor(...rgbTheme);
     doc.setFont('helvetica', 'bold');
-    doc.text('1. DESEMPENHO GERAL', marginSide, 40);
+    doc.text('1. RESUMO EXECUTIVO & KPIS', marginSide, 40);
     
     doc.setFontSize(9);
     doc.setTextColor(100, 100, 100);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Período analisado: ${startDateStr || 'Toda a base'} até ${endDateStr || 'Hoje'}`, marginSide, 46);
+    doc.text(`Análise consolidada: ${startDateStr || 'Toda a base'} até ${endDateStr || 'Hoje'}`, marginSide, 46);
 
-    drawDataBox('Faturamento Total', `R$ ${formatCurrency(totalRev)}`, marginSide, 52, contentWidth / 3 - 2);
-    drawDataBox('Volume de Vendas', `${reportPurchases.length} transações`, marginSide + (contentWidth / 3) + 1, 52, contentWidth / 3 - 2);
-    drawDataBox('Ticket Médio', `R$ ${formatCurrency(avgTicket)}`, marginSide + (2 * contentWidth / 3) + 2, 52, contentWidth / 3 - 2);
+    drawDataBox('Faturamento Total', `R$ ${formatCurrency(totalRev)}`, marginSide, 52, contentWidth / 4 - 2);
+    drawDataBox('Ticket Médio', `R$ ${formatCurrency(avgTicket)}`, marginSide + (contentWidth / 4) + 1, 52, contentWidth / 4 - 2);
+    drawDataBox('Base Clientes', `${totalCustomers}`, marginSide + (2 * contentWidth / 4) + 2, 52, contentWidth / 4 - 2);
+    drawDataBox('Clientes Ativos', `${activeCustomers}`, marginSide + (3 * contentWidth / 4) + 3, 52, contentWidth / 4 - 2);
+
+    // GOALS PROGRESS BAR (OVERALL)
+    const currentMonth = format(now, 'yyyy-MM');
+    const currentGoal = goals.find(g => g.month === currentMonth);
+    if (currentGoal) {
+       const currentMonthRev = purchases.filter(p => p.date && p.date.startsWith(currentMonth)).reduce((a, b) => a + b.amount, 0);
+       const goalPercent = Math.min((currentMonthRev / currentGoal.value) * 100, 100);
+       
+       doc.setFontSize(10);
+       doc.setTextColor(50, 50, 50);
+       doc.text(`Meta do Mês Atual (${format(now, 'MMMM', { locale: ptBR })}): ${goalPercent.toFixed(1)}% atingido`, marginSide, 85);
+       
+       doc.setFillColor(240, 240, 240);
+       doc.roundedRect(marginSide, 88, contentWidth, 4, 2, 2, 'F');
+       doc.setFillColor(...rgbTheme);
+       doc.roundedRect(marginSide, 88, (contentWidth * goalPercent) / 100, 4, 2, 2, 'F');
+       
+       doc.setFontSize(7);
+       doc.setTextColor(120, 120, 120);
+       doc.text(`Realizado: R$ ${formatCurrency(currentMonthRev)} / Planejado: R$ ${formatCurrency(currentGoal.value)}`, marginSide, 96);
+    }
 
     doc.setFontSize(12);
-    doc.setTextColor(50, 50, 50);
-    doc.text('Evolução Mensal (Realizado vs Meta)', marginSide, 85);
+    doc.setTextColor(...rgbTheme);
+    doc.text('Evolução de Faturamento: Realizado vs Planejado (6 meses)', marginSide, 110);
     
-    const monthlyData = goals.map(g => {
-       const actual = purchases.filter(p => p.date && p.date.startsWith(g.month)).reduce((acc, p) => acc + p.amount, 0);
-       return { month: g.month, goal: g.value, actual };
-    }).sort((a, b) => a.month.localeCompare(b.month)).slice(-6);
+    const currentMonthDate = new Date();
+    currentMonthDate.setDate(1);
+    const displayMonthsReport = [];
+    for (let i = -5; i <= 0; i++) {
+      displayMonthsReport.push(format(subMonths(currentMonthDate, Math.abs(i)), 'yyyy-MM'));
+    }
+    displayMonthsReport.sort();
+
+    const monthlyData = displayMonthsReport.map(m => {
+       const goal = goals.find(g => g.month === m);
+       const actual = purchases.filter(p => p.date && p.date.startsWith(m)).reduce((acc, p) => acc + p.amount, 0);
+       return { month: m, goal: goal?.value || 0, actual };
+    });
 
     if (monthlyData.length > 0) {
-      const chartHeight = 40;
+      const chartHeight = 35;
       const chartWidth = contentWidth;
       const startX = marginSide;
-      const startY = 135;
+      const startY = 155;
       const maxVal = Math.max(...monthlyData.map(d => Math.max(d.goal, d.actual))) * 1.2 || 1000;
       const spacing = (chartWidth / monthlyData.length);
       
       monthlyData.forEach((d, i) => {
-        const barWidth = spacing * 0.5;
+        const barWidth = spacing * 0.4;
         const xPos = startX + (i * spacing) + (spacing * 0.1);
         
+        // Planejado (Lighter)
         const goalH = (d.goal / maxVal) * chartHeight;
-        doc.setFillColor(240, 240, 240);
+        doc.setFillColor(rgbTheme[0], rgbTheme[1], rgbTheme[2], 0.2); // Light version
         doc.rect(xPos, startY - goalH, barWidth, goalH, 'F');
         
+        // Realizado (Full color)
         const actualH = (d.actual / maxVal) * chartHeight;
         doc.setFillColor(...rgbTheme);
         doc.rect(xPos + 2, startY - actualH, barWidth - 4, actualH, 'F');
         
         doc.setFontSize(6);
-        doc.setTextColor(150, 150, 150);
-        doc.text(d.month, xPos, startY + 5);
+        doc.setTextColor(100, 100, 100);
+        const mLabel = format(parseISO(d.month + '-01'), 'MMM/yy', { locale: ptBR });
+        doc.text(mLabel, xPos, startY + 5);
       });
       
-      doc.setFontSize(7);
-      doc.setFillColor(240, 240, 240); doc.rect(marginSide, 145, 3, 3, 'F');
-      doc.text('Meta Planejada', marginSide + 5, 147.5);
-      doc.setFillColor(...rgbTheme); doc.rect(marginSide + 35, 145, 3, 3, 'F');
-      doc.text('Faturamento Realizado', marginSide + 40, 147.5);
+      doc.setFontSize(8);
+      doc.setFillColor(rgbTheme[0], rgbTheme[1], rgbTheme[2], 0.2); doc.rect(marginSide, 165, 3, 3, 'F');
+      doc.text('Meta Planejada', marginSide + 5, 167.5);
+      doc.setFillColor(...rgbTheme); doc.rect(marginSide + 40, 165, 3, 3, 'F');
+      doc.text('Faturamento Realizado', marginSide + 45, 167.5);
     }
 
+    // 2. PARTICIPAÇÃO NO PROGRAMA DE FIDELIDADE
     doc.addPage();
-    let currentY = 30;
+    currentY = 30;
 
     doc.setFontSize(14);
     doc.setTextColor(...rgbTheme);
-    doc.text('2. DETALHAMENTO DE PERFORMANCE', marginSide, currentY);
+    doc.text('2. ANÁLISE DO PROGRAMA DE FIDELIDADE', marginSide, currentY);
     
-    const goalsTableData = goals.map(g => {
-       const actual = purchases.filter(p => p.date && p.date.startsWith(g.month)).reduce((acc, p) => acc + p.amount, 0);
-       return [g.month, `R$ ${formatCurrency(g.value)}`, `R$ ${formatCurrency(actual)}`, `${g.value > 0 ? ((actual/g.value)*100).toFixed(1) : 0}%`];
-    }).sort((a, b: any) => b[0].localeCompare(a[0]));
+    // Ratio of participants vs non-participants
+    const participantIds = new Set(customers.filter(c => c.points > 0 || (c.cashbackBalance || 0) > 0).map(c => c.id));
+    const participantPurchases = purchases.filter(p => participantIds.has(p.customerId));
+    const nonParticipantPurchases = purchases.filter(p => !participantIds.has(p.customerId));
+    
+    const partRev = participantPurchases.reduce((a, b) => a + b.amount, 0);
+    const nonPartRev = nonParticipantPurchases.reduce((a, b) => a + b.amount, 0);
+    const partAvg = participantPurchases.length > 0 ? partRev / participantPurchases.length : 0;
+    const nonPartAvg = nonParticipantPurchases.length > 0 ? nonPartRev / nonParticipantPurchases.length : 0;
 
-    autoTable(doc, {
-      startY: currentY + 7,
-      margin: { left: marginSide, right: marginSide },
-      head: [['Mês Referência', 'Meta Planejada', 'Faturamento Real', 'Atingimento']],
-      body: goalsTableData,
-      theme: 'grid',
-      headStyles: { fillColor: rgbTheme, textColor: [255, 255, 255] },
-      styles: { fontSize: 8 }
+    drawDataBox('Receita Fidelizados', `R$ ${formatCurrency(partRev)}`, marginSide, currentY + 10, contentWidth / 2 - 2);
+    drawDataBox('Receita Não-Fidelizados', `R$ ${formatCurrency(nonPartRev)}`, marginSide + contentWidth / 2 + 1, currentY + 10, contentWidth / 2 - 2);
+    
+    currentY += 40;
+    doc.setFontSize(10);
+    doc.setTextColor(50, 50, 50);
+    doc.text('Impacto do Programa no Ticket Médio:', marginSide, currentY);
+    
+    const maxAvg = Math.max(partAvg, nonPartAvg) || 1;
+    // Part Bar
+    doc.setFillColor(...rgbTheme);
+    doc.rect(marginSide + 40, currentY + 5, (contentWidth - 80) * (partAvg / maxAvg), 6, 'F');
+    doc.setFontSize(8);
+    doc.text('Participantes', marginSide, currentY + 9);
+    doc.text(`R$ ${formatCurrency(partAvg)}`, marginSide + (contentWidth - 80) * (partAvg / maxAvg) + 42, currentY + 9);
+    
+    // Non-Part Bar
+    doc.setFillColor(200, 200, 200);
+    doc.rect(marginSide + 40, currentY + 15, (contentWidth - 80) * (nonPartAvg / maxAvg), 6, 'F');
+    doc.text('Casuais', marginSide, currentY + 19);
+    doc.text(`R$ ${formatCurrency(nonPartAvg)}`, marginSide + (contentWidth - 80) * (nonPartAvg / maxAvg) + 42, currentY + 19);
+
+    currentY += 45;
+    doc.setFontSize(12);
+    doc.setTextColor(...rgbTheme);
+    doc.text('Evolução do LTV por Segmento (Acumulado)', marginSide, currentY);
+    
+    // Simple Line representation for LTV evolution over 6 months
+    const ltvHistory = displayMonthsReport.map(m => {
+       const pUpTo = purchases.filter(p => p.date && p.date <= m + '-31');
+       const custsUpTo = new Set(pUpTo.map(p => p.customerId)).size || 1;
+       const revUpTo = pUpTo.reduce((a, b) => a + b.amount, 0);
+       return { m, ltv: revUpTo / custsUpTo };
     });
 
-    currentY = (doc as any).lastAutoTable.finalY + 15;
+    const ltvStartX = marginSide + 10;
+    const ltvStartY = currentY + 45;
+    const ltvWidth = contentWidth - 20;
+    const ltvHeight = 35;
+    const maxLTV = Math.max(...ltvHistory.map(h => h.ltv)) * 1.2 || 100;
 
+    doc.setDrawColor(230, 230, 230);
+    doc.line(ltvStartX, ltvStartY, ltvStartX + ltvWidth, ltvStartY);
+    
+    ltvHistory.forEach((h, i) => {
+       const x = ltvStartX + (i * (ltvWidth / (ltvHistory.length - 1)));
+       const y = ltvStartY - (h.ltv / maxLTV) * ltvHeight;
+       doc.setFillColor(...rgbTheme);
+       doc.circle(x, y, 1, 'F');
+       if (i > 0) {
+          const prevX = ltvStartX + ((i-1) * (ltvWidth / (ltvHistory.length - 1)));
+          const prevY = ltvStartY - (ltvHistory[i-1].ltv / maxLTV) * ltvHeight;
+          doc.setDrawColor(...rgbTheme);
+          doc.line(prevX, prevY, x, y);
+       }
+       doc.setFontSize(5);
+       doc.text(format(parseISO(h.m + '-01'), 'MMM', { locale: ptBR }), x - 2, ltvStartY + 4);
+       doc.text(`R$ ${Math.round(h.ltv)}`, x - 4, y - 3);
+    });
+
+    // 3. ANÁLISE ESTRATÉGICA & TENDÊNCIAS
+    doc.addPage();
+    currentY = 30;
     doc.setFontSize(14);
     doc.setTextColor(...rgbTheme);
-    doc.text('3. COMPORTAMENTO POR DIA DA SEMANA', marginSide, currentY);
+    doc.text('3. DIAGNÓSTICO ESTRATÉGICO (DATA-DRIVEN)', marginSide, currentY);
+
+    const churn30 = Array.from(custMap.values()).filter((c: any) => {
+       const recency = (now.getTime() - c.last.getTime()) / (1000 * 60 * 60 * 24);
+       return recency > 30 && recency <= 60;
+    }).length;
     
-    const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+    const freqMedian = Array.from(custMap.values()).map((c: any) => c.count).sort((a, b) => a - b);
+    const median = freqMedian.length > 0 ? freqMedian[Math.floor(freqMedian.length / 2)] : 0;
+
+    drawDataBox('Churn (30-60 dias)', `${((churn30 / totalCustomers) * 100).toFixed(1)}%`, marginSide, currentY + 10, contentWidth / 3 - 2);
+    drawDataBox('Frequência Mediana', `${median.toFixed(1)} visitas`, marginSide + (contentWidth / 3) + 1, currentY + 10, contentWidth / 3 - 2);
+    drawDataBox('Taxa de Retenção', `${(100 - (churn30 / totalCustomers) * 100).toFixed(1)}%`, marginSide + (2 * contentWidth / 3) + 2, currentY + 10, contentWidth / 3 - 2);
+
+    currentY += 45;
+    doc.setFontSize(12);
+    doc.setTextColor(...rgbTheme);
+    doc.text('Comportamento Semanal & Horários Nobres', marginSide, currentY);
+    
+    const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
     const distribution = Array(7).fill(0);
     const hourlyDist = Array(24).fill(0);
     
@@ -1522,78 +1667,59 @@ function AppContent() {
        hourlyDist[h] += 1;
     });
 
+    // Weekly Horizontal Bar Chart
     const maxDist = Math.max(...distribution) || 1;
     distribution.forEach((val, i) => {
-       const barW = (val / maxDist) * (contentWidth - 40);
+       const barW = (val / maxDist) * (contentWidth / 2 - 30);
        doc.setFillColor(245, 245, 245);
-       doc.rect(marginSide + 35, currentY + 10 + (i * 8), contentWidth - 35, 5, 'F');
+       doc.rect(marginSide + 20, currentY + 10 + (i * 6), contentWidth / 2 - 30, 4, 'F');
        doc.setFillColor(...rgbTheme);
-       doc.rect(marginSide + 35, currentY + 10 + (i * 8), barW, 5, 'F');
-       doc.setFontSize(7);
+       doc.rect(marginSide + 20, currentY + 10 + (i * 6), barW, 4, 'F');
+       doc.setFontSize(6);
        doc.setTextColor(100, 100, 100);
-       doc.text(dayNames[i], marginSide, currentY + 14 + (i * 8));
-       doc.setFont('helvetica', 'bold');
-       doc.text(`R$ ${formatCurrency(val)}`, marginSide + 35 + barW + 2, currentY + 14 + (i * 8));
-       doc.setFont('helvetica', 'normal');
+       doc.text(dayNames[i], marginSide, currentY + 13 + (i * 6));
     });
 
-    currentY += 80;
-    doc.setFontSize(12);
-    doc.setTextColor(50, 50, 50);
-    doc.text('Horários de Maior Movimento (Impacto em Vendas)', marginSide, currentY);
-    
+    // Hourly Bar Chart (Next to it)
     const maxHour = Math.max(...hourlyDist) || 1;
-    const hourSpacing = (contentWidth / 24);
+    const hStartX = marginSide + contentWidth / 2 + 10;
+    const hSpacing = (contentWidth / 2 - 20) / 24;
     hourlyDist.forEach((val, i) => {
-       const barH = (val / maxHour) * 20;
-       const x = marginSide + (i * hourSpacing);
+       const barH = (val / maxHour) * 30;
+       const x = hStartX + (i * hSpacing);
        doc.setFillColor(...rgbTheme);
-       doc.setDrawColor(255, 255, 255);
-       doc.rect(x, currentY + 25 - barH, hourSpacing - 0.5, barH, 'F');
-       if (i % 4 === 0) {
+       doc.rect(x, currentY + 45 - barH, hSpacing - 0.5, barH, 'F');
+       if (i % 6 === 0) {
          doc.setFontSize(5);
-         doc.text(`${i}h`, x, currentY + 30);
+         doc.text(`${i}h`, x, currentY + 50);
        }
     });
 
+    // 4. RANKING RFM & DIAGNÓSTICO IA
     doc.addPage();
     currentY = 30;
-
     doc.setFontSize(14);
     doc.setTextColor(...rgbTheme);
-    doc.text('4. RANKING DE FIDELIDADE & RFM', marginSide, currentY);
-    
-    const custMap = new Map();
-    const now = new Date();
-    purchases.forEach(p => {
-      const c = custMap.get(p.customerId) || { name: p.customerName, earned: 0, count: 0, last: new Date(0) };
-      c.earned += p.amount;
-      c.count += 1;
-      const pDate = new Date(p.date || 0);
-      if (pDate > c.last) c.last = pDate;
-      custMap.set(p.customerId, c);
-    });
+    doc.text('4. SEGMENTAÇÃO RFM (RECIÊNCIA, FREQUÊNCIA, VALOR)', marginSide, currentY);
 
-    // Simple RFM Scoring
     const rfmData = Array.from(custMap.values()).map(c => {
        const recencyDays = Math.floor((now.getTime() - c.last.getTime()) / (1000 * 60 * 60 * 24));
        let segment = 'Inativo';
-       if (recencyDays < 30 && c.count > 3) segment = 'Campeão';
-       else if (recencyDays < 60) segment = 'Fiel';
-       else if (recencyDays < 90) segment = 'Em Risco';
+       let segmentColor = [150, 150, 150];
        
-       return [c.name, c.count, `R$ ${formatCurrency(c.earned)}`, segment];
-    }).sort((a: any, b: any) => {
-       const valA = parseFloat(a[2].replace(/[^\d,-]/g, '').replace(',', '.'));
-       const valB = parseFloat(b[2].replace(/[^\d,-]/g, '').replace(',', '.'));
-       return valB - valA;
-    }).slice(0, 12);
+       if (recencyDays < 15 && c.count > 5) { segment = 'Campeão'; segmentColor = [22, 163, 74]; }
+       else if (recencyDays < 30) { segment = 'Fiel'; segmentColor = [37, 99, 235]; }
+       else if (recencyDays < 60) { segment = 'Em Risco'; segmentColor = [234, 179, 8]; }
+       else if (recencyDays < 90) { segment = 'Hibernando'; segmentColor = [220, 38, 38]; }
+       
+       return { name: c.name, count: c.count, earned: c.earned, segment, color: segmentColor };
+    }).sort((a, b) => b.earned - a.earned).slice(0, 10);
 
     autoTable(doc, {
       startY: currentY + 7,
       margin: { left: marginSide, right: marginSide },
-      head: [['Cliente', 'Frequência', 'Total Gasto', 'Segmento RFM']],
-      body: rfmData,
+      head: [['Cliente', 'Visitas', 'Total Gasto (LTV)', 'Status RFM']],
+      body: rfmData.map(r => [r.name, r.count, `R$ ${formatCurrency(r.earned)}`, r.segment]),
       theme: 'grid',
       headStyles: { fillColor: [60, 60, 60] },
       styles: { fontSize: 8 }
@@ -1602,35 +1728,34 @@ function AppContent() {
     currentY = (doc as any).lastAutoTable.finalY + 15;
     doc.setFontSize(14);
     doc.setTextColor(...rgbTheme);
-    doc.text('5. ANÁLISE DE LTV & CRESCIMENTO', marginSide, currentY);
-
-    const prevMonthRev = purchases.filter(p => p.date && p.date.startsWith(format(subMonths(now, 1), 'yyyy-MM'))).reduce((a, b) => a + b.amount, 0);
-    const currMonthRev = purchases.filter(p => p.date && p.date.startsWith(format(now, 'yyyy-MM'))).reduce((a, b) => a + b.amount, 0);
-    const growth = prevMonthRev > 0 ? ((currMonthRev / prevMonthRev - 1) * 100).toFixed(1) : 'N/A';
-
-    drawDataBox('Crescimento MoM', `${growth}%`, marginSide, currentY + 7, contentWidth / 2 - 2);
-    const avgLTV = custMap.size > 0 ? Array.from(custMap.values()).reduce((a, b: any) => a + b.earned, 0) / custMap.size : 0;
-    drawDataBox('LTV Médio Base', `R$ ${formatCurrency(avgLTV)}`, marginSide + contentWidth / 2 + 1, currentY + 7, contentWidth / 2 - 2);
-    
-    doc.setFontSize(10);
-    doc.setTextColor(50, 50, 50);
-    doc.text(`Valor Vitalício (LTV) Médio: R$ ${formatCurrency(avgLTV)}. Base: ${custMap.size} clientes.`, marginSide, currentY + 10);
+    doc.text('5. PARECER TÉCNICO & IA STRATEGIC INSIGHTS', marginSide, currentY);
 
     const cacheKey = `analysis_cache_${selectedCompanyId}`;
     const cached = localStorage.getItem(cacheKey);
-    let analysisText = rules.geminiApiKey ? "Análise estratégica pendente. Gere a análise na aba Estratégia para visualizar as recomendações completas." : "Gere recomendações estratégicas na aba dedicada usando sua chave IA.";
+    let analysisText = rules.geminiApiKey ? "Aguardando processamento de IA... Gere o diagnóstico na aba 'Análise Estratégica' para incluir recomendações personalizadas por IA neste relatório." : "Para diagnósticos automáticos e recomendações de crescimento, configure sua Chave API Gemini nas regras do sistema.";
     if (cached) {
        const parsed = JSON.parse(cached);
        analysisText = parsed.result;
     }
 
-    doc.setFillColor(250, 250, 250);
-    doc.rect(marginSide, currentY + 20, contentWidth, 100, 'F');
+    doc.setFillColor(252, 252, 252);
+    doc.setDrawColor(220, 220, 220);
+    doc.roundedRect(marginSide, currentY + 5, contentWidth, pageHeight - currentY - 25, 3, 3, 'FD');
+    
     doc.setFontSize(9);
-    doc.setFont('helvetica', 'italic');
-    doc.setTextColor(60, 70, 80);
-    const splitText = doc.splitTextToSize(analysisText, contentWidth - 10);
-    doc.text(splitText, marginSide + 5, currentY + 30);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(40, 40, 40);
+    
+    // Icon-like header for AI
+    doc.setFillColor(...rgbTheme);
+    doc.circle(marginSide + 10, currentY + 15, 3, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.text('CONSULTORIA BUYPASS INTELLIGENCE (AI)', marginSide + 16, currentY + 16);
+    
+    doc.setFont('helvetica', 'normal');
+    const splitText = doc.splitTextToSize(analysisText, contentWidth - 20);
+    doc.text(splitText, marginSide + 10, currentY + 25);
+
 
     const pageCount = (doc as any).internal.getNumberOfPages();
     for(let i = 1; i <= pageCount; i++) {
@@ -1712,7 +1837,7 @@ function AppContent() {
       return <ContractCancelledScreen />;
     }
 
-    if (loading || !isAuthReady || (user && !appUser)) {
+    if (loading || !isAuthReady || (user && !appUser) || (user && (!isRulesPreloaded || !isGoalsPreloaded))) {
       return (
         <div className="min-h-screen flex flex-col items-center justify-center bg-white">
           <motion.div 
@@ -2089,7 +2214,7 @@ function AppContent() {
                 <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block mb-1">Status do Setup</span>
                 <div className="flex gap-1">
                   {[1,2,3,4,5].map((s, i) => {
-                    const steps: typeof onboardingTour[] = ['profile', 'goals', 'reference_data_ticket', 'reference_data_revenue', 'finished'];
+                    const steps: typeof onboardingTour[] = ['profile', 'admins_query', 'campaign_config', 'goals_month_by_month', 'finished'];
                     const currentIndex = steps.indexOf(onboardingTour);
                     const isActive = i <= currentIndex;
                     return (
@@ -2887,15 +3012,31 @@ function TeleguidedOnboarding({ companyId, rules, goals, onUpdateRules, activeTo
     return dates;
   }, [startMonth]);
 
-  const steps = [
-    { id: 'welcome', title: 'Bem-vindo ao BuyPass!', description: 'Vamos configurar sua empresa em menos de 2 minutos para liberar todas as funcionalidades.', button: 'Iniciar Agora' },
-    { id: 'profile', title: 'Dados da Empresa', description: 'Preencha as informações básicas para identificação.', button: 'Próximo Passo' },
-    { id: 'admins_query', title: 'Equipe de Gestão', description: 'Deseja cadastrar mais algum administrador para ajudar na gestão?', button: 'Sim, adicionar' },
-    { id: 'admin_form', title: 'Novo Administrador', description: 'Preencha os dados do novo gestor.', button: 'Salvar e Continuar' },
-    { id: 'campaign_config', title: 'Sua Campanha', description: 'Configure as regras básicas de pontos ou cashback.', button: 'Configurar Regras' },
-    { id: 'goals_month_by_month', title: 'Metas de 12 Meses', description: 'Defina suas metas mensais de faturamento para os próximos 12 meses.', button: 'Finalizar Metas' },
-    { id: 'finished', title: 'Parabéns!', description: 'Seu sistema está pronto para uso. O onboarding nunca mais será exibido para esta conta.', button: 'Finalizar e Acessar Painel' }
-  ];
+  const steps = useMemo(() => {
+    const isRenewal = rules?.onboardingComplete === true;
+    const renewalWelcome = { 
+      id: 'welcome', 
+      title: 'Renovação de Ciclo', 
+      description: 'Seu ciclo de planejamento anual expirou ou está próximo do fim. Revise e renove as suas próximas metas do ano para que possamos continuar entregando o seu diagnóstico estratégico.', 
+      button: 'Iniciar Renovação' 
+    };
+    const standardWelcome = { 
+      id: 'welcome', 
+      title: 'Bem-vindo ao BuyPass!', 
+      description: 'Vamos configurar sua empresa em menos de 2 minutos para liberar todas as funcionalidades.', 
+      button: 'Iniciar Agora' 
+    };
+
+    return [
+      isRenewal ? renewalWelcome : standardWelcome,
+      { id: 'profile', title: 'Dados da Empresa', description: 'Preencha as informações básicas para identificação.', button: 'Próximo Passo' },
+      { id: 'admins_query', title: 'Equipe de Gestão', description: 'Deseja cadastrar mais algum administrador para ajudar na gestão?', button: 'Sim, adicionar' },
+      { id: 'admin_form', title: 'Novo Administrador', description: 'Preencha os dados do novo gestor.', button: 'Salvar e Continuar' },
+      { id: 'campaign_config', title: 'Sua Campanha', description: 'Configure as regras básicas de pontos ou cashback.', button: 'Configurar Regras' },
+      { id: 'goals_month_by_month', title: 'Metas de 12 Meses', description: 'Defina suas metas mensais de faturamento para os próximos 12 meses.', button: 'Finalizar Metas' },
+      { id: 'finished', title: 'Parabéns!', description: 'Seu sistema está pronto para uso. O planejamento foi renovado com sucesso.', button: 'Finalizar e Acessar Painel' }
+    ];
+  }, [rules?.onboardingComplete]);
 
   const currentStepIndex = steps.findIndex(s => s.id === activeTour);
   const currentStep = steps[currentStepIndex] || steps[0];
@@ -6078,20 +6219,36 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
           {sortedGoals.map(goal => {
             const realSales = purchases.filter(p => p.date.startsWith(goal.month)).reduce((acc, p) => acc + p.amount, 0);
             const percent = goal.value > 0 ? (realSales / goal.value) * 100 : 0;
+            const currentMonth = format(new Date(), 'yyyy-MM');
+            const isPast = goal.month < currentMonth;
             
             return (
-              <Card key={goal.id} className="p-5 bg-white border-gray-100 shadow-sm relative overflow-hidden group">
-                <div className="absolute top-0 left-0 h-1 bg-primary/20 w-full" />
-                <div className="absolute top-0 left-0 h-1 bg-primary transition-all duration-1000" style={{ width: `${Math.min(percent, 100)}%` }} />
+              <Card key={goal.id} className={cn(
+                "p-5 border-gray-100 shadow-sm relative overflow-hidden group transition-all",
+                isPast ? "bg-gray-100/50 grayscale-[0.5] opacity-70" : "bg-white"
+              )}>
+                <div className={cn(
+                  "absolute top-0 left-0 h-1 w-full",
+                  isPast ? "bg-gray-300" : "bg-primary/20"
+                )} />
+                <div className={cn(
+                  "absolute top-0 left-0 h-1 transition-all duration-1000",
+                  isPast ? "bg-gray-500" : "bg-primary"
+                )} style={{ width: `${Math.min(percent, 100)}%` }} />
                 
                 <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h4 className="font-black text-gray-900 uppercase tracking-tighter text-lg">{format(parseISO(goal.month + '-01'), 'MMMM yyyy', { locale: ptBR })}</h4>
+                    <h4 className="font-black text-gray-900 uppercase tracking-tighter text-lg">
+                      {format(parseISO(goal.month + '-01'), 'MMMM yyyy', { locale: ptBR })}
+                      {isPast && <span className="ml-2 text-[8px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded uppercase font-black tracking-normal">Encerrado</span>}
+                    </h4>
                     <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{goal.workingDays} dias úteis</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs font-black text-primary">{Math.round(percent)}%</p>
-                    <p className="text-[9px] text-gray-400 font-bold uppercase">Meta: R$ {formatCurrency(goal.value)}</p>
+                    <p className={cn("text-xs font-black", isPast ? "text-gray-500" : "text-primary")}>{Math.round(percent)}%</p>
+                    <p className="text-[9px] text-gray-400 font-bold uppercase">
+                      {isPast ? `Faturamento: R$ ${formatCurrency(realSales)}` : `Meta: R$ ${formatCurrency(goal.value)}`}
+                    </p>
                   </div>
                 </div>
 
@@ -6485,35 +6642,41 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
   }, [purchases, customers]);
 
   const goalsComparisonData = useMemo(() => {
-    if (!goals || goals.length === 0) return [];
+    const currentMonthDate = new Date();
+    currentMonthDate.setDate(1); // Normalizar no primeiro dia do mês
     
-    // Group goals by month to avoid duplicates if they exist
-    const uniqueGoals = Array.from(new Map(goals.map(g => [g.month, g])).values());
+    const displayMonths = [];
+    // Show 1 month in the past, current month, and 4 months in the future = 6 months total
+    for (let i = -1; i <= 4; i++) {
+      const d = addMonths(currentMonthDate, i);
+      displayMonths.push(format(d, 'yyyy-MM'));
+    }
 
-    return uniqueGoals.map(g => {
+    return displayMonths.map(m => {
+      const goal = goals.find(g => g.month === m);
       const monthPurchases = purchases.filter(p => {
         try {
-          return p.date && p.date.substring(0, 7) === g.month;
+          return p.date && p.date.substring(0, 7) === m;
         } catch {
           return false;
         }
       });
       const actual = monthPurchases.reduce((acc, p) => acc + (p.amount || 0), 0);
       
-      let formattedName = g.month;
+      let formattedName = m;
       try {
-        formattedName = format(parseISO(g.month + '-01'), 'MMM/yy', { locale: ptBR });
+        formattedName = format(parseISO(m + '-01'), 'MMM/yy', { locale: ptBR });
       } catch (e) {
         console.error("Error formatting goal month:", e);
       }
 
       return {
-        month: g.month,
+        month: m,
         name: formattedName,
-        planejado: g.value || 0,
+        planejado: goal?.value || 0,
         realizado: actual
       };
-    }).sort((a, b) => a.month.localeCompare(b.month)).slice(-6);
+    });
   }, [goals, purchases]);
 
   const chartData = useMemo(() => {
