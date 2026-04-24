@@ -1404,6 +1404,63 @@ function AppContent() {
       const now = new Date();
       const custMap = new Map<string, any>();
       
+      // Data preparation
+      const filterByDays = (days: number) => {
+        const d = subDays(now, days);
+        return purchases.filter(p => p.date && parseISO(p.date) >= d);
+      };
+
+      const sales7d = filterByDays(7);
+      const sales14d = filterByDays(14);
+      const sales30d = filterByDays(30);
+
+      const rev7d = sales7d.reduce((a, b) => a + (b.amount || 0), 0);
+      const rev14d = sales14d.reduce((a, b) => a + (b.amount || 0), 0);
+      const rev30d = sales30d.reduce((a, b) => a + (b.amount || 0), 0);
+
+      const cust7d = new Set(sales7d.map(p => p.customerId)).size;
+      const cust14d = new Set(sales14d.map(p => p.customerId)).size;
+      const cust30d = new Set(sales30d.map(p => p.customerId)).size;
+
+      const ticket7d = sales7d.length > 0 ? rev7d / sales7d.length : 0;
+      const ticket14d = sales14d.length > 0 ? rev14d / sales14d.length : 0;
+      const ticket30d = sales30d.length > 0 ? rev30d / sales30d.length : 0;
+
+      let reportPurchases = purchases;
+      if (startDateStr && endDateStr) {
+         reportPurchases = purchases.filter(p => p.date && p.date >= startDateStr && p.date <= endDateStr);
+      }
+
+      const totalRev = reportPurchases.reduce((acc, p) => acc + p.amount, 0);
+      const avgTicket = reportPurchases.length > 0 ? totalRev / reportPurchases.length : 0;
+
+      // Reference Comparison
+      const refAvgTicket = rules.currentAvgTicket || 1;
+      const refMonthlyRev = rules.currentMonthlyRevenue || 1;
+      
+      // ROI & Payback logic (Simplified)
+      const actualCost = purchases.reduce((a, b) => a + (b.cashbackEarned || 0), 0); 
+      const projectedCost = (customers.reduce((a, b) => a + (b.cashbackBalance || 0), 0)) + (customers.reduce((a, b) => a + (b.points || 0), 0) * (rules.pointValue || 0.01));
+      
+      const partIds = new Set(customers.filter(c => (c.points || 0) > 0 || (c.cashbackBalance || 0) > 0).map(c => c.id));
+      const participantPurchases = purchases.filter(p => partIds.has(p.customerId));
+      const nonParticipantPurchases = purchases.filter(p => !partIds.has(p.customerId));
+      const partRev = participantPurchases.reduce((a, b) => a + (b.amount || 0), 0);
+      const partAvgT = participantPurchases.length > 0 ? partRev / participantPurchases.length : 0;
+      const nonPartRev = nonParticipantPurchases.reduce((a, b) => a + (b.amount || 0), 0);
+      const nonPartAvgT = nonParticipantPurchases.length > 0 ? nonPartRev / nonParticipantPurchases.length : 0;
+      
+      const incrementalTicket = Math.max(0, partAvgT - nonPartAvgT);
+      const estimatedROI = actualCost > 0 ? ((incrementalTicket * participantPurchases.length) / actualCost) * 100 : 0;
+      
+      const currentMonthDate = new Date();
+      currentMonthDate.setDate(1);
+      const displayMonthsReport = [];
+      for (let i = -5; i <= 0; i++) {
+        displayMonthsReport.push(format(subMonths(currentMonthDate, Math.abs(i)), 'yyyy-MM'));
+      }
+      displayMonthsReport.sort();
+
       purchases.forEach(p => {
         const c = custMap.get(p.customerId) || { name: p.customerName || 'Cliente sem nome', earned: 0, count: 0, last: new Date(0) };
         c.earned += (p.amount || 0);
@@ -1446,6 +1503,19 @@ function AppContent() {
       };
       const rgbTheme = hexToRgb(themeColor);
 
+      const totalCustomers = custMap.size;
+      const activeCustomers = Array.from(custMap.values()).filter((c: any) => {
+         const lastTime = c.last instanceof Date ? c.last.getTime() : 0;
+         const recency = (now.getTime() - lastTime) / (1000 * 60 * 60 * 24);
+         return recency <= 30;
+      }).length;
+      
+      const churn30 = Array.from(custMap.values()).filter((c: any) => {
+         const lastTime = c.last instanceof Date ? c.last.getTime() : 0;
+         const recency = (now.getTime() - lastTime) / (1000 * 60 * 60 * 24);
+         return recency > 30 && recency <= 60;
+      }).length;
+
       const addHeaderFooter = (doc: any) => {
         doc.setFillColor(...rgbTheme);
         doc.rect(0, 0, pageWidth, 5, 'F');
@@ -1483,37 +1553,45 @@ function AppContent() {
         doc.text(value, x + 5, y + 15);
       };
 
-      let reportPurchases = purchases;
-      if (startDateStr && endDateStr) {
-         reportPurchases = purchases.filter(p => p.date && p.date >= startDateStr && p.date <= endDateStr);
-      }
-
-      const totalRev = reportPurchases.reduce((acc, p) => acc + p.amount, 0);
-      const avgTicket = reportPurchases.length > 0 ? totalRev / reportPurchases.length : 0;
-      const totalCustomers = custMap.size;
-      const activeCustomers = Array.from(custMap.values()).filter((c: any) => {
-         const lastTime = c.last instanceof Date ? c.last.getTime() : 0;
-         const recency = (now.getTime() - lastTime) / (1000 * 60 * 60 * 24);
-         return recency <= 30;
-      }).length;
-      
-      // 1. DESEMPENHO GERAL
+      // 1. DESEMPENHO GERAL & CURTO PRAZO
       doc.setFontSize(16);
       doc.setTextColor(...rgbTheme);
       doc.setFont('helvetica', 'bold');
-      doc.text('1. RESUMO EXECUTIVO & KPIS', marginSide, 40);
+      doc.text('1. RESUMO EXECUTIVO & KPIS OPERACIONAIS', marginSide, 40);
       
-      doc.setFontSize(9);
-      doc.setTextColor(100, 100, 100);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`Análise consolidada: ${startDateStr || 'Toda a base'} até ${endDateStr || 'Hoje'}`, marginSide, 46);
+      doc.setFontSize(8);
+      doc.setTextColor(150, 150, 150);
+      doc.text(`Análise consolidada: ${startDateStr || 'Toda a base'} até ${endDateStr || 'Hoje'}`, marginSide, 45);
 
-      drawDataBox('Faturamento Total', `R$ ${formatCurrency(totalRev)}`, marginSide, 52, contentWidth / 4 - 2);
-      drawDataBox('Ticket Médio', `R$ ${formatCurrency(avgTicket)}`, marginSide + (contentWidth / 4) + 1, 52, contentWidth / 4 - 2);
-      drawDataBox('Base Clientes', `${totalCustomers}`, marginSide + (2 * contentWidth / 4) + 2, 52, contentWidth / 4 - 2);
-      drawDataBox('Clientes Ativos', `${activeCustomers}`, marginSide + (3 * contentWidth / 4) + 3, 52, contentWidth / 4 - 2);
+      // Current Performance Cards
+      const convRate = totalCustomers > 0 ? (cust30d / totalCustomers) * 100 : 0;
+      drawDataBox('Faturamento (30d)', `R$ ${formatCurrency(rev30d)}`, marginSide, 50, contentWidth / 5 - 1);
+      drawDataBox('Ticket Médio (30d)', `R$ ${formatCurrency(ticket30d)}`, marginSide + (contentWidth / 5), 50, contentWidth / 5 - 1);
+      drawDataBox('Clientes (30d)', `${cust30d}`, marginSide + (2 * contentWidth / 5), 50, contentWidth / 5 - 1);
+      drawDataBox('Conversão (30d)', `${convRate.toFixed(1)}%`, marginSide + (3 * contentWidth / 5), 50, contentWidth / 5 - 1);
+      drawDataBox('Ticket Ref.', `R$ ${formatCurrency(refAvgTicket)}`, marginSide + (4 * contentWidth / 5), 50, contentWidth / 5 - 1);
 
-      // GOALS PROGRESS BAR (OVERALL)
+      // Comparative Table (7, 14, 30 days)
+      if (typeof autoTable === 'function') {
+        (autoTable as any)(doc, {
+          startY: 75,
+          margin: { left: marginSide, right: marginSide },
+          head: [['Período', 'Vendas (Qtd)', 'Faturamento', 'Ticket Médio', 'Novos Clientes']],
+          body: [
+            ['Últimos 7 dias', sales7d.length, `R$ ${formatCurrency(rev7d)}`, `R$ ${formatCurrency(ticket7d)}`, cust7d],
+            ['Últimos 14 dias', sales14d.length, `R$ ${formatCurrency(rev14d)}`, `R$ ${formatCurrency(ticket14d)}`, cust14d],
+            ['Últimos 30 dias', sales30d.length, `R$ ${formatCurrency(rev30d)}`, `R$ ${formatCurrency(ticket30d)}`, cust30d]
+          ],
+          theme: 'striped',
+          headStyles: { fillColor: rgbTheme },
+          styles: { fontSize: 7 }
+        });
+      }
+
+      let currentY = (doc as any).lastAutoTable?.finalY || 100;
+      currentY += 10;
+
+      // Metas Gerais
       const currentMonth = format(now, 'yyyy-MM');
       const currentGoal = goals.find(g => g.month === currentMonth);
       if (currentGoal) {
@@ -1522,178 +1600,165 @@ function AppContent() {
          
          doc.setFontSize(10);
          doc.setTextColor(50, 50, 50);
-         doc.text(`Meta do Mês Atual (${format(now, 'MMMM', { locale: ptBR })}): ${goalPercent.toFixed(1)}% atingido`, marginSide, 85);
+         doc.text(`Projeção de Metas (${format(now, 'MMMM', { locale: ptBR })}): ${goalPercent.toFixed(1)}% atingido`, marginSide, currentY);
          
          doc.setFillColor(240, 240, 240);
-         doc.roundedRect(marginSide, 88, contentWidth, 4, 2, 2, 'F');
+         doc.roundedRect(marginSide, currentY + 3, contentWidth, 4, 2, 2, 'F');
          doc.setFillColor(...rgbTheme);
-         doc.roundedRect(marginSide, 88, (contentWidth * goalPercent) / 100, 4, 2, 2, 'F');
+         doc.roundedRect(marginSide, currentY + 3, (contentWidth * goalPercent) / 100, 4, 2, 2, 'F');
          
          doc.setFontSize(7);
          doc.setTextColor(120, 120, 120);
-         doc.text(`Realizado: R$ ${formatCurrency(currentMonthRev)} / Planejado: R$ ${formatCurrency(currentGoal.value)}`, marginSide, 96);
+         doc.text(`Realizado: R$ ${formatCurrency(currentMonthRev)} / Planejado: R$ ${formatCurrency(currentGoal.value)}`, marginSide, currentY + 11);
+         currentY += 18;
       }
 
+      // 2. CRESCIMENTO VS REFERÊNCIA (ONBOARDING)
       doc.setFontSize(12);
       doc.setTextColor(...rgbTheme);
-      doc.text('Evolução de Faturamento: Realizado vs Planejado (6 meses)', marginSide, 110);
+      doc.setFont('helvetica', 'bold');
+      doc.text('2. EVOLUÇÃO ESTRATÉGICA VS DADOS DE REFERÊNCIA', marginSide, currentY);
       
-      const currentMonthDate = new Date();
-      currentMonthDate.setDate(1);
-      const displayMonthsReport = [];
-      for (let i = -5; i <= 0; i++) {
-        displayMonthsReport.push(format(subMonths(currentMonthDate, Math.abs(i)), 'yyyy-MM'));
-      }
-      displayMonthsReport.sort();
+      currentY += 8;
+      doc.setFontSize(9);
+      doc.setTextColor(80, 80, 80);
+      doc.text('Comparação entre os dados informados no início do projeto e a performance atual:', marginSide, currentY);
 
-      const monthlyData = displayMonthsReport.map(m => {
-         const goal = goals.find(g => g.month === m);
-         const actual = purchases.filter(p => p.date && p.date.startsWith(m)).reduce((acc, p) => acc + (p.amount || 0), 0);
-         return { month: m, goal: goal?.value || 0, actual };
-      });
-
-      if (monthlyData.length > 0) {
-        const chartHeight = 35;
-        const chartWidth = contentWidth;
-        const startX = marginSide;
-        const startY = 155;
-        const maxVal = Math.max(...monthlyData.map(d => Math.max(d.goal, d.actual))) * 1.2 || 1000;
-        const spacing = (chartWidth / monthlyData.length);
+      currentY += 5;
+      const drawGrowthCard = (label: string, baseline: number, current: number, x: number, y: number, w: number) => {
+        const growth = baseline > 0 ? ((current / baseline) - 1) * 100 : 0;
+        const color = growth >= 0 ? [22, 163, 74] : [220, 38, 38];
         
-        monthlyData.forEach((d, i) => {
-          const barWidth = spacing * 0.4;
-          const xPos = startX + (i * spacing) + (spacing * 0.1);
-          
-          // Planejado (Lighter)
-          const goalH = (d.goal / maxVal) * chartHeight;
-          doc.setFillColor(rgbTheme[0], rgbTheme[1], rgbTheme[2], 0.2); // Light version
-          doc.rect(xPos, startY - goalH, barWidth, goalH, 'F');
-          
-          // Realizado (Full color)
-          const actualH = (d.actual / maxVal) * chartHeight;
-          doc.setFillColor(...rgbTheme);
-          doc.rect(xPos + 2, startY - actualH, barWidth - 4, actualH, 'F');
-          
-          doc.setFontSize(6);
-          doc.setTextColor(100, 100, 100);
-          try {
-            const mLabel = format(parseISO(d.month + '-01'), 'MMM/yy', { locale: ptBR });
-            doc.text(mLabel, xPos, startY + 5);
-          } catch(e) {}
-        });
+        doc.setDrawColor(230, 230, 230);
+        doc.setFillColor(255, 255, 255);
+        doc.roundedRect(x, y, w, 22, 2, 2, 'FD');
         
-        doc.setFontSize(8);
-        doc.setFillColor(rgbTheme[0], rgbTheme[1], rgbTheme[2], 0.2); doc.rect(marginSide, 165, 3, 3, 'F');
-        doc.text('Meta Planejada', marginSide + 5, 167.5);
-        doc.setFillColor(...rgbTheme); doc.rect(marginSide + 40, 165, 3, 3, 'F');
-        doc.text('Faturamento Realizado', marginSide + 45, 167.5);
-      }
+        doc.setFontSize(7);
+        doc.setTextColor(120, 120, 120);
+        doc.text(label, x + 4, y + 6);
+        
+        doc.setFontSize(9);
+        doc.setTextColor(50, 50, 50);
+        doc.text(`Ref: R$ ${formatCurrency(baseline)}`, x + 4, y + 12);
+        doc.text(`Atual: R$ ${formatCurrency(current)}`, x + 4, y + 18);
+        
+        doc.setFillColor(...(color as [number, number, number]));
+        doc.roundedRect(x + w - 18, y + 6, 14, 10, 1, 1, 'F');
+        doc.setFontSize(6);
+        doc.setTextColor(255, 255, 255);
+        doc.text(`${growth >= 0 ? '+' : ''}${Math.round(growth)}%`, x + w - 11, y + 12.5, { align: 'center' });
+      };
 
-      // 2. PARTICIPAÇÃO NO PROGRAMA DE FIDELIDADE
-      doc.addPage();
-      let currentY = 30;
+      drawGrowthCard('Ticket Médio', refAvgTicket, ticket30d, marginSide, currentY, contentWidth / 2 - 2);
+      drawGrowthCard('Faturamento Mensal', refMonthlyRev, rev30d, marginSide + contentWidth / 2 + 2, currentY, contentWidth / 2 - 2);
 
-      doc.setFontSize(14);
-      doc.setTextColor(...rgbTheme);
-      doc.text('2. ANÁLISE DO PROGRAMA DE FIDELIDADE', marginSide, currentY);
+      currentY += 35;
       
-      // Ratio of participants vs non-participants
-      const participantIds = new Set(customers.filter(c => (c.points || 0) > 0 || (c.cashbackBalance || 0) > 0).map(c => c.id));
-      const participantPurchases = purchases.filter(p => participantIds.has(p.customerId));
-      const nonParticipantPurchases = purchases.filter(p => !participantIds.has(p.customerId));
-      
-      const partRev = participantPurchases.reduce((a, b) => a + (b.amount || 0), 0);
-      const nonPartRev = nonParticipantPurchases.reduce((a, b) => a + (b.amount || 0), 0);
-      const partAvg = participantPurchases.length > 0 ? partRev / participantPurchases.length : 0;
-      const nonPartAvg = nonParticipantPurchases.length > 0 ? nonPartRev / nonParticipantPurchases.length : 0;
-
-      drawDataBox('Receita Fidelizados', `R$ ${formatCurrency(partRev)}`, marginSide, currentY + 10, contentWidth / 2 - 2);
-      drawDataBox('Receita Não-Fidelizados', `R$ ${formatCurrency(nonPartRev)}`, marginSide + contentWidth / 2 + 1, currentY + 10, contentWidth / 2 - 2);
-      
-      currentY += 40;
+      // Evolução do Ticket Médio - Mini Chart
       doc.setFontSize(10);
-      doc.setTextColor(50, 50, 50);
-      doc.text('Impacto do Programa no Ticket Médio:', marginSide, currentY);
-      
-      const maxAvg = Math.max(partAvg, nonPartAvg) || 1;
-      // Part Bar
-      doc.setFillColor(...rgbTheme);
-      doc.rect(marginSide + 40, currentY + 5, (contentWidth - 80) * (partAvg / maxAvg), 6, 'F');
-      doc.setFontSize(8);
-      doc.text('Participantes', marginSide, currentY + 9);
-      doc.text(`R$ ${formatCurrency(partAvg)}`, marginSide + (contentWidth - 80) * (partAvg / maxAvg) + 42, currentY + 9);
-      
-      // Non-Part Bar
-      doc.setFillColor(200, 200, 200);
-      doc.rect(marginSide + 40, currentY + 15, (contentWidth - 80) * (nonPartAvg / maxAvg), 6, 'F');
-      doc.text('Casuais', marginSide, currentY + 19);
-      doc.text(`R$ ${formatCurrency(nonPartAvg)}`, marginSide + (contentWidth - 80) * (nonPartAvg / maxAvg) + 42, currentY + 19);
-
-      currentY += 45;
-      doc.setFontSize(12);
       doc.setTextColor(...rgbTheme);
-      doc.text('Evolução do LTV por Segmento (Acumulado)', marginSide, currentY);
+      doc.text('Tendência de Evolução: Ticket Médio Mensal', marginSide, currentY);
       
-      // Simple Line representation for LTV evolution over 6 months
-      const ltvHistory = displayMonthsReport.map(m => {
-         const pUpTo = purchases.filter(p => p.date && p.date <= m + '-31');
-         const custsUpTo = new Set(pUpTo.map(p => p.customerId)).size || 1;
-         const revUpTo = pUpTo.reduce((a, b) => a + (b.amount || 0), 0);
-         return { m, ltv: revUpTo / custsUpTo };
+      currentY += 5;
+      const historyMonths = displayMonthsReport.map(m => {
+        const pM = purchases.filter(p => p.date && p.date.startsWith(m));
+        return { m, ticket: pM.length > 0 ? pM.reduce((a, b) => a + (b.amount || 0), 0) / pM.length : 0 };
+      });
+      
+      const maxTH = Math.max(...historyMonths.map(h => h.ticket), refAvgTicket) * 1.2 || 100;
+      const chartH = 25;
+      const chartW = contentWidth;
+      
+      doc.setDrawColor(240, 240, 240);
+      doc.line(marginSide, currentY + chartH, marginSide + chartW, currentY + chartH);
+
+      historyMonths.forEach((h, i) => {
+        const x = marginSide + (i * (chartW / (historyMonths.length - 1)));
+        const y = currentY + chartH - (h.ticket / maxTH) * chartH;
+        doc.setFillColor(...rgbTheme);
+        doc.circle(x, y, 1, 'F');
+        if (i > 0) {
+          const prevX = marginSide + ((i-1) * (chartW / (historyMonths.length - 1)));
+          const prevY = currentY + chartH - (historyMonths[i-1].ticket / maxTH) * chartH;
+          doc.line(prevX, prevY, x, y);
+        }
+        doc.setFontSize(5);
+        doc.setTextColor(150, 150, 150);
+        try { doc.text(format(parseISO(h.m + '-01'), 'MMM', { locale: ptBR }), x - 2, currentY + chartH + 5); } catch(e){}
       });
 
-      const ltvStartX = marginSide + 10;
-      const ltvStartY = currentY + 45;
-      const ltvWidth = contentWidth - 20;
-      const ltvHeight = 35;
-      const maxLTV = Math.max(...ltvHistory.map(h => h.ltv)) * 1.2 || 100;
-
-      doc.setDrawColor(230, 230, 230);
-      doc.line(ltvStartX, ltvStartY, ltvStartX + ltvWidth, ltvStartY);
-      
-      ltvHistory.forEach((h, i) => {
-         const x = ltvStartX + (i * (ltvWidth / (ltvHistory.length - 1)));
-         const y = ltvStartY - (h.ltv / maxLTV) * ltvHeight;
-         doc.setFillColor(...rgbTheme);
-         doc.circle(x, y, 1, 'F');
-         if (i > 0) {
-            const prevX = ltvStartX + ((i-1) * (ltvWidth / (ltvHistory.length - 1)));
-            const prevY = ltvStartY - (ltvHistory[i-1].ltv / maxLTV) * ltvHeight;
-            doc.setDrawColor(...rgbTheme);
-            doc.line(prevX, prevY, x, y);
-         }
-         doc.setFontSize(5);
-         try {
-           doc.text(format(parseISO(h.m + '-01'), 'MMM', { locale: ptBR }), x - 2, ltvStartY + 4);
-         } catch(e) {}
-         doc.text(`R$ ${Math.round(h.ltv)}`, x - 4, y - 3);
-      });
-
-      // 3. ANÁLISE ESTRATÉGICA & TENDÊNCIAS
+      // 3. VIABILIDADE FINANCEIRA & ROI
       doc.addPage();
       currentY = 30;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
-      doc.text('3. DIAGNÓSTICO ESTRATÉGICO (DATA-DRIVEN)', marginSide, currentY);
-
-      const churn30 = Array.from(custMap.values()).filter((c: any) => {
-         const lastTime = c.last instanceof Date ? c.last.getTime() : 0;
-         const recency = (now.getTime() - lastTime) / (1000 * 60 * 60 * 24);
-         return recency > 30 && recency <= 60;
-      }).length;
+      doc.text('3. MÉTRICAS DE VIABILIDADE E ROI DO PROGRAMA', marginSide, currentY);
       
-      const freqMedian = Array.from(custMap.values()).map((c: any) => c.count).sort((a, b) => a - b);
-      const median = freqMedian.length > 0 ? freqMedian[Math.floor(freqMedian.length / 2)] : 0;
+      currentY += 10;
+      // Investment vs Returns
+      drawDataBox('Custo Acumulado', `R$ ${formatCurrency(actualCost)}`, marginSide, currentY, contentWidth / 3 - 2);
+      drawDataBox('Passivo Projetado', `R$ ${formatCurrency(projectedCost)}`, marginSide + (contentWidth / 3) + 1, currentY, contentWidth / 3 - 2);
+      drawDataBox('ROI Estimado', `${estimatedROI.toFixed(1)}%`, marginSide + (2 * contentWidth / 3) + 2, currentY, contentWidth / 3 - 2);
 
-      drawDataBox('Churn (30-60 dias)', `${((churn30 / totalCustomers) * 100).toFixed(1)}%`, marginSide, currentY + 10, contentWidth / 3 - 2);
-      drawDataBox('Frequência Mediana', `${median.toFixed(1)} visitas`, marginSide + (contentWidth / 3) + 1, currentY + 10, contentWidth / 3 - 2);
-      drawDataBox('Taxa de Retenção', `${(100 - (churn30 / (totalCustomers || 1)) * 100).toFixed(1)}%`, marginSide + (2 * contentWidth / 3) + 2, currentY + 10, contentWidth / 3 - 2);
+      currentY += 30;
+      doc.setFontSize(10);
+      doc.setTextColor(60, 60, 60);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Análise de Eficiência:', marginSide, currentY);
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      const roiDescription = [
+        `O programa gerou um incremento médio de R$ ${formatCurrency(incrementalTicket)} por compra entre participantes.`,
+        `Com um custo de distribuição de R$ ${formatCurrency(actualCost)}, o retorno sobre investimento (ROI) é de ${estimatedROI.toFixed(1)}%.`,
+        `O tempo estimado de Payback (recuperação do investimento via lucro incremental) é de ${actualCost > 0 && incrementalTicket > 0 ? Math.ceil(actualCost / (incrementalTicket * (participantPurchases.length / (purchases.length / 30 || 1)) / 30)) : '--'} dias.`
+      ];
+      doc.text(roiDescription, marginSide, currentY + 6);
 
-      currentY += 45;
+      currentY += 25;
+      doc.setFontSize(11);
+      doc.setTextColor(...rgbTheme);
+      doc.text('Evolução do Churn & Retenção', marginSide, currentY);
+
+      if (typeof autoTable === 'function') {
+        (autoTable as any)(doc, {
+          startY: currentY + 5,
+          margin: { left: marginSide, right: marginSide },
+          head: [['Faixa de Inatividade', 'Volume de Clientes', 'Status', 'Risco']],
+          body: [
+            ['0-30 dias (Ativos)', activeCustomers, 'Saudável', 'Baixo'],
+            ['31-60 dias (Atenção)', churn30, 'Vulnerável', 'Médio'],
+            ['61-90 dias (Suspensos)', Array.from(custMap.values()).filter(c => {
+               const r = (now.getTime() - c.last.getTime()) / (1000 * 60 * 60 * 24);
+               return r > 60 && r <= 90;
+            }).length, 'Risco de Churn', 'Alto'],
+            ['+90 dias (Dormitórios)', Array.from(custMap.values()).filter(c => {
+               const r = (now.getTime() - c.last.getTime()) / (1000 * 60 * 60 * 24);
+               return r > 90;
+            }).length, 'Inativo', 'Crítico']
+          ],
+          theme: 'grid',
+          headStyles: { fillColor: [80, 80, 80] },
+          styles: { fontSize: 7 }
+        });
+      }
+
+      currentY = (doc as any).lastAutoTable?.finalY || (currentY + 60);
+      currentY += 15;
+
+      // 4. PARTICIPAÇÃO E ENGAJAMENTO (RULES)
       doc.setFontSize(12);
       doc.setTextColor(...rgbTheme);
-      doc.text('Comportamento Semanal & Horários Nobres', marginSide, currentY);
+      doc.text('4. DISTRIBUIÇÃO POR REGRA E SEGMENTO', marginSide, currentY);
       
+      const totalP = purchases.length || 1;
+      const partRatio = (participantPurchases.length / totalP) * 100;
+      
+      doc.setFontSize(9);
+      doc.setTextColor(100, 100, 100);
+      doc.text(`Participação no Programa: ${participantPurchases.length} vendas (${partRatio.toFixed(1)}%) vs Casuais: ${nonParticipantPurchases.length} (${(100 - partRatio).toFixed(1)}%)`, marginSide, currentY + 6);
+
+      currentY += 15;
       const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
       const distribution = Array(7).fill(0);
       const hourlyDist = Array(24).fill(0);
@@ -1738,36 +1803,35 @@ function AppContent() {
          }
       });
 
-      // 4. RANKING RFM & DIAGNÓSTICO IA
+      // 5. RANKING RFM & DIAGNÓSTICO IA
       doc.addPage();
       currentY = 30;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
-      doc.text('4. SEGMENTAÇÃO RFM (RECIÊNCIA, FREQUÊNCIA, VALOR)', marginSide, currentY);
+      doc.text('5. SEGMENTAÇÃO RFV (RECIÊNCIA, FREQUÊNCIA, VALOR)', marginSide, currentY);
 
       const rfmData = Array.from(custMap.values()).map(c => {
          const lastTime = c.last instanceof Date ? c.last.getTime() : 0;
          const recencyDays = Math.floor((now.getTime() - lastTime) / (1000 * 60 * 60 * 24));
          let segment = 'Inativo';
-         let segmentColor = [150, 150, 150];
          
-         if (recencyDays < 15 && c.count > 5) { segment = 'Campeão'; segmentColor = [22, 163, 74]; }
-         else if (recencyDays < 30) { segment = 'Fiel'; segmentColor = [37, 99, 235]; }
-         else if (recencyDays < 60) { segment = 'Em Risco'; segmentColor = [234, 179, 8]; }
-         else if (recencyDays < 90) { segment = 'Hibernando'; segmentColor = [220, 38, 38]; }
+         if (recencyDays < 15 && c.count > 5) { segment = 'Campeão'; }
+         else if (recencyDays < 30) { segment = 'Fiel'; }
+         else if (recencyDays < 60) { segment = 'Em Risco'; }
+         else if (recencyDays < 90) { segment = 'Hibernando'; }
          
-         return { name: c.name, count: c.count, earned: c.earned, segment, color: segmentColor };
+         return { name: c.name, count: c.count, earned: c.earned, segment, recency: recencyDays };
       }).sort((a, b) => b.earned - a.earned).slice(0, 10);
 
       if (typeof autoTable === 'function') {
         (autoTable as any)(doc, {
           startY: currentY + 7,
           margin: { left: marginSide, right: marginSide },
-          head: [['Cliente', 'Visitas', 'Total Gasto (LTV)', 'Status RFM']],
-          body: rfmData.map(r => [r.name, r.count, `R$ ${formatCurrency(r.earned)}`, r.segment]),
+          head: [['Cliente Top 10', 'Visitas', 'Total Gasto (LTV)', 'Recência (Dias)', 'Status RFV']],
+          body: rfmData.map(r => [r.name, r.count, `R$ ${formatCurrency(r.earned)}`, r.recency, r.segment]),
           theme: 'grid',
           headStyles: { fillColor: [60, 60, 60] },
-          styles: { fontSize: 8 }
+          styles: { fontSize: 7 }
         });
         currentY = (doc as any).lastAutoTable?.finalY || (currentY + 60);
       } else {
@@ -1777,7 +1841,7 @@ function AppContent() {
       currentY += 15;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
-      doc.text('5. PARECER TÉCNICO & IA STRATEGIC INSIGHTS', marginSide, currentY);
+      doc.text('6. PARECER TÉCNICO & IA STRATEGIC INSIGHTS', marginSide, currentY);
 
       const cacheKey = `analysis_cache_${selectedCompanyId}`;
       const cached = localStorage.getItem(cacheKey);
