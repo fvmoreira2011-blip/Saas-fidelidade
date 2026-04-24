@@ -1356,131 +1356,289 @@ function AppContent() {
       setPurchases([]);
       setRedemptions([]);
       setGoals([]);
+      setIsRulesPreloaded(false);
     };
-  }, [user?.uid, appUser?.approved, isAdminUser, selectedCompanyId]);
+  }, [user, appUser?.approved, isAdminUser, selectedCompanyId]);
 
   const handleExportManagementReport = async (startDateStr?: string, endDateStr?: string) => {
     const { jsPDF } = await import('jspdf');
     const { default: autoTable } = await import('jspdf-autotable');
     const doc = new jsPDF('p', 'mm', 'a4');
     
-    const marginSide = 15; // 1.5cm
-    const marginTopBottom = 20; // 2cm
+    const marginSide = 15;
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const contentWidth = pageWidth - (marginSide * 2);
+    const themeColor = rules.themeColor || '#16a34a';
     
     const logoUrl = rules.companyProfile?.logoURL || rules.companyProfile?.photoURL || FALLBACK_LOGO;
     const companyName = rules.companyProfile?.companyName || 'Empresa';
     
+    const hexToRgb = (hex: string): [number, number, number] => {
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      return [r, g, b];
+    };
+    const rgbTheme = hexToRgb(themeColor);
+
     const addHeaderFooter = (doc: any) => {
-      // Header
+      doc.setFillColor(...rgbTheme);
+      doc.rect(0, 0, pageWidth, 5, 'F');
+      
       if (logoUrl) {
-         try { doc.addImage(logoUrl, 'PNG', marginSide, 8, 12, 12); } catch(e){}
+         try { doc.addImage(logoUrl, 'PNG', marginSide, 10, 12, 12); } catch(e){}
       }
       doc.setFontSize(10);
+      doc.setTextColor(50, 50, 50);
       doc.setFont('helvetica', 'bold');
-      doc.text('Análise estratégica de Gestão de Clientes', marginSide + 15, 15);
+      doc.text('Relatório Estratégico de Performance', marginSide + 15, 16);
       doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
-      doc.text(companyName, marginSide + 15, 19);
+      doc.text(companyName, marginSide + 15, 21);
       
-      doc.setDrawColor(230, 230, 230);
-      doc.line(marginSide, 22, pageWidth - marginSide, 22);
+      doc.setDrawColor(240, 240, 240);
+      doc.line(marginSide, 26, pageWidth - marginSide, 26);
       
-      // Footer
-      doc.setFontSize(8);
-      const str = `Página ${doc.internal.getNumberOfPages()}`;
+      doc.setFontSize(7);
+      doc.setTextColor(150, 150, 150);
+      const str = `Página ${doc.internal.getNumberOfPages()} | Gerado em ${new Date().toLocaleDateString('pt-BR')} | BuyPass Intelligence`;
       doc.text(str, pageWidth / 2, pageHeight - 10, { align: 'center' });
+    };
+
+    const drawDataBox = (label: string, value: string, x: number, y: number, w: number) => {
+      doc.setFillColor(252, 252, 252);
+      doc.setDrawColor(230, 230, 230);
+      doc.roundedRect(x, y, w, 20, 3, 3, 'FD');
+      doc.setFontSize(8);
+      doc.setTextColor(100, 100, 100);
+      doc.setFont('helvetica', 'bold');
+      doc.text(label.toUpperCase(), x + 5, y + 7);
+      doc.setFontSize(11);
+      doc.setTextColor(...rgbTheme);
+      doc.text(value, x + 5, y + 15);
     };
 
     let reportPurchases = purchases;
     if (startDateStr && endDateStr) {
-       reportPurchases = purchases.filter(p => {
-         const date = p.date;
-         return date >= startDateStr && date <= endDateStr;
-       });
+       reportPurchases = purchases.filter(p => p.date >= startDateStr && p.date <= endDateStr);
     }
 
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text('1. Resumo do Dashboard', marginSide, 35);
-    
     const totalRev = reportPurchases.reduce((acc, p) => acc + p.amount, 0);
     const avgTicket = reportPurchases.length > 0 ? totalRev / reportPurchases.length : 0;
     
-    doc.setFontSize(10);
+    doc.setFontSize(16);
+    doc.setTextColor(...rgbTheme);
+    doc.setFont('helvetica', 'bold');
+    doc.text('1. DESEMPENHO GERAL', marginSide, 40);
+    
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Período: ${startDateStr || 'Todo'} até ${endDateStr || 'Hoje'}`, marginSide, 42);
-    doc.text(`Vendas Totais: ${reportPurchases.length}`, marginSide, 48);
-    doc.text(`Faturamento: R$ ${formatCurrency(totalRev)}`, marginSide, 54);
-    doc.text(`Ticket Médio: R$ ${formatCurrency(avgTicket)}`, marginSide, 60);
+    doc.text(`Período analisado: ${startDateStr || 'Toda a base'} até ${endDateStr || 'Hoje'}`, marginSide, 46);
+
+    drawDataBox('Faturamento Total', `R$ ${formatCurrency(totalRev)}`, marginSide, 52, contentWidth / 3 - 2);
+    drawDataBox('Volume de Vendas', `${reportPurchases.length} transações`, marginSide + (contentWidth / 3) + 1, 52, contentWidth / 3 - 2);
+    drawDataBox('Ticket Médio', `R$ ${formatCurrency(avgTicket)}`, marginSide + (2 * contentWidth / 3) + 2, 52, contentWidth / 3 - 2);
+
+    doc.setFontSize(12);
+    doc.setTextColor(50, 50, 50);
+    doc.text('Evolução Mensal (Realizado vs Meta)', marginSide, 85);
+    
+    const monthlyData = goals.map(g => {
+       const actual = purchases.filter(p => p.date && p.date.startsWith(g.month)).reduce((acc, p) => acc + p.amount, 0);
+       return { month: g.month, goal: g.value, actual };
+    }).sort((a, b) => a.month.localeCompare(b.month)).slice(-6);
+
+    if (monthlyData.length > 0) {
+      const chartHeight = 40;
+      const chartWidth = contentWidth;
+      const startX = marginSide;
+      const startY = 135;
+      const maxVal = Math.max(...monthlyData.map(d => Math.max(d.goal, d.actual))) * 1.2 || 1000;
+      const spacing = (chartWidth / monthlyData.length);
+      
+      monthlyData.forEach((d, i) => {
+        const barWidth = spacing * 0.5;
+        const xPos = startX + (i * spacing) + (spacing * 0.1);
+        
+        const goalH = (d.goal / maxVal) * chartHeight;
+        doc.setFillColor(240, 240, 240);
+        doc.rect(xPos, startY - goalH, barWidth, goalH, 'F');
+        
+        const actualH = (d.actual / maxVal) * chartHeight;
+        doc.setFillColor(...rgbTheme);
+        doc.rect(xPos + 2, startY - actualH, barWidth - 4, actualH, 'F');
+        
+        doc.setFontSize(6);
+        doc.setTextColor(150, 150, 150);
+        doc.text(d.month, xPos, startY + 5);
+      });
+      
+      doc.setFontSize(7);
+      doc.setFillColor(240, 240, 240); doc.rect(marginSide, 145, 3, 3, 'F');
+      doc.text('Meta Planejada', marginSide + 5, 147.5);
+      doc.setFillColor(...rgbTheme); doc.rect(marginSide + 35, 145, 3, 3, 'F');
+      doc.text('Faturamento Realizado', marginSide + 40, 147.5);
+    }
+
+    doc.addPage();
+    let currentY = 30;
 
     doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text('2. Acompanhamento de Metas', marginSide, 75);
+    doc.setTextColor(...rgbTheme);
+    doc.text('2. DETALHAMENTO DE PERFORMANCE', marginSide, currentY);
     
     const goalsTableData = goals.map(g => {
        const actual = purchases.filter(p => p.date && p.date.startsWith(g.month)).reduce((acc, p) => acc + p.amount, 0);
        return [g.month, `R$ ${formatCurrency(g.value)}`, `R$ ${formatCurrency(actual)}`, `${g.value > 0 ? ((actual/g.value)*100).toFixed(1) : 0}%`];
-    }).sort((a, b) => (a[0] as string).localeCompare(b[0] as string));
+    }).sort((a, b: any) => b[0].localeCompare(a[0]));
 
     autoTable(doc, {
-      startY: 82,
+      startY: currentY + 7,
       margin: { left: marginSide, right: marginSide },
-      head: [['Mês', 'Meta Planejada', 'Realizado', '%']],
+      head: [['Mês Referência', 'Meta Planejada', 'Faturamento Real', 'Atingimento']],
       body: goalsTableData,
       theme: 'grid',
-      headStyles: { fillColor: [34, 197, 94] }
+      headStyles: { fillColor: rgbTheme, textColor: [255, 255, 255] },
+      styles: { fontSize: 8 }
     });
 
-    let currentY = (doc as any).lastAutoTable.finalY + 15;
-    if (currentY > pageHeight - 60) { doc.addPage(); currentY = 30; }
+    currentY = (doc as any).lastAutoTable.finalY + 15;
 
     doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text('3. Análise de LTV (Lifetime Value)', marginSide, currentY);
+    doc.setTextColor(...rgbTheme);
+    doc.text('3. COMPORTAMENTO POR DIA DA SEMANA', marginSide, currentY);
     
-    // Calculate LTV
-    const customerValueMap = new Map();
-    purchases.forEach(p => {
-       const val = customerValueMap.get(p.customerId) || 0;
-       customerValueMap.set(p.customerId, val + p.amount);
+    const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+    const distribution = Array(7).fill(0);
+    const hourlyDist = Array(24).fill(0);
+    
+    reportPurchases.forEach(p => {
+       const dateObj = new Date(p.date || Date.now());
+       const d = dateObj.getDay();
+       const h = dateObj.getHours();
+       distribution[d] += p.amount;
+       hourlyDist[h] += 1;
     });
-    const avgLTV = customerValueMap.size > 0 ? Array.from(customerValueMap.values()).reduce((a, b: any) => a + b, 0) / customerValueMap.size : 0;
+
+    const maxDist = Math.max(...distribution) || 1;
+    distribution.forEach((val, i) => {
+       const barW = (val / maxDist) * (contentWidth - 40);
+       doc.setFillColor(245, 245, 245);
+       doc.rect(marginSide + 35, currentY + 10 + (i * 8), contentWidth - 35, 5, 'F');
+       doc.setFillColor(...rgbTheme);
+       doc.rect(marginSide + 35, currentY + 10 + (i * 8), barW, 5, 'F');
+       doc.setFontSize(7);
+       doc.setTextColor(100, 100, 100);
+       doc.text(dayNames[i], marginSide, currentY + 14 + (i * 8));
+       doc.setFont('helvetica', 'bold');
+       doc.text(`R$ ${formatCurrency(val)}`, marginSide + 35 + barW + 2, currentY + 14 + (i * 8));
+       doc.setFont('helvetica', 'normal');
+    });
+
+    currentY += 80;
+    doc.setFontSize(12);
+    doc.setTextColor(50, 50, 50);
+    doc.text('Horários de Maior Movimento (Impacto em Vendas)', marginSide, currentY);
+    
+    const maxHour = Math.max(...hourlyDist) || 1;
+    const hourSpacing = (contentWidth / 24);
+    hourlyDist.forEach((val, i) => {
+       const barH = (val / maxHour) * 20;
+       const x = marginSide + (i * hourSpacing);
+       doc.setFillColor(...rgbTheme);
+       doc.setDrawColor(255, 255, 255);
+       doc.rect(x, currentY + 25 - barH, hourSpacing - 0.5, barH, 'F');
+       if (i % 4 === 0) {
+         doc.setFontSize(5);
+         doc.text(`${i}h`, x, currentY + 30);
+       }
+    });
+
+    doc.addPage();
+    currentY = 30;
+
+    doc.setFontSize(14);
+    doc.setTextColor(...rgbTheme);
+    doc.text('4. RANKING DE FIDELIDADE & RFM', marginSide, currentY);
+    
+    const custMap = new Map();
+    const now = new Date();
+    purchases.forEach(p => {
+      const c = custMap.get(p.customerId) || { name: p.customerName, earned: 0, count: 0, last: new Date(0) };
+      c.earned += p.amount;
+      c.count += 1;
+      const pDate = new Date(p.date || 0);
+      if (pDate > c.last) c.last = pDate;
+      custMap.set(p.customerId, c);
+    });
+
+    // Simple RFM Scoring
+    const rfmData = Array.from(custMap.values()).map(c => {
+       const recencyDays = Math.floor((now.getTime() - c.last.getTime()) / (1000 * 60 * 60 * 24));
+       let segment = 'Inativo';
+       if (recencyDays < 30 && c.count > 3) segment = 'Campeão';
+       else if (recencyDays < 60) segment = 'Fiel';
+       else if (recencyDays < 90) segment = 'Em Risco';
+       
+       return [c.name, c.count, `R$ ${formatCurrency(c.earned)}`, segment];
+    }).sort((a: any, b: any) => {
+       const valA = parseFloat(a[2].replace(/[^\d,-]/g, '').replace(',', '.'));
+       const valB = parseFloat(b[2].replace(/[^\d,-]/g, '').replace(',', '.'));
+       return valB - valA;
+    }).slice(0, 12);
+
+    autoTable(doc, {
+      startY: currentY + 7,
+      margin: { left: marginSide, right: marginSide },
+      head: [['Cliente', 'Frequência', 'Total Gasto', 'Segmento RFM']],
+      body: rfmData,
+      theme: 'grid',
+      headStyles: { fillColor: [60, 60, 60] },
+      styles: { fontSize: 8 }
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 15;
+    doc.setFontSize(14);
+    doc.setTextColor(...rgbTheme);
+    doc.text('5. ANÁLISE DE LTV & CRESCIMENTO', marginSide, currentY);
+
+    const prevMonthRev = purchases.filter(p => p.date && p.date.startsWith(format(subMonths(now, 1), 'yyyy-MM'))).reduce((a, b) => a + b.amount, 0);
+    const currMonthRev = purchases.filter(p => p.date && p.date.startsWith(format(now, 'yyyy-MM'))).reduce((a, b) => a + b.amount, 0);
+    const growth = prevMonthRev > 0 ? ((currMonthRev / prevMonthRev - 1) * 100).toFixed(1) : 'N/A';
+
+    drawDataBox('Crescimento MoM', `${growth}%`, marginSide, currentY + 7, contentWidth / 2 - 2);
+    const avgLTV = custMap.size > 0 ? Array.from(custMap.values()).reduce((a, b: any) => a + b.earned, 0) / custMap.size : 0;
+    drawDataBox('LTV Médio Base', `R$ ${formatCurrency(avgLTV)}`, marginSide + contentWidth / 2 + 1, currentY + 7, contentWidth / 2 - 2);
     
     doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`LTV Médio por Cliente: R$ ${formatCurrency(avgLTV)}`, marginSide, currentY + 8);
-    doc.text(`Base de Clientes Únicos: ${customerValueMap.size}`, marginSide, currentY + 14);
+    doc.setTextColor(50, 50, 50);
+    doc.text(`Valor Vitalício (LTV) Médio: R$ ${formatCurrency(avgLTV)}. Base: ${custMap.size} clientes.`, marginSide, currentY + 10);
 
-    let nextY = currentY + 25;
-    if (nextY > pageHeight - 40) { doc.addPage(); nextY = 30; }
-    
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text('4. Análise Estratégica do Especialista', marginSide, nextY);
-    
     const cacheKey = `analysis_cache_${selectedCompanyId}`;
     const cached = localStorage.getItem(cacheKey);
-    let analysisText = rules.geminiApiKey ? "Gere uma análise na aba Estratégia para vê-la aqui." : "Solicite mais informações ao seu gerente de contas.";
+    let analysisText = rules.geminiApiKey ? "Análise estratégica pendente. Gere a análise na aba Estratégia para visualizar as recomendações completas." : "Gere recomendações estratégicas na aba dedicada usando sua chave IA.";
     if (cached) {
        const parsed = JSON.parse(cached);
        analysisText = parsed.result;
     }
-    
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    const splitText = doc.splitTextToSize(analysisText, contentWidth);
-    doc.text(splitText, marginSide, nextY + 10);
+
+    doc.setFillColor(250, 250, 250);
+    doc.rect(marginSide, currentY + 20, contentWidth, 100, 'F');
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'italic');
+    doc.setTextColor(60, 70, 80);
+    const splitText = doc.splitTextToSize(analysisText, contentWidth - 10);
+    doc.text(splitText, marginSide + 5, currentY + 30);
 
     const pageCount = (doc as any).internal.getNumberOfPages();
     for(let i = 1; i <= pageCount; i++) {
        doc.setPage(i);
        addHeaderFooter(doc);
     }
-
-    doc.save(`Relatorio_Gestao_${companyName}.pdf`);
+    
+    doc.save(`Relatorio_Gestao_${companyName}_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
   const handleUpdateRules = async (newRules: LoyaltyRule) => {
@@ -2716,18 +2874,18 @@ function TeleguidedOnboarding({ companyId, rules, goals, onUpdateRules, activeTo
     photo: ''
   });
 
+  const [startMonth, setStartMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [currentGoalMonthIndex, setCurrentGoalMonthIndex] = useState(0);
+  const [monthlyGoalsLocal, setMonthlyGoalsLocal] = useState<Goal[]>([]);
+
   const next12Months = useMemo(() => {
     const dates = [];
-    let d = new Date();
-    d.setDate(1); // Start of current month
+    const [year, month] = startMonth.split('-').map(Number);
     for (let i = 0; i < 12; i++) {
-      dates.push(new Date(d.getFullYear(), d.getMonth() + i, 1));
+      dates.push(new Date(year, (month - 1) + i, 1));
     }
     return dates;
-  }, []);
-
-  const [monthlyGoalsLocal, setMonthlyGoalsLocal] = useState<Goal[]>([]);
+  }, [startMonth]);
 
   const steps = [
     { id: 'welcome', title: 'Bem-vindo ao BuyPass!', description: 'Vamos configurar sua empresa em menos de 2 minutos para liberar todas as funcionalidades.', button: 'Iniciar Agora' },
@@ -3081,6 +3239,19 @@ function TeleguidedOnboarding({ companyId, rules, goals, onUpdateRules, activeTo
 
           {activeTour === 'goals_month_by_month' && (
             <div className="space-y-6">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Mês de Início das Metas</label>
+                <input 
+                  type="month" 
+                  value={startMonth}
+                  onChange={e => {
+                    setStartMonth(e.target.value);
+                    setCurrentGoalMonthIndex(0);
+                  }}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 transition-all mb-4"
+                />
+              </div>
+
               <div className="flex items-center justify-between">
                 <span className="text-xs font-black text-gray-400 uppercase tracking-widest">Etapa {currentGoalMonthIndex + 1} de 12</span>
                 <span className="text-sm font-black text-green-600 uppercase tracking-tighter italic">
@@ -9714,6 +9885,26 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
   );
 }
 
+
+
+
+  return (
+    <ConfirmContext.Provider value={{ askConfirmation }}>
+      {renderContent()}
+      <ConfirmModal 
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmModal.onConfirm}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        confirmText={confirmModal.confirmText}
+        cancelText={confirmModal.cancelText}
+        isDanger={confirmModal.isDanger}
+      />
+    </ConfirmContext.Provider>
+  );
+}
+
 function AIConfigTab({ rules, onUpdateRules }: { rules: LoyaltyRule; onUpdateRules: (rules: LoyaltyRule) => Promise<void> }) {
   const [prompt, setPrompt] = useState(rules.aiPrompt || 'Você é um consultor estratégico de negócios especializado em varejo e fidelização de clientes. Analise os dados fornecidos e forneça um diagnóstico detalhado, identificando riscos, oportunidades e recomendações práticas para aumentar o faturamento e a retenção de clientes.');
   const [isSaving, setIsSaving] = useState(false);
@@ -10129,23 +10320,6 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
         </div>
       </Card>
     </motion.div>
-  );
-}
-
-  return (
-    <ConfirmContext.Provider value={{ askConfirmation }}>
-      {renderContent()}
-      <ConfirmModal 
-        isOpen={confirmModal.isOpen}
-        onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
-        onConfirm={confirmModal.onConfirm}
-        title={confirmModal.title}
-        message={confirmModal.message}
-        confirmText={confirmModal.confirmText}
-        cancelText={confirmModal.cancelText}
-        isDanger={confirmModal.isDanger}
-      />
-    </ConfirmContext.Provider>
   );
 }
 
