@@ -5131,6 +5131,11 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
     const customerPurchases = purchases.filter(p => p.customerId === customer.id);
     const customerRedemptions = redemptions.filter(r => r.customerId === customer.id);
 
+    // Sanitize values based on mode: Only show points if in points mode, only show cashback if in cashback mode
+    const displayBalance = rules.rewardMode === 'cashback' 
+      ? (customer.cashbackBalance || 0) 
+      : (customer.points || 0);
+
     const totalSpent = customerPurchases.reduce((acc, p) => acc + p.amount, 0);
     const totalPrizeCost = customerRedemptions.reduce((acc, r) => acc + (r.cost || 0), 0);
     const efficiency = totalSpent > 0 ? (totalPrizeCost / totalSpent) * 100 : 0;
@@ -5141,7 +5146,8 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
       redemptions: customerRedemptions,
       totalSpent,
       totalPrizeCost,
-      efficiency
+      efficiency,
+      displayBalance
     };
   }, [phone, customers, purchases, redemptions]);
 
@@ -5157,18 +5163,21 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
 
   const [desktopStep, setDesktopStep] = useState(0); // 0: phone, 1: confirm/register, 2: amount, 3: success
 
+  const rewardLabel = rules.rewardMode === 'cashback' ? 'Cashback' : 'Pontos';
+  const rewardUnit = rules.rewardMode === 'cashback' ? 'R$' : 'pts';
+
   const handleScore = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!companyId) return;
 
-    // Check program status
-    const currentStatus = rules.rewardMode === 'points' ? rules.pointsStatus?.status : rules.cashbackStatus?.status;
-    if (currentStatus === 'paused') {
-      showToast("Este programa está pausado no momento.", "warning");
-      return;
-    }
-    if (currentStatus === 'ended') {
-      showToast("Este programa foi encerrado.", "warning");
+    // Identify active program based on rewardMode AND status
+    const activeProgram = rules.rewardMode === 'points' 
+      ? (rules.pointsStatus?.status === 'active' ? 'points' : null) 
+      : (rules.cashbackStatus?.status === 'active' ? 'cashback' : null);
+
+    if (!activeProgram) {
+      const status = rules.rewardMode === 'points' ? rules.pointsStatus?.status : rules.cashbackStatus?.status;
+      showToast(status === 'paused' ? "Este programa está pausado no momento." : "O programa selecionado não está ativo.", "warning");
       return;
     }
 
@@ -5184,17 +5193,19 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
 
     setIsSubmitting(true);
     try {
-      const val = parseFloat(amount);
+      const val = parseFloat(amount.replace(',', '.'));
       let pointsEarned = 0;
       let cashbackEarned = 0;
       
-      if (rules.rewardMode === 'cashback') {
+      if (activeProgram === 'cashback') {
         if (val >= (rules.cashbackConfig?.minActivationValue || 0)) {
           cashbackEarned = val * ((rules.cashbackConfig?.percentage || 0) / 100);
         }
       } else {
         if (val >= (rules.minPurchaseValue || 0)) {
-          pointsEarned = 1;
+          // Use pointsPerReal if defined, otherwise 1 point per purchase
+          pointsEarned = Math.floor(val * (rules.pointsPerReal || 1));
+          
           if (rules.extraPointsThreshold && rules.extraPointsAmount && val >= rules.extraPointsThreshold) {
             pointsEarned += rules.extraPointsAmount;
           }
@@ -5375,30 +5386,79 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
     try {
       const now = new Date().toISOString();
       const cleanPhone = phone.replace(/\D/g, '');
+      
+      // Identify active program based on rewardMode AND status
+      const activeProgram = rules.rewardMode === 'points' 
+        ? (rules.pointsStatus?.status === 'active' ? 'points' : null) 
+        : (rules.cashbackStatus?.status === 'active' ? 'cashback' : null);
+
+      // 1. Calculate Initial Score
+      const numericAmount = amount ? parseFloat(amount.replace(',', '.')) : 0;
+      let pointsEarned = 0;
+      let cashbackEarned = 0;
+
+      if (activeProgram === 'points') {
+        pointsEarned = numericAmount > 0 ? Math.floor(numericAmount * (rules?.pointsPerReal || 1)) : 0;
+      } else if (activeProgram === 'cashback') {
+        if (numericAmount >= (rules.cashbackConfig?.minActivationValue || 0)) {
+          cashbackEarned = numericAmount * ((rules.cashbackConfig?.percentage || 0) / 100);
+        }
+      }
+      
+      // 2. Create Customer
       const registrationDoc = await addDoc(collection(db, 'customers'), {
         companyId,
         name: newName,
         phone: cleanPhone,
         birthDate: newBirthDate,
-        points: 0,
-        lastPurchaseDate: now,
-        createdAt: now
+        points: pointsEarned || 0,
+        cashbackBalance: cashbackEarned || 0,
+        lastPurchaseDate: numericAmount > 0 ? now : '',
+        createdAt: now,
+        updatedAt: now,
+        totalPurchases: numericAmount > 0 ? 1 : 0,
+        totalSpent: numericAmount > 0 ? numericAmount : 0
       });
       
-      setMessage({ type: 'success', text: "Cliente cadastrado com sucesso!" });
+      // 3. Create Purchase Tracking if numericAmount > 0
+      if (numericAmount > 0 && (pointsEarned > 0 || cashbackEarned > 0)) {
+        await addDoc(collection(db, 'purchases'), {
+          companyId,
+          customerId: registrationDoc.id,
+          customerName: newName,
+          amount: numericAmount,
+          pointsEarned,
+          cashbackEarned,
+          type: 'purchase',
+          date: now,
+          status: 'completed',
+          description: 'Cadastro + Pontuação Inicial'
+        });
+      }
+
+      const successMsg = activeProgram === 'cashback'
+        ? (cashbackEarned > 0 ? `Cliente cadastrado e ganhou R$ ${formatCurrency(cashbackEarned)} de cashback!` : "Cliente cadastrado com sucesso!")
+        : (pointsEarned > 0 ? `Cliente cadastrado e pontuado com ${pointsEarned} pontos!` : "Cliente cadastrado com sucesso!");
+        
+      setMessage({ type: 'success', text: successMsg });
+      
       const newCustomer: Customer = {
         id: registrationDoc.id,
         phone: cleanPhone,
         name: newName,
         birthDate: newBirthDate || undefined,
+        points: pointsEarned,
+        cashbackBalance: cashbackEarned,
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+        lastPurchaseDate: numericAmount > 0 ? now : ''
       };
 
       setTempCustomer(newCustomer);
       setShowRegister(false);
       setNewName('');
       setNewBirthDate('');
+      setAmount(''); 
       setIsWaitingForSync(true);
       
       // Clear temp customer after a bit, the real one from onSnapshot should have arrived by then
@@ -5508,13 +5568,16 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
               {foundCustomer && (
                 <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-green-900/20 p-3 rounded-xl border border-green-800/50">
                   <div className="flex justify-between items-center mb-3">
-                    <div>
-                      <p className="text-xs text-green-200 font-black uppercase tracking-tight">{foundCustomer.name}</p>
-                      <div className="flex gap-2 mt-1">
-                        {foundCustomer.points > 0 && <p className="text-[9px] text-green-400 font-bold">P: {foundCustomer.points}</p>}
-                        {(foundCustomer.cashbackBalance || 0) > 0 && <p className="text-[9px] text-green-400 font-bold">C: R${formatCurrency(foundCustomer.cashbackBalance || 0)}</p>}
+                      <div>
+                        <p className="text-xs text-green-200 font-black uppercase tracking-tight">{foundCustomer.name}</p>
+                        <div className="flex gap-2 mt-1">
+                          {rules.rewardMode === 'cashback' ? (
+                            <p className="text-[9px] text-green-400 font-bold">Saldo: R$ {formatCurrency(foundCustomer.cashbackBalance || 0)}</p>
+                          ) : (
+                            <p className="text-[9px] text-green-400 font-bold">Pontos: {foundCustomer.points || 0}</p>
+                          )}
+                        </div>
                       </div>
-                    </div>
                   </div>
 
                   {/* Customer Metrics Overlay for Mobile */}
@@ -5630,46 +5693,57 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
                   placeholder="Nome do cliente"
                   className="w-full px-4 py-2.5 bg-gray-900 border border-gray-800 rounded-xl text-white text-sm outline-none focus:border-primary transition-all font-bold"
                   required
+                  autoFocus
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Celular</label>
-                <PhoneInput
-                  placeholder="Ex: +55 11 99999-9999"
-                  value={phone}
-                  onChange={setPhone}
-                  defaultCountry="BR"
-                  className="PhoneInput dark text-sm"
-                  required
-                />
+              <div className="space-y-1.5 text-gray-500">
+                <label className="text-[10px] font-black uppercase tracking-widest">Celular</label>
+                <div className="bg-gray-900/50 border border-gray-800/50 rounded-xl px-4 py-2.5 text-sm font-bold opacity-70">
+                  {phone}
+                </div>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Data de Nascimento</label>
-                <input 
-                  type="date" 
-                  value={newBirthDate}
-                  onChange={(e) => setNewBirthDate(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-gray-900 border border-gray-800 rounded-xl text-white text-sm outline-none focus:border-primary transition-all font-bold"
-                  required
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Nascimento</label>
+                  <input 
+                    type="date" 
+                    value={newBirthDate}
+                    onChange={(e) => setNewBirthDate(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-gray-900 border border-gray-800 rounded-xl text-white text-xs outline-none focus:border-primary transition-all font-bold [color-scheme:dark]"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-primary uppercase tracking-widest">Valor Compra</label>
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] text-primary font-bold">R$</span>
+                    <input 
+                      type="number" 
+                      step="0.01"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      placeholder="0,00"
+                      className="w-full pl-7 pr-3 py-2.5 bg-primary/5 border border-primary/20 rounded-xl text-white text-sm outline-none focus:border-primary transition-all font-bold font-mono"
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="flex flex-col gap-2">
                 <Button 
                   type="submit" 
                   disabled={isSubmitting} 
-                  className="w-full py-3.5 font-black uppercase tracking-widest text-xs"
+                  className="w-full py-3.5 font-black uppercase tracking-widest text-xs shadow-lg shadow-primary/20"
                 >
-                  {isSubmitting ? 'Cadastrando...' : 'Cadastrar Cliente'}
+                  {isSubmitting ? 'Processando...' : (amount ? 'Cadastrar e Pontuar' : 'Apenas Cadastrar')}
                 </Button>
                 <button 
                   type="button"
                   onClick={() => setShowRegister(false)}
                   className="text-[10px] text-gray-500 font-black uppercase tracking-widest py-2 hover:text-white transition-colors"
                 >
-                  Voltar
+                  Cancelar
                 </button>
               </div>
             </form>
@@ -5759,7 +5833,7 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
               </div>
 
               <form onSubmit={handleRegister} className="space-y-6">
-                <div className="grid grid-cols-1 gap-6">
+                <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-3">
                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Nome Completo</label>
                     <input 
@@ -5773,21 +5847,36 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
                     />
                   </div>
                   <div className="space-y-3">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Data de Nascimento</label>
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-4">Data de Nascimento (Opcional)</label>
                     <input 
                       type="date" 
                       value={newBirthDate}
                       onChange={(e) => setNewBirthDate(e.target.value)}
                       className="w-full px-8 py-5 bg-gray-50 border-2 border-gray-100 rounded-3xl text-xl outline-none focus:border-primary transition-all font-bold"
-                      required
                     />
                   </div>
+                </div>
+
+                <div className="max-w-md mx-auto space-y-3">
+                  <label className="text-[10px] font-black text-primary uppercase tracking-widest text-center block">Valor da Compra para Pontuar Agora</label>
+                  <div className="relative">
+                    <span className="absolute left-6 top-1/2 -translate-y-1/2 text-2xl font-black text-primary">R$</span>
+                    <input 
+                      type="number" 
+                      step="0.01"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      placeholder="0,00"
+                      className="w-full pl-20 pr-8 py-6 bg-primary/5 border-2 border-primary/10 rounded-[2rem] text-4xl outline-none focus:border-primary transition-all font-black text-center"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-400 text-center">Deixe em branco se quiser apenas realizar o cadastro.</p>
                 </div>
 
                 <div className="flex gap-4 pt-4">
                    <button 
                     type="button"
-                    onClick={() => setPhone(undefined)}
+                    onClick={() => { setShowRegister(false); setAmount(''); }}
                     className="flex-1 px-8 py-6 rounded-3xl font-black uppercase tracking-widest text-gray-400 hover:text-gray-600 transition-all text-sm"
                   >
                     Voltar
@@ -5797,7 +5886,7 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
                     disabled={isSubmitting} 
                     className="flex-[2] py-6 rounded-[2rem] font-black uppercase tracking-[0.2em] text-lg shadow-2xl shadow-primary/30"
                   >
-                    {isSubmitting ? 'Cadastrando...' : 'Finalizar Cadastro'}
+                    {isSubmitting ? 'Processando...' : (amount ? 'Finalizar Cadastro e Pontuar' : 'Finalizar Cadastro')}
                   </Button>
                 </div>
               </form>
@@ -6119,6 +6208,7 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
               email: row['Email'] || row['email'] || '',
               birthDate: row['Data Nascimento'] || row['Data Nascimento (AAAA-MM-DD)'] || '',
               points: 0,
+              cashbackBalance: 0,
               lastPurchaseDate: new Date().toISOString(),
               totalSpent: 0,
               purchasesCount: 0,
@@ -6188,20 +6278,26 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
                   <p className="text-[10px] text-gray-500 font-bold uppercase">{customer.phone}</p>
                 </div>
                 <div className="flex flex-col items-end gap-1">
-                  {customer.points > 0 && (
-                    <div className="bg-primary/10 text-primary px-3 py-1 rounded-lg text-[10px] font-black">
-                      {Math.floor(customer.points)} PTS
-                    </div>
-                  )}
-                  {(customer.cashbackBalance || 0) > 0 && (
-                    <div className="bg-green-100 text-green-700 px-3 py-1 rounded-lg text-[10px] font-black">
-                      R$ {formatCurrency(customer.cashbackBalance || 0)}
-                    </div>
-                  )}
-                  {customer.points <= 0 && (!customer.cashbackBalance || customer.cashbackBalance <= 0) && (
-                    <div className="bg-gray-100 text-gray-400 px-3 py-1 rounded-lg text-[10px] font-black">
-                      0 PTS
-                    </div>
+                  {rules.rewardMode === 'cashback' ? (
+                    (customer.cashbackBalance || 0) > 0 ? (
+                      <div className="bg-green-100 text-green-700 px-3 py-1 rounded-lg text-[10px] font-black">
+                        R$ {formatCurrency(customer.cashbackBalance || 0)}
+                      </div>
+                    ) : (
+                      <div className="bg-gray-100 text-gray-400 px-3 py-1 rounded-lg text-[10px] font-black">
+                        R$ 0,00
+                      </div>
+                    )
+                  ) : (
+                    (customer.points || 0) > 0 ? (
+                      <div className="bg-primary/10 text-primary px-3 py-1 rounded-lg text-[10px] font-black">
+                        {Math.floor(customer.points)} PTS
+                      </div>
+                    ) : (
+                      <div className="bg-gray-100 text-gray-400 px-3 py-1 rounded-lg text-[10px] font-black">
+                        0 PTS
+                      </div>
+                    )
                   )}
                 </div>
               </div>
@@ -6972,7 +7068,7 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
         days[dayStr].count += 1;
         
         const customer = customers.find(c => c.id === p.customerId);
-        if (customer && customer.points > 0) {
+        if (customer && ((customer.points || 0) > 0 || (customer.cashbackBalance || 0) > 0)) {
           days[dayStr].loyaltyTotal += p.amount;
           days[dayStr].loyaltyCount += 1;
         }
@@ -8928,8 +9024,8 @@ function LTVTab({ purchases, customers, rules, onUpdateRules, isAdmin }: { purch
     const now = new Date();
     
     // Group customers
-    const campaignCustomers = customers.filter(c => c.points > 0);
-    const nonCampaignCustomers = customers.filter(c => c.points === 0);
+    const campaignCustomers = customers.filter(c => (c.points || 0) > 0 || (c.cashbackBalance || 0) > 0);
+    const nonCampaignCustomers = customers.filter(c => (c.points || 0) === 0 && (c.cashbackBalance || 0) === 0);
 
     const calculateMetrics = (groupCustomers: Customer[]) => {
       const groupIds = new Set(groupCustomers.map(c => c.id));
@@ -10509,9 +10605,12 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
     const baseValue = activeCustomers * avgLtv;
 
     let expectedCost = 0;
-    if (rules.rewardTiers) {
+    if (rules.rewardMode === 'cashback') {
+      // For cashback, the cost is roughly the total cashback assigned to users
+      expectedCost = customers.reduce((acc, c) => acc + (c.cashbackBalance || 0), 0);
+    } else if (rules.rewardTiers) {
       rules.rewardTiers.forEach(tier => {
-        const reachingProb = customers.filter(c => c.points >= tier.points).length / (customers.length || 1);
+        const reachingProb = customers.filter(c => (c.points || 0) >= tier.points).length / (customers.length || 1);
         expectedCost += (tier.cost || 0) * reachingProb * customers.length;
       });
     }
