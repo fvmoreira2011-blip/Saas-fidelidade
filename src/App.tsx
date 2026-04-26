@@ -125,7 +125,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import 'react-phone-number-input/style.css';
 import { GoogleGenAI } from "@google/genai";
-import { format, isToday, subDays, differenceInDays, differenceInYears, parseISO, isWithinInterval, startOfDay, endOfDay, subWeeks, subMonths, isBefore, addMonths, parse } from 'date-fns';
+import { format, isToday, subDays, differenceInDays, differenceInYears, parseISO, isWithinInterval, startOfDay, endOfDay, subWeeks, subMonths, isBefore, addMonths, parse, startOfMonth, endOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -178,6 +178,9 @@ interface Customer {
   birthDate?: string;
   lastPurchaseDate: string;
   createdAt: string;
+  updatedAt?: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 interface Purchase {
@@ -187,6 +190,7 @@ interface Purchase {
   amount: number;
   date: string;
   pointsEarned: number;
+  cashbackEarned?: number;
 }
 
 interface Redemption {
@@ -5176,8 +5180,9 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
       : (rules.cashbackStatus?.status === 'active' ? 'cashback' : null);
 
     if (!activeProgram) {
-      const status = rules.rewardMode === 'points' ? rules.pointsStatus?.status : rules.cashbackStatus?.status;
-      showToast(status === 'paused' ? "Este programa está pausado no momento." : "O programa selecionado não está ativo.", "warning");
+      const status = rules.rewardMode === 'points' ? (rules.pointsStatus?.status || 'inactive') : (rules.cashbackStatus?.status || 'inactive');
+      const modeName = rules.rewardMode === 'points' ? 'pontos' : 'cashback';
+      showToast(`O programa de ${modeName} não está ativo (Status: ${status}).`, "warning");
       return;
     }
 
@@ -5411,13 +5416,14 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
         name: newName,
         phone: cleanPhone,
         birthDate: newBirthDate,
-        points: pointsEarned || 0,
-        cashbackBalance: cashbackEarned || 0,
+        points: pointsEarned,
+        cashbackBalance: cashbackEarned,
         lastPurchaseDate: numericAmount > 0 ? now : '',
         createdAt: now,
         updatedAt: now,
         totalPurchases: numericAmount > 0 ? 1 : 0,
-        totalSpent: numericAmount > 0 ? numericAmount : 0
+        totalSpent: numericAmount > 0 ? numericAmount : 0,
+        isDeleted: false
       });
       
       // 3. Create Purchase Tracking if numericAmount > 0
@@ -5440,7 +5446,7 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
         ? (cashbackEarned > 0 ? `Cliente cadastrado e ganhou R$ ${formatCurrency(cashbackEarned)} de cashback!` : "Cliente cadastrado com sucesso!")
         : (pointsEarned > 0 ? `Cliente cadastrado e pontuado com ${pointsEarned} pontos!` : "Cliente cadastrado com sucesso!");
         
-      setMessage({ type: 'success', text: successMsg });
+      showToast(successMsg, "success");
       
       const newCustomer: Customer = {
         id: registrationDoc.id,
@@ -5451,9 +5457,11 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
         cashbackBalance: cashbackEarned,
         createdAt: now,
         updatedAt: now,
-        lastPurchaseDate: numericAmount > 0 ? now : ''
+        lastPurchaseDate: numericAmount > 0 ? now : '',
+        isDeleted: false
       };
 
+      // Set as temp customer immediately to avoid "retrabalho" while Firestore syncs
       setTempCustomer(newCustomer);
       setShowRegister(false);
       setNewName('');
@@ -6111,7 +6119,11 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
   const [editPhone, setEditPhone] = useState('');
   const [editBirthDate, setEditBirthDate] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
+  const [startDate, setStartDate] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
+  const [endDate, setEndDate] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const { showToast } = useToast();
+
+  const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null);
 
   const handleUpdateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -6143,9 +6155,52 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
     return { recency, freq, value };
   };
 
+  const handleDeleteCustomer = async () => {
+    if (!deletingCustomer || !companyId) return;
+    
+    setIsUpdating(true);
+    try {
+      // Anonymize the customer to preserve history but remove PII
+      await updateDoc(doc(db, 'customers', deletingCustomer.id), {
+        name: "Cliente Excluído",
+        phone: `EXC_${deletingCustomer.id}_${Date.now()}`, // Mark phone to avoid conflict but keep it unique
+        isDeleted: true,
+        deletedAt: new Date().toISOString(),
+      });
+      showToast("Cliente removido com sucesso!", "success");
+      setDeletingCustomer(null);
+    } catch (error) {
+      console.error("Erro ao deletar:", error);
+      showToast("Erro ao remover cliente.", "error");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const filteredPurchases = purchases.filter(p => {
+    const pDate = parseISO(p.date);
+    return isWithinInterval(pDate, {
+      start: startOfDay(parseISO(startDate)),
+      end: endOfDay(parseISO(endDate))
+    });
+  });
+
+  const periodMetrics = useMemo(() => {
+    const totalRevenue = filteredPurchases.reduce((acc, p) => acc + p.amount, 0);
+    const uniqueCustomersInPeriod = new Set(filteredPurchases.map(p => p.customerId)).size;
+    const avgLTV = uniqueCustomersInPeriod > 0 ? totalRevenue / uniqueCustomersInPeriod : 0;
+    
+    const totalPoints = filteredPurchases.reduce((acc, p) => acc + (p.pointsEarned || 0), 0);
+    const totalCashback = filteredPurchases.reduce((acc, p) => acc + (p.cashbackEarned || 0), 0);
+    
+    return { totalRevenue, avgLTV, totalPoints, totalCashback };
+  }, [filteredPurchases]);
+
   const filteredCustomers = customers.filter(c => 
-    c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    c.phone.includes(searchTerm)
+    !c.isDeleted && (
+      c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      c.phone.includes(searchTerm)
+    )
   );
 
   const downloadTemplate = () => {
@@ -6212,7 +6267,8 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
               lastPurchaseDate: new Date().toISOString(),
               totalSpent: 0,
               purchasesCount: 0,
-              createdAt: new Date().toISOString()
+              createdAt: new Date().toISOString(),
+              isDeleted: false
             });
           });
           
@@ -6254,6 +6310,49 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
         </div>
       </div>
 
+      {/* Date Filter & Metrics */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <Card className="lg:col-span-1 p-4 bg-white border-gray-100 shadow-sm flex flex-col justify-center">
+          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">Período de Análise</label>
+          <div className="flex flex-col gap-2">
+            <input 
+              type="date" 
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="px-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-primary"
+            />
+            <input 
+              type="date" 
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="px-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-primary"
+            />
+          </div>
+        </Card>
+
+        <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card className="p-4 bg-white border-gray-100 shadow-sm border-l-4 border-l-primary">
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">LTV Médio (Período)</p>
+            <h3 className="text-xl font-black text-gray-900 tracking-tighter">R$ {formatCurrency(periodMetrics.avgLTV)}</h3>
+            <p className="text-[9px] text-gray-500 font-bold mt-1 uppercase">Média por cliente ativo</p>
+          </Card>
+          <Card className="p-4 bg-white border-gray-100 shadow-sm border-l-4 border-l-blue-500">
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total de Compras</p>
+            <h3 className="text-xl font-black text-gray-900 tracking-tighter">R$ {formatCurrency(periodMetrics.totalRevenue)}</h3>
+            <p className="text-[9px] text-gray-500 font-bold mt-1 uppercase">{filteredPurchases.length} transações no período</p>
+          </Card>
+          <Card className="p-4 bg-white border-gray-100 shadow-sm border-l-4 border-l-orange-500">
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">
+              {rules.rewardMode === 'cashback' ? 'Cashback Gerado' : 'Pontos Gerados'}
+            </p>
+            <h3 className="text-xl font-black text-gray-900 tracking-tighter">
+              {rules.rewardMode === 'cashback' ? `R$ ${formatCurrency(periodMetrics.totalCashback)}` : `${periodMetrics.totalPoints} PTS`}
+            </h3>
+            <p className="text-[9px] text-gray-500 font-bold mt-1 uppercase">No período selecionado</p>
+          </Card>
+        </div>
+      </div>
+
       <Card className="p-4 bg-white border-gray-100 shadow-sm">
         <div className="relative">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
@@ -6271,7 +6370,7 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
         {filteredCustomers.map(customer => {
           const rfv = calculateRFV(customer);
           return (
-            <Card key={customer.id} className="p-5 bg-white border-gray-100 shadow-sm group hover:border-primary/50 transition-all">
+            <Card key={customer.id} className="p-5 bg-white border-gray-100 shadow-sm group hover:border-primary/50 transition-all relative">
               <div className="flex justify-between items-start mb-4">
                 <div>
                   <h3 className="font-bold text-gray-900 leading-tight">{customer.name}</h3>
@@ -6320,17 +6419,34 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
               <div className="flex items-center justify-between pt-4 border-t border-gray-50 mt-4">
                 <p className="text-[8px] text-gray-400 font-bold uppercase">Última: {format(parseISO(customer.lastPurchaseDate || new Date().toISOString()), 'dd/MM/yy')}</p>
                 <div className="flex gap-2">
-                   <button 
-                    onClick={() => {
-                      setEditingCustomer(customer);
-                      setEditPhone(customer.phone);
-                      setEditBirthDate(customer.birthDate || '');
-                    }}
-                    className="text-gray-400 hover:text-primary transition-colors flex items-center gap-1 text-[10px] uppercase font-black"
-                   >
-                     <Edit size={14} /> Editar
-                   </button>
-                   <button className="text-blue-400 hover:text-blue-500 transition-colors"><MessageSquare size={16} /></button>
+                    <button 
+                      onClick={() => {
+                        setEditingCustomer(customer);
+                        setEditPhone(customer.phone);
+                        setEditBirthDate(customer.birthDate || '');
+                      }}
+                      className="text-gray-400 hover:text-primary transition-colors flex items-center gap-1 text-[10px] uppercase font-black"
+                    >
+                      <Edit size={14} /> Editar
+                    </button>
+                    {isAdmin && (
+                      <button 
+                        onClick={() => setDeletingCustomer(customer)}
+                        className="text-gray-400 hover:text-red-500 transition-colors flex items-center gap-1 text-[10px] uppercase font-black"
+                      >
+                        <Trash2 size={14} /> Excluir
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => {
+                        const cleanPhone = customer.phone.replace(/\D/g, '');
+                        window.open(`https://wa.me/${cleanPhone}`, '_blank');
+                      }}
+                      className="text-blue-400 hover:text-blue-500 transition-colors"
+                      title="Abrir WhatsApp"
+                    >
+                      <MessageCircle size={18} />
+                    </button>
                 </div>
               </div>
             </Card>
@@ -6403,6 +6519,44 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
                   </Button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+
+        {deletingCustomer && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl border border-gray-100 text-center"
+            >
+              <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertTriangle size={32} />
+              </div>
+              <h3 className="text-xl font-black text-gray-900 uppercase tracking-tighter mb-2">Confirmar Exclusão</h3>
+              <p className="text-sm text-gray-500 mb-6">
+                Tem certeza que deseja excluir <strong>{deletingCustomer.name}</strong>? 
+                <br /><br />
+                O cadastro será removido da base ativa, mas as informações de faturamento histórico serão preservadas de forma anônima para seus indicadores.
+              </p>
+
+              <div className="flex gap-3">
+                <Button 
+                  onClick={() => setDeletingCustomer(null)}
+                  variant="outline"
+                  className="flex-1 py-4 font-black uppercase tracking-widest text-xs"
+                >
+                  Cancelar
+                </Button>
+                <Button 
+                  onClick={handleDeleteCustomer}
+                  disabled={isUpdating}
+                  className="flex-1 py-4 font-black uppercase tracking-widest text-xs bg-red-600 hover:bg-red-700 text-white"
+                >
+                  {isUpdating ? 'Excluindo...' : 'Confirmar Exclusão'}
+                </Button>
+              </div>
             </motion.div>
           </div>
         )}
@@ -6721,6 +6875,7 @@ function NotifyTab({ customers, rules, companyId }: { customers: Customer[]; rul
   const filteredCustomers = useMemo(() => {
     const now = new Date();
     return customers.filter(c => {
+      if (c.isDeleted) return false;
       const lastPurchase = parseISO(c.lastPurchaseDate);
       const daysSince = differenceInDays(now, lastPurchase);
       
@@ -7284,18 +7439,25 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
                         <th className="px-4 py-3">Data</th>
                         <th className="px-4 py-3">Cliente</th>
                         <th className="px-4 py-3">Valor</th>
-                        <th className="px-4 py-3">Pontos</th>
+                        <th className="px-4 py-3">{rules.rewardMode === 'cashback' ? 'Cashback' : 'Pontos'}</th>
                         <th className="px-4 py-3 text-right">Ações</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {filteredPurchases.map(p => (
-                        <tr key={p.id} className="text-sm hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-3 text-gray-500">{format(parseISO(p.date), "dd/MM/yy HH:mm")}</td>
-                          <td className="px-4 py-3 font-bold text-gray-900">{p.customerName}</td>
-                          <td className="px-4 py-3 text-primary font-bold">R$ {formatCurrency(p.amount)}</td>
-                          <td className="px-4 py-3 text-green-600">+{p.pointsEarned}</td>
-                          <td className="px-4 py-3 text-right">
+                      {filteredPurchases.map(p => {
+                        const customer = customers.find(c => c.id === p.customerId);
+                        const displayName = customer ? customer.name : p.customerName || 'Cliente';
+                        return (
+                          <tr key={p.id} className="text-sm hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-3 text-gray-500">{format(parseISO(p.date), "dd/MM/yy HH:mm")}</td>
+                            <td className="px-4 py-3 font-bold text-gray-900">{displayName}</td>
+                            <td className="px-4 py-3 text-primary font-bold">R$ {formatCurrency(p.amount)}</td>
+                            <td className="px-4 py-3 text-green-600">
+                              {rules.rewardMode === 'cashback' 
+                                ? `+R$ ${formatCurrency(p.cashbackEarned || 0)}` 
+                                : `+${p.pointsEarned || 0}`}
+                            </td>
+                            <td className="px-4 py-3 text-right">
                             <button 
                               onClick={() => {
                                 askConfirmation(
@@ -7320,7 +7482,8 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
                             </button>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                       {filteredPurchases.length === 0 && (
                         <tr>
                           <td colSpan={5} className="px-4 py-8 text-center text-gray-500 italic">Nenhuma venda encontrada no período.</td>
@@ -7878,6 +8041,7 @@ function RewardedCustomersTab({ customers, rules }: { customers: Customer[]; rul
   const rewardedCustomers = useMemo(() => {
     return customers
       .filter(c => {
+        if (c.isDeleted) return false;
         const matchesSearch = c.name.toLowerCase().includes(rewardSearch.toLowerCase()) || 
                              c.phone.includes(rewardSearch);
         return matchesSearch;
@@ -9530,24 +9694,39 @@ function ResetSystemTab({ companyId, isAdmin }: { companyId: string | null; isAd
       const credential = EmailAuthProvider.credential(auth.currentUser!.email!, password);
       await reauthenticateWithCredential(auth.currentUser!, credential);
 
-      // Deletion logic
-      const collectionsToDelete = ['customers', 'purchases', 'goals'];
+      // Deletion logic - Thoroughly delete all associated data
+      const collectionsToDelete = ['customers', 'purchases', 'goals', 'redemptions', 'notifications'];
       
       for (const collName of collectionsToDelete) {
         const q = query(collection(db, collName), where('companyId', '==', companyId));
         const snapshot = await getDocs(q);
-        const batch = writeBatch(db);
-        snapshot.docs.forEach((doc) => {
-          batch.delete(doc.ref);
-        });
-        await batch.commit();
+        
+        // Delete in batches of 500 (Firestore limit)
+        const docs = snapshot.docs;
+        for (let i = 0; i < docs.length; i += 500) {
+          const batch = writeBatch(db);
+          const chunk = docs.slice(i, i + 500);
+          chunk.forEach((d) => {
+            batch.delete(d.ref);
+          });
+          await batch.commit();
+        }
       }
 
-      // Reset onboarding flag
-      await updateDoc(doc(db, 'configs', companyId), { onboardingComplete: false });
+      // Reset onboarding flag and reference metrics in the config document
+      await updateDoc(doc(db, 'configs', companyId), { 
+        onboardingComplete: false,
+        onboardingStep: 'welcome',
+        currentAvgTicket: 0,
+        currentMonthlyRevenue: 0,
+        rewardTiers: [],
+        rewardMode: 'points',
+        campaignName: 'Novo Programa de Fidelidade'
+      });
 
-      alert("Sistema zerado com sucesso! Todos os dados foram removidos e o onboarding foi reiniciado.");
-      window.location.reload(); // Reload to clear local state
+      alert("Sistema zerado com sucesso! Redirecionando para o onboarding...");
+      // Redirect to root dashboard which will trigger the onboarding tour automatically
+      window.location.href = '/';
     } catch (err: any) {
       if (err.code === 'auth/wrong-password') {
         setError('Senha incorreta.');
