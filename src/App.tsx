@@ -920,7 +920,17 @@ function AppContent() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'score' | 'customers' | 'rewarded_customers' | 'rewards' | 'seasonal_dates' | 'ltv' | 'goals' | 'promotion' | 'reset' | 'admin' | 'company_profile' | 'plans' | 'super_admin_profile' | 'super_admin_management' | 'painel_master' | 'notificar' | 'redemption_codes'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'score' | 'customers' | 'rewarded_customers' | 'rewards' | 'seasonal_dates' | 'ltv' | 'goals' | 'promotion' | 'reset' | 'admin' | 'company_profile' | 'plans' | 'super_admin_profile' | 'super_admin_management' | 'painel_master' | 'notificar' | 'redemption_codes'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('mode') === 'compact' && params.get('tab')) {
+      return params.get('tab') as any;
+    }
+    return 'dashboard';
+  });
+  const [isCompact, setIsCompact] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('mode') === 'compact';
+  });
   const { toast, showToast, hideToast } = useToast();
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -1390,6 +1400,15 @@ function AppContent() {
       setIsGoalsPreloaded(false);
     };
   }, [user, appUser?.approved, isAdminUser, selectedCompanyId]);
+
+  const handlePopOut = () => {
+    const width = 430;
+    const height = 932; // iPhone 14 Pro Max height approx
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+    const url = `${window.location.origin}${window.location.pathname}?mode=compact&tab=score`;
+    window.open(url, 'ScoreWindow', `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes`);
+  };
 
   const handleExportManagementReport = async (startDateStr?: string, endDateStr?: string) => {
     try {
@@ -2038,6 +2057,40 @@ function AppContent() {
       '--active-tab-color': '#22c55e', // Green-500
     } as React.CSSProperties;
 
+    if (isCompact) {
+      if (loading || !isAuthReady) {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-gray-950">
+            <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full" />
+          </div>
+        );
+      }
+
+      if (!user) {
+        return <LoginScreen />;
+      }
+
+      // STRICT MODE: Compact mode ONLY allows ScoreTab. No redirection, no other tabs.
+      return (
+        <div className="min-h-screen bg-gray-950 flex flex-col" style={themeStyle}>
+          <main className="flex-1 overflow-hidden relative">
+            <div className="h-full">
+              <ScoreTab 
+                rules={rules} 
+                customers={customers} 
+                purchases={purchases} 
+                redemptions={redemptions} 
+                appUser={appUser} 
+                companyId={selectedCompanyId} 
+                isCompact={true} 
+              />
+            </div>
+          </main>
+          <Toast toast={toast} onHide={hideToast} />
+        </div>
+      );
+    }
+
     return (
       <div className={cn("min-h-screen flex flex-col lg:flex-row shadow-inner", isSuperAdminPanelActive ? "bg-black text-white" : "bg-white text-gray-900")} style={themeStyle}>
         
@@ -2147,7 +2200,18 @@ function AppContent() {
                 <SidebarButton active={activeTab === 'customers'} onClick={() => handleTabChange('customers')} icon={<Users size={20} />} label="Clientes" disabled={isOnboarding} />
               )}
               {(!isUserOnly || allowedTabs.includes('score')) && (
-                <SidebarButton active={activeTab === 'score'} onClick={() => handleTabChange('score')} icon={<PlusCircle size={20} />} label="Pontuar" disabled={isOnboarding} />
+                <div className="w-full relative group/score">
+                  <SidebarButton active={activeTab === 'score'} onClick={() => handleTabChange('score')} icon={<PlusCircle size={20} />} label="Pontuar" disabled={isOnboarding} />
+                  {!isOnboarding && (
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handlePopOut(); }}
+                      title="Abrir em Janela Flutuante"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-500 hover:text-white opacity-0 group-hover/score:opacity-100 transition-all hover:scale-110"
+                    >
+                      <ExternalLink size={14} />
+                    </button>
+                  )}
+                </div>
               )}
               <SidebarButton active={activeTab === 'notificar'} onClick={() => handleTabChange('notificar')} icon={<Bell size={20} />} label="Notificar" disabled={isOnboarding} />
               {(!isUserOnly || allowedTabs.includes('rewarded_customers')) && (
@@ -2393,7 +2457,7 @@ function AppContent() {
                 />
               </div>
             )}
-            {activeTab === 'score' && !isSuperAdmin && <div key="score"><ScoreTab rules={rules} customers={customers} purchases={purchases} redemptions={redemptions} appUser={appUser} companyId={selectedCompanyId} /></div>}
+            {activeTab === 'score' && !isSuperAdmin && <div key="score"><ScoreTab rules={rules} customers={customers} purchases={purchases} redemptions={redemptions} appUser={appUser} companyId={selectedCompanyId} isCompact={isCompact} onPopOut={handlePopOut} /></div>}
             {activeTab === 'promotion' && !isSuperAdmin && <div key="promotion"><PromotionTab customers={customers} purchases={purchases} /></div>}
             {activeTab === 'strategic_analysis' && !isSuperAdmin && <div key="strategic_analysis"><StrategicAnalysisTab purchases={purchases} customers={customers} rules={rules} goals={goals} companyId={selectedCompanyId} /></div>}
             {activeTab === 'reset' && !isSuperAdmin && <div key="reset"><ResetSystemTab companyId={selectedCompanyId} isAdmin={isAdminUser} /></div>}
@@ -4962,7 +5026,7 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
 
 // --- Tabs ---
 
-function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId }: { rules: LoyaltyRule; customers: Customer[]; purchases: Purchase[]; redemptions: Redemption[]; appUser: AppUser | null; companyId: string | null }) {
+function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId, isCompact, onPopOut }: { rules: LoyaltyRule; customers: Customer[]; purchases: Purchase[]; redemptions: Redemption[]; appUser: AppUser | null; companyId: string | null; isCompact?: boolean; onPopOut?: () => void }) {
   const [phone, setPhone] = useState<string | undefined>();
   const [amount, setAmount] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -5240,15 +5304,29 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
   };
 
   return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="flex flex-col items-center justify-center min-h-[700px] py-8 w-full">
-      {/* Mobile View - iPhone Frame (Hidden on Desktop) */}
-      <div className="lg:hidden relative w-[320px] h-[650px] bg-gray-950 rounded-[3rem] border-[8px] border-gray-800 shadow-2xl overflow-hidden flex flex-col">
-        {/* iPhone Notch */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6 bg-gray-800 rounded-b-2xl z-20" />
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className={cn("flex flex-col items-center justify-center w-full", isCompact ? "min-h-screen" : "min-h-[700px] py-8")}>
+      {/* Mobile View - iPhone Frame (Hidden on Desktop unless compact) */}
+      <div className={cn(
+        "relative overflow-hidden flex flex-col",
+        isCompact 
+          ? "w-full h-screen bg-gray-950 rounded-none border-0" 
+          : "lg:hidden w-[320px] h-[650px] bg-gray-950 rounded-[3rem] border-[8px] border-gray-800 shadow-2xl"
+      )}>
+        {/* iPhone Notch - only show if not compact */}
+        {!isCompact && <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6 bg-gray-800 rounded-b-2xl z-20" />}
         
         {/* App Content inside iPhone */}
         <div className="flex-1 overflow-y-auto custom-scrollbar p-6 pt-10 space-y-6">
-          <div className="flex flex-col items-center gap-4 mb-4">
+          <div className="flex flex-col items-center gap-4 mb-4 relative">
+             {!isCompact && (
+               <button 
+                 onClick={onPopOut}
+                 title="Abrir em Janela Flutuante"
+                 className="absolute -top-4 -right-4 p-2 bg-white rounded-full shadow-lg hover:scale-110 transition-all z-50 border border-gray-100 hidden lg:block"
+               >
+                 <ExternalLink size={20} className="text-primary" />
+               </button>
+             )}
             <div className="w-20 h-20 bg-white rounded-2xl border border-gray-100 flex items-center justify-center overflow-hidden shadow-lg p-2">
               {appUser?.logoURL ? (
                 <img src={appUser.logoURL} alt="Logo" className="w-full h-full object-contain" />
@@ -5467,8 +5545,20 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
         <div className="h-1.5 w-1/3 bg-gray-800 rounded-full mx-auto mb-2" />
       </div>
 
-      {/* Desktop Sequential Flow Layout (Hidden on Mobile) */}
-      <div className="hidden lg:flex flex-col items-center w-full max-w-5xl bg-white rounded-[3rem] p-16 shadow-2xl border border-gray-100 overflow-hidden relative min-h-[600px] justify-center">
+      {/* Desktop Sequential Flow Layout (Hidden on Mobile and Compact) */}
+      <div className={cn("hidden flex-col items-center w-full max-w-5xl bg-white rounded-[3rem] p-16 shadow-2xl border border-gray-100 overflow-hidden relative min-h-[600px] justify-center", !isCompact && "lg:flex")}>
+        {!isCompact && (
+          <button 
+            onClick={onPopOut}
+            title="Abrir em Janela Flutuante"
+            className="absolute top-8 right-8 p-4 bg-gray-50 rounded-2xl shadow-sm hover:bg-gray-100 hover:scale-105 active:scale-95 transition-all z-50 border border-gray-100 group"
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity">Modo Janela</span>
+              <ExternalLink size={24} className="text-primary" />
+            </div>
+          </button>
+        )}
         <AnimatePresence mode="wait">
           {!foundCustomer && !showRegister ? (
             <motion.div 
