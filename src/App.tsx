@@ -1042,7 +1042,7 @@ function AppContent() {
     return hasProfile && hasReward;
   }, [rules, goals, isRulesPreloaded, isGoalsPreloaded]);
 
-  const isOnboarding = isRulesPreloaded && isGoalsPreloaded && !isOnboardingComplete && !!user && !isSuperAdminPanelActive;
+  const isOnboarding = isRulesPreloaded && isGoalsPreloaded && !isOnboardingComplete && !!user && !isSuperAdminPanelActive && !isSuperAdmin;
 
   // Determine if specific steps need re-touring
   useEffect(() => {

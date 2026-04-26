@@ -605,12 +605,17 @@ export default function ConsumerApp() {
       try {
         await updateProfile(authUser, { photoURL: base64 });
         
-        // Also update the authUid records in firestore if possible to store photo preference
-        // For now, updateProfile is enough for the local authUser state
+        // Also update the authUid records in firestore
+        const batch = writeBatch(db);
+        customerRecords.forEach(record => {
+          batch.update(doc(db, 'customers', record.id), { photoURL: base64 });
+        });
+        await batch.commit();
+        
         showToast("Foto de perfil atualizada!", "success");
-      } catch (err) {
+      } catch (err: any) {
         console.error("Photo upload error:", err);
-        showToast("Erro ao atualizar foto.", "error");
+        showToast("Erro ao atualizar foto: " + (err.message || ""), "error");
       } finally {
         setIsUpdatingPhoto(false);
       }
@@ -714,6 +719,34 @@ export default function ConsumerApp() {
                 </div>
 
                 <div className="space-y-6">
+            {isBiometricAvailable && (
+              <div className="pb-2">
+                <button
+                  onClick={handleBiometricLogin}
+                  disabled={isBiometricLoading}
+                  className="w-full bg-green-50 border-2 border-green-100 p-4 rounded-2xl flex items-center justify-center gap-3 hover:bg-green-100 transition-all group shadow-sm"
+                >
+                  <div className="w-10 h-10 bg-white shadow-sm rounded-xl flex items-center justify-center text-green-600">
+                    <Smartphone size={24} />
+                  </div>
+                  <div className="text-left">
+                    <span className="text-xs font-black text-green-700 uppercase tracking-widest block leading-none">
+                      {localStorage.getItem('biometric_id') ? 'Acesso Biométrico' : 'Ativar Biometria'}
+                    </span>
+                    <span className="text-[8px] font-bold text-green-600/60 uppercase mt-1 block">
+                      {localStorage.getItem('biometric_id') ? 'Acesso Instantâneo' : 'Disponível neste aparelho'}
+                    </span>
+                  </div>
+                </button>
+                <div className="relative my-6">
+                  <div className="absolute inset-0 flex items-center px-4"><div className="w-full border-t border-gray-100"></div></div>
+                  <div className="relative flex justify-center text-center">
+                    <span className="bg-white px-2 text-[10px] text-gray-400 font-bold uppercase tracking-widest">ou use seu número</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Seu Celular</label>
                     <PhoneInput placeholder="(00) 00000-0000" value={phone} onChange={setPhone} defaultCountry="BR" className="PhoneInput consumer-phone-input" />
@@ -725,28 +758,6 @@ export default function ConsumerApp() {
                   >
                     {loading ? 'Buscando...' : 'Acessar Carteira'}
                   </button>
-
-            {isBiometricAvailable && (
-              <div className="pt-2">
-                <button
-                  onClick={handleBiometricLogin}
-                  disabled={isBiometricLoading}
-                  className="w-full bg-white border-2 border-gray-100 p-4 rounded-2xl flex items-center justify-center gap-3 hover:bg-gray-50 transition-all group"
-                >
-                  <div className="w-8 h-8 bg-green-50 rounded-lg flex items-center justify-center text-green-600">
-                    <Smartphone size={20} />
-                  </div>
-                  <span className="text-xs font-black text-gray-700 uppercase tracking-widest">
-                    {localStorage.getItem('biometric_id') ? 'Acessar com Biometria' : 'Biometria Disponível'}
-                  </span>
-                </button>
-                {!localStorage.getItem('biometric_id') && (
-                  <p className="text-[9px] text-gray-400 font-bold uppercase tracking-widest text-center mt-2">
-                    Acesse com e-mail e ative no seu perfil
-                  </p>
-                )}
-              </div>
-            )}
 
                   <div className="relative">
                     <div className="absolute inset-0 flex items-center px-4"><div className="w-full border-t border-gray-100"></div></div>
@@ -777,8 +788,8 @@ export default function ConsumerApp() {
               <motion.div key="confirm" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8 text-center">
                 <div className="relative inline-block">
                   <div className="w-24 h-24 bg-green-50 rounded-[2rem] flex items-center justify-center mx-auto text-green-600 overflow-hidden shadow-xl border-4 border-white">
-                    {customerRecords.find(r => r.photoURL)?.photoURL ? (
-                      <img src={customerRecords.find(r => r.photoURL)?.photoURL} className="w-full h-full object-cover" alt="User" />
+                    {authUser?.photoURL || customerRecords.find(r => r.photoURL)?.photoURL ? (
+                      <img src={authUser?.photoURL || customerRecords.find(r => r.photoURL)?.photoURL} className="w-full h-full object-cover" alt="User" />
                     ) : (
                       <Smartphone size={40} />
                     )}
@@ -916,18 +927,18 @@ export default function ConsumerApp() {
   return (
     <div className="min-h-screen bg-gray-50 font-sans pb-24">
       {/* Header */}
-      <header className="bg-white px-6 py-10 sticky top-0 z-10 border-b border-gray-100 flex items-center justify-between">
+      <header className="bg-white px-6 py-12 sticky top-0 z-10 border-b border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center overflow-hidden border border-gray-100 shadow-lg shrink-0">
+          <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center overflow-hidden border-4 border-gray-50 shadow-xl shrink-0">
             <img 
               src="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" 
               alt="Logo" 
-              className="w-full h-full object-contain p-2"
+              className="w-[85%] h-[85%] object-contain"
               referrerPolicy="no-referrer"
             />
           </div>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl overflow-hidden border-2 border-green-500/20 shadow-sm bg-gray-50 flex items-center justify-center shrink-0">
+            <div className="w-12 h-12 rounded-2xl overflow-hidden border-2 border-green-500/30 shadow-lg bg-gray-50 flex items-center justify-center shrink-0">
                {authUser?.photoURL ? (
                  <img src={authUser.photoURL} alt="Profile" className="w-full h-full object-cover" />
                ) : (
@@ -935,19 +946,22 @@ export default function ConsumerApp() {
                )}
             </div>
             <div>
-              <h2 className="text-xl font-black text-gray-900 tracking-tight leading-none uppercase italic">Meus Pontos</h2>
-              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest leading-relaxed mt-1">
+              <h2 className="text-2xl font-black text-gray-900 tracking-tight leading-none uppercase italic">Meus Pontos</h2>
+              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest leading-relaxed mt-2">
                 Olá, {customerRecords[0]?.name?.split(' ')[0] || 'Cliente'}
               </p>
             </div>
           </div>
         </div>
-        <button 
-          onClick={handleLogout}
-          className="p-3 bg-red-50 text-red-500 hover:bg-red-100 rounded-2xl transition-all shadow-sm"
-        >
-          <LogOut size={20} />
-        </button>
+        <div className="flex flex-col items-center gap-2">
+          <button 
+            onClick={handleLogout}
+            className="p-3 bg-red-50 text-red-500 hover:bg-red-100 rounded-2xl transition-all shadow-md group relative"
+          >
+            <LogOut size={20} />
+            <span className="absolute -bottom-8 right-0 bg-gray-900 text-white text-[8px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">SAIR</span>
+          </button>
+        </div>
       </header>
 
       <main className="p-6 space-y-6">
@@ -1660,7 +1674,7 @@ function FooterNavButton({ active, onClick, icon, label }: { active: boolean, on
       </div>
       <span className={cn(
         "text-[9px] font-black uppercase tracking-tighter transition-all",
-        active ? "opacity-100 translate-y-0" : "opacity-80 translate-y-0"
+        active ? "opacity-100 translate-y-0" : "opacity-100 text-gray-400"
       )}>{label}</span>
     </button>
   );
