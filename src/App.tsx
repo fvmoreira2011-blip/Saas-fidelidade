@@ -4,6 +4,7 @@
  */
 
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { useState, useEffect, useMemo, Component, ReactNode, createContext, useContext } from 'react';
 import { 
   collection, 
@@ -929,8 +930,13 @@ function AppContent() {
   });
   const [isCompact, setIsCompact] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('mode') === 'compact';
+    const compact = params.get('mode') === 'compact';
+    if (compact) {
+      document.title = "PONTUAR - Modo Flutuante";
+    }
+    return compact;
   });
+  const [pipContainer, setPipContainer] = useState<HTMLElement | null>(null);
   const { toast, showToast, hideToast } = useToast();
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -1401,11 +1407,57 @@ function AppContent() {
     };
   }, [user, appUser?.approved, isAdminUser, selectedCompanyId]);
 
-  const handlePopOut = () => {
-    const width = 430;
-    const height = 932; // iPhone 14 Pro Max height approx
-    const left = window.screen.width / 2 - width / 2;
-    const top = window.screen.height / 2 - height / 2;
+  const handlePopOut = async () => {
+    // Try Document Picture-in-Picture first (Always on Top supported)
+    if ('documentPictureInPicture' in window) {
+      try {
+        const pipWindow = await (window as any).documentPictureInPicture.requestWindow({
+          width: 450,
+          height: 600,
+        });
+
+        // Copy styles
+        [...document.styleSheets].forEach((styleSheet) => {
+          try {
+            const cssRules = [...styleSheet.cssRules].map((rule) => rule.cssText).join('');
+            const style = document.createElement('style');
+            style.textContent = cssRules;
+            pipWindow.document.head.appendChild(style);
+          } catch (e) {
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = styleSheet.href;
+            pipWindow.document.head.appendChild(link);
+          }
+        });
+
+        // Copy body classes for Tailwind
+        pipWindow.document.body.className = document.body.className + " bg-gray-950 overflow-hidden";
+        pipWindow.document.title = "PONTUAR - Sobreposição";
+
+        const container = pipWindow.document.createElement('div');
+        container.id = 'pip-root';
+        container.style.height = '100vh';
+        container.style.width = '100vw';
+        pipWindow.document.body.appendChild(container);
+        
+        setPipContainer(container);
+
+        pipWindow.addEventListener('pagehide', () => {
+          setPipContainer(null);
+        });
+        
+        return;
+      } catch (err) {
+        console.error("PiP failed, falling back to window.open", err);
+      }
+    }
+
+    // Fallback if PiP not available
+    const width = 450;
+    const height = 550;
+    const left = window.screen.width - width - 50; 
+    const top = 100;
     const url = `${window.location.origin}${window.location.pathname}?mode=compact&tab=score`;
     window.open(url, 'ScoreWindow', `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes`);
   };
@@ -2093,6 +2145,20 @@ function AppContent() {
 
     return (
       <div className={cn("min-h-screen flex flex-col lg:flex-row shadow-inner", isSuperAdminPanelActive ? "bg-black text-white" : "bg-white text-gray-900")} style={themeStyle}>
+        {pipContainer && createPortal(
+          <div className="h-screen w-screen bg-gray-950 overflow-hidden" style={themeStyle}>
+            <ScoreTab 
+              rules={rules} 
+              customers={customers} 
+              purchases={purchases} 
+              redemptions={redemptions} 
+              appUser={appUser} 
+              companyId={selectedCompanyId} 
+              isCompact={true} 
+            />
+          </div>,
+          pipContainer
+        )}
         
         {/* Onboarding Overlay */}
         <AnimatePresence>
@@ -5304,30 +5370,53 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
   };
 
   return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className={cn("flex flex-col items-center justify-center w-full", isCompact ? "min-h-screen" : "min-h-[700px] py-8")}>
-      {/* Mobile View - iPhone Frame (Hidden on Desktop unless compact) */}
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className={cn("flex flex-col items-center justify-center w-full", isCompact ? "min-h-screen bg-gray-950" : "min-h-[700px] py-8")}>
+      {/* View Container */}
       <div className={cn(
-        "relative overflow-hidden flex flex-col",
+        "relative overflow-hidden flex flex-col w-full",
         isCompact 
-          ? "w-full h-screen bg-gray-950 rounded-none border-0" 
+          ? "h-screen bg-gray-900" 
           : "lg:hidden w-[320px] h-[650px] bg-gray-950 rounded-[3rem] border-[8px] border-gray-800 shadow-2xl"
       )}>
-        {/* iPhone Notch - only show if not compact */}
+        {/* Compact Mode Header */}
+        {isCompact && (
+          <div className="bg-primary border-b border-primary/20 px-4 py-3 flex items-center justify-between shadow-sm">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Painel de Pontuação</span>
+            </div>
+            <span className="text-[9px] text-white/60 font-bold uppercase">Sempre no Topo</span>
+          </div>
+        )}
+
+        {/* iPhone Notch - only show if mobile simul and not compact */}
         {!isCompact && <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6 bg-gray-800 rounded-b-2xl z-20" />}
         
-        {/* App Content inside iPhone */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-6 pt-10 space-y-6">
+        {/* App Content */}
+        <div className={cn("flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6", isCompact ? "pt-4" : "pt-10")}>
+          {isCompact && (
+            <div className="bg-white/5 border border-white/10 p-3 rounded-xl mb-4 flex items-start gap-3">
+              <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center shrink-0">
+                <Target size={16} className="text-primary" />
+              </div>
+              <div>
+                <p className="text-[10px] text-white font-black uppercase tracking-widest leading-tight">Agilidade Máxima</p>
+                <p className="text-[9px] text-gray-400 font-medium leading-relaxed mt-1">Coloque esta janela sobre o seu sistema de vendas para pontuar instantaneamente.</p>
+              </div>
+            </div>
+          )}
           <div className="flex flex-col items-center gap-4 mb-4 relative">
              {!isCompact && (
                <button 
                  onClick={onPopOut}
-                 title="Abrir em Janela Flutuante"
-                 className="absolute -top-4 -right-4 p-2 bg-white rounded-full shadow-lg hover:scale-110 transition-all z-50 border border-gray-100 hidden lg:block"
+                 title="Abrir em Janela Flutuante (Sobreposto)"
+                 className="absolute -top-4 -right-4 p-2 bg-white rounded-full shadow-lg hover:scale-110 transition-all z-50 border border-gray-100 hidden lg:flex items-center gap-2 pr-4 group"
                >
                  <ExternalLink size={20} className="text-primary" />
+                 <span className="text-[10px] font-black text-primary uppercase tracking-widest hidden group-hover:block transition-all">Sobrepor</span>
                </button>
              )}
-            <div className="w-20 h-20 bg-white rounded-2xl border border-gray-100 flex items-center justify-center overflow-hidden shadow-lg p-2">
+            <div className={cn("bg-white flex items-center justify-center overflow-hidden shadow-lg p-2", isCompact ? "w-16 h-16 rounded-xl" : "w-20 h-20 rounded-2xl border border-gray-100")}>
               {appUser?.logoURL ? (
                 <img src={appUser.logoURL} alt="Logo" className="w-full h-full object-contain" />
               ) : (
