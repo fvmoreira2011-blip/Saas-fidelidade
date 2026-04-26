@@ -5,7 +5,7 @@
 
 import * as React from 'react';
 import { createPortal } from 'react-dom';
-import { useState, useEffect, useMemo, Component, ReactNode, createContext, useContext } from 'react';
+import { useState, useEffect, useMemo, useRef, Component, ReactNode, createContext, useContext } from 'react';
 import { 
   collection, 
   doc, 
@@ -1408,7 +1408,22 @@ function AppContent() {
   }, [user, appUser?.approved, isAdminUser, selectedCompanyId]);
 
   const handlePopOut = async () => {
-    // Try Document Picture-in-Picture first (Always on Top supported)
+    // Detect if inside an iframe (AI Studio preview)
+    const isIframe = window.self !== window.top;
+    
+    if (isIframe) {
+      showToast("Para usar a função 'Sempre no Topo', você deve abrir o aplicativo em uma nova aba primeiro.", "info");
+      // Fallback for demo purposes if they really want the popup anyway
+      const width = 450;
+      const height = 550;
+      const left = window.screen.width - width - 50; 
+      const top = 100;
+      const url = `${window.location.origin}${window.location.pathname}?mode=compact&tab=score`;
+      window.open(url, 'ScoreWindow', `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes`);
+      return;
+    }
+
+    // Try Document Picture-in-Picture (Always on Top supported)
     if ('documentPictureInPicture' in window) {
       try {
         const pipWindow = await (window as any).documentPictureInPicture.requestWindow({
@@ -5097,18 +5112,20 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
   const [amount, setAmount] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isWaitingForSync, setIsWaitingForSync] = useState(false);
+  const [tempCustomer, setTempCustomer] = useState<Customer | null>(null);
   const [showRegister, setShowRegister] = useState(false);
   const [newName, setNewName] = useState('');
   const [newBirthDate, setNewBirthDate] = useState('');
   const [showRedeemConfirm, setShowRedeemConfirm] = useState(false);
 
-  const [desktopStep, setDesktopStep] = useState(0); // 0: phone, 1: confirm/register, 2: amount, 3: success
+  const amountRef = useRef<HTMLInputElement>(null);
 
   // Filter specific customer data
   const customerMetrics = useMemo(() => {
     if (!phone) return null;
     const cleanPhone = phone.replace(/\D/g, '');
-    const customer = customers.find(c => c.phone.replace(/\D/g, '') === cleanPhone);
+    const customer = customers.find(c => c.phone.replace(/\D/g, '') === cleanPhone) || tempCustomer;
     if (!customer) return null;
 
     const customerPurchases = purchases.filter(p => p.customerId === customer.id);
@@ -5129,6 +5146,16 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
   }, [phone, customers, purchases, redemptions]);
 
   const foundCustomer = customerMetrics?.customer;
+
+  useEffect(() => {
+    if (foundCustomer && !showRegister) {
+      setTimeout(() => {
+        amountRef.current?.focus();
+      }, 100);
+    }
+  }, [foundCustomer, showRegister]);
+
+  const [desktopStep, setDesktopStep] = useState(0); // 0: phone, 1: confirm/register, 2: amount, 3: success
 
   const handleScore = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -5347,10 +5374,11 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
     setIsSubmitting(true);
     try {
       const now = new Date().toISOString();
-      await addDoc(collection(db, 'customers'), {
+      const cleanPhone = phone.replace(/\D/g, '');
+      const registrationDoc = await addDoc(collection(db, 'customers'), {
         companyId,
         name: newName,
-        phone,
+        phone: cleanPhone,
         birthDate: newBirthDate,
         points: 0,
         lastPurchaseDate: now,
@@ -5358,9 +5386,26 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
       });
       
       setMessage({ type: 'success', text: "Cliente cadastrado com sucesso!" });
+      const newCustomer: Customer = {
+        id: registrationDoc.id,
+        phone: cleanPhone,
+        name: newName,
+        birthDate: newBirthDate || undefined,
+        createdAt: now,
+        updatedAt: now
+      };
+
+      setTempCustomer(newCustomer);
       setShowRegister(false);
       setNewName('');
       setNewBirthDate('');
+      setIsWaitingForSync(true);
+      
+      // Clear temp customer after a bit, the real one from onSnapshot should have arrived by then
+      setTimeout(() => {
+        setIsWaitingForSync(false);
+        setTempCustomer(null);
+      }, 5000);
       // Keep the phone selected so the user can score immediately
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'customers_score');
@@ -5444,7 +5489,7 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
                 </div>
               </div>
 
-              {phone && phone.replace(/\D/g, '').length >= 10 && !foundCustomer && (
+              {phone && phone.replace(/\D/g, '').length >= 10 && !foundCustomer && !isWaitingForSync && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-blue-900/20 border border-blue-800/50 p-3 rounded-xl flex items-start gap-2">
                   <AlertCircle className="text-blue-400 shrink-0" size={16} />
                   <div className="flex-1">
@@ -5544,6 +5589,7 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
                   <input 
                     type="number" 
                     step="0.01"
+                    ref={amountRef}
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     placeholder="0,00"
@@ -5679,7 +5725,7 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
                 />
               </div>
 
-              {phone && phone.replace(/\D/g, '').length >= 10 && !foundCustomer && (
+              {phone && phone.replace(/\D/g, '').length >= 10 && !foundCustomer && !isWaitingForSync && (
                 <motion.div 
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -5822,6 +5868,7 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
                       <input 
                         type="number" 
                         step="0.01"
+                        ref={amountRef}
                         value={amount}
                         onChange={(e) => setAmount(e.target.value)}
                         placeholder="0,00"
