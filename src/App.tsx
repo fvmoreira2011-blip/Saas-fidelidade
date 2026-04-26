@@ -1063,7 +1063,13 @@ function AppContent() {
     return hasProfile && hasReward;
   }, [rules, goals, isRulesPreloaded, isGoalsPreloaded]);
 
-  const isOnboarding = isRulesPreloaded && isGoalsPreloaded && !isOnboardingComplete && !!user && !isSuperAdminPanelActive;
+  const isOnboarding = isRulesPreloaded && isGoalsPreloaded && !isOnboardingComplete && !!user && !isSuperAdminPanelActive && !isSuperAdmin;
+
+  useEffect(() => {
+    if (isSuperAdmin && onboardingTour !== null) {
+      setOnboardingTour(null);
+    }
+  }, [isSuperAdmin, onboardingTour]);
 
   // Determine if specific steps need re-touring
   useEffect(() => {
@@ -2546,7 +2552,7 @@ function AppContent() {
             {activeTab === 'score' && !isSuperAdmin && <div key="score"><ScoreTab rules={rules} customers={customers} purchases={purchases} redemptions={redemptions} appUser={appUser} companyId={selectedCompanyId} isCompact={isCompact} onPopOut={handlePopOut} /></div>}
             {activeTab === 'promotion' && !isSuperAdmin && <div key="promotion"><PromotionTab customers={customers} purchases={purchases} /></div>}
             {activeTab === 'strategic_analysis' && !isSuperAdmin && <div key="strategic_analysis"><StrategicAnalysisTab purchases={purchases} customers={customers} rules={rules} goals={goals} companyId={selectedCompanyId} /></div>}
-            {activeTab === 'reset' && !isSuperAdmin && <div key="reset"><ResetSystemTab companyId={selectedCompanyId} isAdmin={isAdminUser} /></div>}
+            {activeTab === 'reset' && (isAdminUser) && <div key="reset"><ResetSystemTab companyId={selectedCompanyId} isAdmin={isAdminUser} /></div>}
             {activeTab === 'company_profile' && !isSuperAdmin && <div key="company_profile"><CompanyProfileTab rules={rules} isAdmin={isAdminUser} appUser={appUser} onCancelContract={() => setContractCancelled(true)} onUpgrade={() => setActiveTab('strategic_analysis')} onUpdateRules={handleUpdateRules} /></div>}
             
             {/* Super Admin Tabs / Profile */}
@@ -9698,6 +9704,8 @@ function ResetSystemTab({ companyId, isAdmin }: { companyId: string | null; isAd
       const collectionsToDelete = ['customers', 'purchases', 'goals', 'redemptions', 'notifications'];
       
       for (const collName of collectionsToDelete) {
+        let docsDeletedCount = 0;
+        // Search for documents belonging to this company
         const q = query(collection(db, collName), where('companyId', '==', companyId));
         const snapshot = await getDocs(q);
         
@@ -9710,18 +9718,26 @@ function ResetSystemTab({ companyId, isAdmin }: { companyId: string | null; isAd
             batch.delete(d.ref);
           });
           await batch.commit();
+          docsDeletedCount += chunk.length;
         }
+        console.log(`Deleted ${docsDeletedCount} docs from ${collName}`);
       }
 
-      // Reset config document completely - This removes ALL fields and restored default rules
-      await setDoc(doc(db, 'configs', companyId), { 
+      // Reset configurations to absolute defaults
+      const resetRules = {
         ...DEFAULT_RULES,
         companyId,
         onboardingComplete: false,
         onboardingStep: 'welcome',
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
+        updatedAt: new Date().toISOString(),
+        currentAvgTicket: 0,
+        currentMonthlyRevenue: 0,
+        redemptionCode: generateRedemptionCode()
+      };
+
+      // Ensure we overwrite COMPLETELY
+      await setDoc(doc(db, 'configs', companyId), resetRules);
 
       // Also reset the user record in the users collection to ensure consistency
       const userRef = doc(db, 'users', companyId);
@@ -9729,6 +9745,7 @@ function ResetSystemTab({ companyId, isAdmin }: { companyId: string | null; isAd
       if (userDoc.exists()) {
         await updateDoc(userRef, {
           onboardingComplete: false,
+          approved: true, // Keep them approved so they stay logged in
           companyName: deleteField(),
           cnpj: deleteField(),
           logoURL: deleteField(),
@@ -9737,13 +9754,16 @@ function ResetSystemTab({ companyId, isAdmin }: { companyId: string | null; isAd
         });
       }
 
-      // Clear local storage items that might hold state
+      // Clear all local state indicators
       localStorage.clear();
+      sessionStorage.clear();
 
-      alert("Sistema zerado com sucesso! Redirecionando para o onboarding...");
-      // Forçar redirecionamento limpo para garantir que o estado local seja totalmente reiniciado
-      window.location.replace(window.location.origin);
+      alert("Sistema totalmente zerado com sucesso! Redirecionando para as configurações iniciais...");
+      
+      // Force clean reload
+      window.location.replace(window.location.origin + '?reset_complete=true');
     } catch (err: any) {
+      console.error("Reset Error:", err);
       if (err.code === 'auth/wrong-password') {
         setError('Senha incorreta.');
       } else {
