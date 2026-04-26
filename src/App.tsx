@@ -23,6 +23,7 @@ import {
   increment,
   getDocFromServer,
   deleteDoc,
+  deleteField,
   writeBatch
 } from 'firebase/firestore';
 import { initializeApp, deleteApp } from 'firebase/app';
@@ -1062,7 +1063,7 @@ function AppContent() {
     return hasProfile && hasReward;
   }, [rules, goals, isRulesPreloaded, isGoalsPreloaded]);
 
-  const isOnboarding = isRulesPreloaded && isGoalsPreloaded && !isOnboardingComplete && !!user && !isSuperAdminPanelActive && !isSuperAdmin;
+  const isOnboarding = isRulesPreloaded && isGoalsPreloaded && !isOnboardingComplete && !!user && !isSuperAdminPanelActive;
 
   // Determine if specific steps need re-touring
   useEffect(() => {
@@ -3429,10 +3430,10 @@ function TeleguidedOnboarding({ companyId, rules, goals, onUpdateRules, activeTo
     }
   };
 
-  const handleGoalChange = (monthStr: string, value: number, businessDays: number) => {
+  const handleGoalChange = (monthStr: string, value: number, workingDays: number) => {
     setMonthlyGoalsLocal(prev => {
       const filtered = prev.filter(g => g.month !== monthStr);
-      return [...filtered, { id: Math.random().toString(), month: monthStr, value, businessDays, label: `Meta de ${monthStr}` }];
+      return [...filtered, { id: Math.random().toString(), month: monthStr, value, workingDays, label: `Meta de ${monthStr}` }];
     });
   };
 
@@ -3675,8 +3676,8 @@ function TeleguidedOnboarding({ companyId, rules, goals, onUpdateRules, activeTo
                     type="number" 
                     placeholder="0,00"
                     value={monthlyGoalsLocal.find(g => g.month === format(next12Months[currentGoalMonthIndex], 'yyyy-MM'))?.value || ''}
-                    onChange={e => handleGoalChange(format(next12Months[currentGoalMonthIndex], 'yyyy-MM'), Number(e.target.value), monthlyGoalsLocal.find(g => g.month === format(next12Months[currentGoalMonthIndex], 'yyyy-MM'))?.businessDays || 22)}
-                    className="w-full bg-white border border-gray-200 rounded-2xl px-4 py-4 text-xl font-black text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 transition-all"
+                    onChange={e => handleGoalChange(format(next12Months[currentGoalMonthIndex], 'yyyy-MM'), Number(e.target.value), monthlyGoalsLocal.find(g => g.month === format(next12Months[currentGoalMonthIndex], 'yyyy-MM'))?.workingDays || 22)}
+                    className="w-full bg-white border border-gray-200 rounded-2xl px-4 py-4 text-xl font-black text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 transition-all font-mono"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -3684,9 +3685,9 @@ function TeleguidedOnboarding({ companyId, rules, goals, onUpdateRules, activeTo
                   <input 
                     type="number" 
                     placeholder="22"
-                    value={monthlyGoalsLocal.find(g => g.month === format(next12Months[currentGoalMonthIndex], 'yyyy-MM'))?.businessDays || 22}
+                    value={monthlyGoalsLocal.find(g => g.month === format(next12Months[currentGoalMonthIndex], 'yyyy-MM'))?.workingDays || 22}
                     onChange={e => handleGoalChange(format(next12Months[currentGoalMonthIndex], 'yyyy-MM'), monthlyGoalsLocal.find(g => g.month === format(next12Months[currentGoalMonthIndex], 'yyyy-MM'))?.value || 0, Number(e.target.value))}
-                    className="w-full bg-white border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 transition-all"
+                    className="w-full bg-white border border-gray-200 rounded-2xl px-4 py-3 text-sm font-bold text-gray-900 outline-none focus:ring-4 focus:ring-green-500/10 transition-all font-mono"
                   />
                 </div>
               </div>
@@ -6437,16 +6438,15 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
                         <Trash2 size={14} /> Excluir
                       </button>
                     )}
-                    <button 
-                      onClick={() => {
-                        const cleanPhone = customer.phone.replace(/\D/g, '');
-                        window.open(`https://wa.me/${cleanPhone}`, '_blank');
-                      }}
-                      className="text-blue-400 hover:text-blue-500 transition-colors"
+                    <a 
+                      href={`https://wa.me/${customer.phone.replace(/\D/g, '')}`} 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="text-blue-400 hover:text-blue-500 transition-colors p-2"
                       title="Abrir WhatsApp"
                     >
                       <MessageCircle size={18} />
-                    </button>
+                    </a>
                 </div>
               </div>
             </Card>
@@ -9713,20 +9713,36 @@ function ResetSystemTab({ companyId, isAdmin }: { companyId: string | null; isAd
         }
       }
 
-      // Reset onboarding flag and reference metrics in the config document
-      await updateDoc(doc(db, 'configs', companyId), { 
+      // Reset config document completely - This removes ALL fields and restored default rules
+      await setDoc(doc(db, 'configs', companyId), { 
+        ...DEFAULT_RULES,
+        companyId,
         onboardingComplete: false,
         onboardingStep: 'welcome',
-        currentAvgTicket: 0,
-        currentMonthlyRevenue: 0,
-        rewardTiers: [],
-        rewardMode: 'points',
-        campaignName: 'Novo Programa de Fidelidade'
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       });
 
+      // Also reset the user record in the users collection to ensure consistency
+      const userRef = doc(db, 'users', companyId);
+      const userDoc = await getDoc(userRef);
+      if (userDoc.exists()) {
+        await updateDoc(userRef, {
+          onboardingComplete: false,
+          companyName: deleteField(),
+          cnpj: deleteField(),
+          logoURL: deleteField(),
+          themeColor: deleteField(),
+          campaignName: deleteField()
+        });
+      }
+
+      // Clear local storage items that might hold state
+      localStorage.clear();
+
       alert("Sistema zerado com sucesso! Redirecionando para o onboarding...");
-      // Redirect to root dashboard which will trigger the onboarding tour automatically
-      window.location.href = '/';
+      // Forçar redirecionamento limpo para garantir que o estado local seja totalmente reiniciado
+      window.location.replace(window.location.origin);
     } catch (err: any) {
       if (err.code === 'auth/wrong-password') {
         setError('Senha incorreta.');
