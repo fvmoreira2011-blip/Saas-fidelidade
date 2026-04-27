@@ -1380,7 +1380,7 @@ function AppContent() {
 
     // Purchases
     const unsubPurchases = onSnapshot(
-      query(collection(db, 'purchases'), where('companyId', '==', companyId), orderBy('date', 'desc'), limit(100)), 
+      query(collection(db, 'purchases'), where('companyId', '==', companyId), orderBy('date', 'desc')), 
       (snapshot) => {
         const purcs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Purchase));
         setPurchases(purcs);
@@ -11243,6 +11243,10 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
     const start = parseISO(dateRange.start);
     const end = parseISO(dateRange.end);
     
+    // Identificar o mês filtrado para buscar a meta
+    const filteredMonthStr = format(start, 'yyyy-MM');
+    const currentGoal = goals.find(g => g.month === filteredMonthStr);
+    
     // Filter purchases within range
     const filteredPurchases = purchases.filter(p => {
       const d = parseISO(p.date);
@@ -11250,15 +11254,13 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
     });
 
     const totalSales = filteredPurchases.reduce((acc, p) => acc + p.amount, 0);
-    const now = new Date();
-    const currentMonthStr = format(now, 'yyyy-MM');
-    const currentGoal = goals.find(g => g.month === currentMonthStr);
     
-    const monthPurchases = purchases.filter(p => p.date.startsWith(currentMonthStr));
-    const currentMonthSales = monthPurchases.reduce((acc, p) => acc + p.amount, 0);
+    // Faturamento do MÊS filtrado (para comparar com a meta)
+    const monthPurchases = purchases.filter(p => p.date.startsWith(filteredMonthStr));
+    const filteredMonthSales = monthPurchases.reduce((acc, p) => acc + p.amount, 0);
     
     const daysWithSales = new Set(monthPurchases.map(p => p.date.split('T')[0])).size || 1;
-    const dailyAvg = currentMonthSales / daysWithSales;
+    const dailyAvg = filteredMonthSales / daysWithSales;
     const workingDays = currentGoal?.workingDays || 22;
     
     const projectedRevenue = dailyAvg * workingDays;
@@ -11316,6 +11318,11 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
       });
     }
 
+    const baseValue = customers.reduce((acc, c) => {
+      const custPurchases = purchases.filter(p => p.customerId === c.id);
+      return acc + custPurchases.reduce((pacc, p) => pacc + p.amount, 0);
+    }, 0);
+
     const payback = totalSales > 0 ? expectedCost / totalSales : 0;
 
     return {
@@ -11334,10 +11341,11 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
       payback,
       currentGoalValue: currentGoal?.value || 0,
       activeCustomers,
-      currentMonthSales,
+      filteredMonthSales,
       ltvImpact,
       participantLtv,
-      nonParticipantLtv
+      nonParticipantLtv,
+      baseValue
     };
   }, [purchases, customers, goals, rules, dateRange]);
 
@@ -11373,10 +11381,11 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
         metrics,
         companyName: rules.companyProfile?.companyName,
         campaignName: rules.campaignName,
-        currentMonth: format(new Date(), 'MMMM yyyy', { locale: ptBR })
+        currentRange: `${dateRange.start} até ${dateRange.end}`,
+        analysisMonth: format(parseISO(dateRange.start), 'MMMM yyyy', { locale: ptBR })
       };
 
-      const prompt = rules.aiPrompt || 'Analise os dados estratégicos do negócio.';
+      const prompt = rules.aiPrompt || 'Analise os dados estratégicos do negócio considerando todos os clientes (participantes e não participantes do programa).';
       const context = `Aqui estão os dados do meu negócio para análise: ${JSON.stringify(dataToAnalyze)}`;
 
       const ai = new GoogleGenAI({ apiKey: rules.geminiApiKey });
@@ -11484,10 +11493,10 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
           className="bg-white border-gray-100 shadow-sm"
         />
         <MetricCard 
-          title="Faturamento Atual" 
-          value={`R$ ${formatCurrency(metrics.currentMonthSales)}`}
-          subtitle="Meta do mês"
-          icon={Activity}
+          title="Meta de Faturamento" 
+          value={`R$ ${formatCurrency(metrics.currentGoalValue)}`}
+          subtitle={`Atingido: R$ ${formatCurrency(metrics.filteredMonthSales)} (${metrics.goalTrend.toFixed(1)}%)`}
+          icon={Target}
           className="bg-green-600 !text-white shadow-lg shadow-green-600/20"
         />
         <div className="bg-white border border-gray-100 shadow-sm rounded-3xl p-6 space-y-2">
