@@ -303,7 +303,8 @@ export default function ConsumerApp() {
       or(
         where('targetType', '==', 'global'),
         ...(customerIds.length > 0 ? [where('customerId', 'in', customerIds)] : []),
-        ...(storeIds.length > 0 ? [where('targetStoreId', 'in', storeIds)] : [])
+        ...(storeIds.length > 0 ? [where('targetStoreId', 'in', storeIds)] : []),
+        ...(storeIds.length > 0 ? [where('companyId', 'in', storeIds)] : [])
       ),
       limit(100)
     );
@@ -322,7 +323,8 @@ export default function ConsumerApp() {
         snapshot.docChanges().forEach((change) => {
           if (change.type === 'added') {
             const data = change.doc.data();
-            const store = stores[data.companyId];
+            const storeId = data.targetStoreId || data.companyId;
+            const store = storeId ? stores[storeId] : null;
             const companyLogo = store?.companyProfile?.logoURL || store?.companyProfile?.photoURL || 'https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui';
             
             new Notification(data.title, { 

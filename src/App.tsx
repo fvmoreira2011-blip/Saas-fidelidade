@@ -1656,6 +1656,38 @@ function AppContent() {
       });
       const bestWeekday = weekdays[weekdayCounts.indexOf(Math.max(...weekdayCounts))];
 
+      // Weekday detailed stats for "Termomentro" section in report
+      const ptDays = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+      const reportWeekdayCounts = new Array(7).fill(0).map(() => ({ count: 0, total: 0 }));
+      const reportHoursCount = new Array(24).fill(0);
+      reportPurchases.forEach(p => {
+        const d = parseISO(p.date);
+        const day = d.getDay();
+        const hour = d.getHours();
+        reportWeekdayCounts[day].count += 1;
+        reportWeekdayCounts[day].total += p.amount;
+        reportHoursCount[hour] += 1;
+      });
+      const repBestDayIndex = reportWeekdayCounts.reduce((best, curr, idx) => curr.total > reportWeekdayCounts[best].total ? idx : best, 0);
+      const repBestTicketDayIndex = reportWeekdayCounts.reduce((best, curr, idx) => {
+        const currentAvg = curr.count > 0 ? curr.total / curr.count : 0;
+        const bestAvg = reportWeekdayCounts[best].count > 0 ? reportWeekdayCounts[best].total / reportWeekdayCounts[best].count : 0;
+        return currentAvg > bestAvg ? idx : best;
+      }, 0);
+      const repPeakHour = reportHoursCount.reduce((best, curr, idx) => curr > reportHoursCount[best] ? idx : best, 0);
+
+      const reportWeekdayStats = {
+        bestDay: ptDays[repBestDayIndex],
+        bestTicketDay: ptDays[repBestTicketDayIndex],
+        peakHour: `${repPeakHour}:00 - ${repPeakHour + 1}:00`,
+        distribution: reportWeekdayCounts.map((c, i) => ({
+          fullName: ptDays[i],
+          total: c.total,
+          count: c.count,
+          avgTicket: c.count > 0 ? c.total / c.count : 0
+        }))
+      };
+
       const addHeaderFooter = (doc: any) => {
         doc.setFillColor(...rgbTheme);
         doc.rect(0, 0, pageWidth, 5, 'F');
@@ -2004,7 +2036,41 @@ function AppContent() {
       currentY += 5;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
-      doc.text('6. PARECER TÉCNICO & IA STRATEGIC INSIGHTS', marginSide, currentY);
+      doc.text('6. ANÁLISE TEMPORAL E TERMÔMETRO SEMANAL', marginSide, currentY);
+      
+      currentY += 10;
+      doc.setFontSize(10);
+      doc.setTextColor(80, 80, 80);
+      doc.text(`Dia de maior faturamento: ${reportWeekdayStats.bestDay}`, marginSide, currentY);
+      doc.text(`Dia de maior ticket médio: ${reportWeekdayStats.bestTicketDay}`, marginSide + 80, currentY);
+      currentY += 5;
+      doc.text(`Horário de pico: ${reportWeekdayStats.peakHour}`, marginSide, currentY);
+      currentY += 10;
+ 
+      if (typeof autoTable === 'function') {
+        (autoTable as any)(doc, {
+          startY: currentY,
+          margin: { left: marginSide, right: marginSide },
+          head: [['Dia da Semana', 'Faturamento Total', 'Transações', 'Ticket Médio']],
+          body: reportWeekdayStats.distribution.map(d => [
+            d.fullName,
+            `R$ ${formatCurrency(d.total)}`,
+            d.count,
+            `R$ ${formatCurrency(d.avgTicket)}`
+          ]),
+          theme: 'grid',
+          headStyles: { fillColor: [70, 70, 70] },
+          styles: { fontSize: 8 }
+        });
+        currentY = (doc as any).lastAutoTable?.finalY + 15;
+      }
+
+      if (currentY > pageHeight - 100) { doc.addPage(); addHeaderFooter(doc); currentY = 40; }
+      
+      currentY += 5;
+      doc.setFontSize(14);
+      doc.setTextColor(...rgbTheme);
+      doc.text('7. PARECER TÉCNICO & IA STRATEGIC INSIGHTS', marginSide, currentY);
 
       const cacheKey = `analysis_cache_${selectedCompanyId}`;
       const cached = localStorage.getItem(cacheKey);
@@ -4614,7 +4680,7 @@ function SuperAdminMessagesTab({ clients }: { clients: AppUser[] }) {
         targetType: targetStoreId === 'all' ? 'global' : 'store',
         targetStoreId: targetStoreId === 'all' ? 'all' : targetStoreId,
         type: 'info',
-        isRead: false,
+        read: false,
         createdAt: new Date().toISOString()
       });
       
@@ -5519,6 +5585,8 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
         await addDoc(collection(db, 'notifications'), {
           customerId: foundCustomer.id,
           companyId,
+          targetType: 'personal',
+          targetStoreId: companyId,
           title: rules.rewardMode === 'cashback' ? 'Você ganhou cashback!' : 'Você ganhou pontos!',
           message: rules.rewardMode === 'cashback' 
             ? `Parabéns! Você acaba de ganhar R$ ${formatCurrency(cashbackEarned)} de cashback na ${rules.companyProfile?.companyName || 'nossa loja'}. Seu saldo agora é de R$ ${formatCurrency(newCashback)}.`
@@ -5535,6 +5603,8 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
           await addDoc(collection(db, 'notifications'), {
             customerId: foundCustomer.id,
             companyId,
+            targetType: 'personal',
+            targetStoreId: companyId,
             title: 'Quase lá!',
             message: `Faltam apenas ${nextTier.points - newPoints} ponto(s) para você resgatar seu prêmio: ${nextTier.prize}!`,
             type: 'prize_near',
@@ -7304,6 +7374,8 @@ function NotifyTab({ customers, rules, companyId }: { customers: Customer[]; rul
         batch.set(notifRef, {
           customerId: id,
           companyId,
+          targetType: 'personal',
+          targetStoreId: companyId,
           title: `Mensagem da ${rules.companyProfile?.companyName || 'Loja'} para você`,
           message: customMessage,
           type: 'manual',
@@ -7608,6 +7680,11 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
 
     const maxTotal = Math.max(...counts.map(c => c.total)) || 1;
     const bestDayIndex = counts.reduce((best, curr, idx) => curr.total > counts[best].total ? idx : best, 0);
+    const bestTicketDayIndex = counts.reduce((best, curr, idx) => {
+      const currentAvg = curr.count > 0 ? curr.total / curr.count : 0;
+      const bestAvg = counts[best].count > 0 ? counts[best].total / counts[best].count : 0;
+      return currentAvg > bestAvg ? idx : best;
+    }, 0);
     const worstDayIndex = counts.reduce((worst, curr, idx) => (curr.total < counts[worst].total && curr.total > 0) ? idx : worst, 0);
     const peakHour = hoursCount.reduce((best, curr, idx) => curr > hoursCount[best] ? idx : best, 0);
 
@@ -7617,9 +7694,11 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
         fullName: ptDays[i],
         total: c.total, 
         count: c.count,
+        avgTicket: c.count > 0 ? c.total / c.count : 0,
         percentage: (c.total / maxTotal) * 100
       })),
       bestDay: ptDays[bestDayIndex],
+      bestTicketDay: ptDays[bestTicketDayIndex],
       worstDay: ptDays[worstDayIndex],
       peakHour: `${peakHour}:00 - ${peakHour + 1}:00`
     };
@@ -7872,10 +7951,14 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
             <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Termômetro de Vendas por Dia</h4>
             <p className="text-lg font-black text-gray-900">Análise de Frequência Semanal</p>
           </div>
-          <div className="flex gap-4">
+          <div className="flex flex-wrap gap-4">
             <div className="bg-green-50 px-4 py-2 rounded-xl border border-green-100">
-              <p className="text-[10px] font-bold text-green-600 uppercase">Melhor Dia</p>
+              <p className="text-[10px] font-bold text-green-600 uppercase">Melhor Faturamento</p>
               <p className="text-sm font-black text-green-700">{weekdayStats.bestDay}</p>
+            </div>
+            <div className="bg-amber-50 px-4 py-2 rounded-xl border border-amber-100">
+              <p className="text-[10px] font-bold text-amber-600 uppercase">Melhor Ticket Médio</p>
+              <p className="text-sm font-black text-amber-700">{weekdayStats.bestTicketDay}</p>
             </div>
             <div className="bg-blue-50 px-4 py-2 rounded-xl border border-blue-100">
               <p className="text-[10px] font-bold text-blue-600 uppercase">Pico de Horário</p>
@@ -9102,6 +9185,8 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
         batch.set(notifRef, {
           customerId: customer.id,
           companyId,
+          targetType: 'personal',
+          targetStoreId: companyId,
           title,
           message,
           type: type === 'paused' ? 'inactivity' : 'points',

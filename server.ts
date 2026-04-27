@@ -154,6 +154,8 @@ async function startServer() {
       await addDoc(notificationsRef, {
         customerId,
         companyId,
+        targetType: 'personal',
+        targetStoreId: companyId,
         title: 'Pontuação Recebida!',
         message: `Você recebeu ${pointsEarned > 0 ? pointsEarned + ' pontos' : 'R$ ' + cashbackEarned.toFixed(2) + ' de cashback'} da sua compra de R$ ${valorBruto.toFixed(2)}.`,
         type: 'points',
