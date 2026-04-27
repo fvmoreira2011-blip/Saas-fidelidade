@@ -25,7 +25,10 @@ import {
   User,
   signOut,
   sendPasswordResetEmail,
-  updateProfile
+  updateProfile,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence
 } from 'firebase/auth';
 import PhoneInput from 'react-phone-number-input';
 import { differenceInDays, parseISO } from 'date-fns';
@@ -294,6 +297,7 @@ export default function ConsumerApp() {
     }
 
     // Include personal notifications AND global ones AND store-specific ones
+    // Simplified query to avoid complex index requirements with 'or' and 'orderBy'
     const q = query(
       collection(db, 'notifications'),
       or(
@@ -301,13 +305,17 @@ export default function ConsumerApp() {
         where('targetType', '==', 'global'),
         ...(storeIds.length > 0 ? [where('targetStoreId', 'in', storeIds)] : [])
       ),
-      orderBy('createdAt', 'desc'),
-      limit(50)
+      limit(100)
     );
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const notifs = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as Notification));
-      setNotifications(notifs.sort((a, b) => b.date.localeCompare(a.date)));
+      // Sort client-side
+      setNotifications(notifs.sort((a, b) => {
+        const dateA = a.createdAt || a.date || '';
+        const dateB = b.createdAt || b.date || '';
+        return dateB.localeCompare(dateA);
+      }));
       
       // Browser Notification API
       if (Notification.permission === 'granted') {
@@ -441,6 +449,9 @@ export default function ConsumerApp() {
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
     try {
+      // Set persistence based on keepLoggedIn
+      await setPersistence(auth, keepLoggedIn ? browserLocalPersistence : browserSessionPersistence);
+      
       showToast('Abrindo conexão com Google...', 'info');
       const result = await signInWithPopup(auth, provider);
       showToast('Autenticado com sucesso!', 'success');
@@ -472,6 +483,9 @@ export default function ConsumerApp() {
     if (!email || !password) return;
     setLoading(true);
     try {
+      // Set persistence based on keepLoggedIn
+      await setPersistence(auth, keepLoggedIn ? browserLocalPersistence : browserSessionPersistence);
+
       let user;
       if (isRegistering) {
         const result = await createUserWithEmailAndPassword(auth, email, password);
@@ -641,7 +655,7 @@ export default function ConsumerApp() {
         setAuthUser({...authUser, photoURL: base64} as User);
       } catch (err: any) {
         console.error("Photo upload error:", err);
-        showToast("Erro ao atualizar foto: " + (err.message || ""), "error");
+        showToast("Erro ao atualizar foto. Verifique o tamanho do arquivo.", "error");
       } finally {
         setIsUpdatingPhoto(false);
       }

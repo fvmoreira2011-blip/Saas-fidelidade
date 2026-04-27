@@ -5355,7 +5355,9 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
       let cashbackEarned = 0;
       
       if (activeProgram === 'cashback') {
-        if (val >= (rules.cashbackConfig?.minActivationValue || 0)) {
+        // Correct Item 6: Ensure it respects minActivationValue (Valor Mínimo para Cashback)
+        const minVal = rules.cashbackConfig?.minActivationValue || 0;
+        if (val >= minVal) {
           cashbackEarned = val * ((rules.cashbackConfig?.percentage || 0) / 100);
         }
       } else {
@@ -7318,8 +7320,12 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
     const customerCountInPeriod = uniqueCustomersInPeriod.size;
 
     // Within vs Outside rules
-    // Rule: minPurchaseValue
-    const withinRules = filteredPurchases.filter(p => p.amount >= rules.minPurchaseValue).length;
+    // Rule: minPurchaseValue or minActivationValue depending on mode
+    const ruleThreshold = rules.rewardMode === 'cashback' 
+      ? (rules.cashbackConfig?.minActivationValue || 0) 
+      : (rules.minPurchaseValue || 0);
+
+    const withinRules = filteredPurchases.filter(p => p.amount >= ruleThreshold).length;
     const outsideRules = count - withinRules;
 
     // Conversion rate: (total customers and sales) / (people who bought within rule)
@@ -7882,7 +7888,12 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
             {ruleData.map((d, i) => (
               <div key={i} className="p-2 bg-gray-50 rounded-lg text-center">
                 <p className="text-[10px] font-bold text-gray-400 uppercase">{d.name}</p>
-                <p className="text-sm font-black text-gray-900">{d.value} <span className="text-[10px] text-gray-400 font-normal">vendas</span></p>
+                <p className="text-sm font-black text-gray-900">
+                  {d.value} 
+                  <span className="text-[10px] text-gray-400 font-normal ml-1">
+                    {d.name.includes('Clientes') ? 'pessoas' : 'vendas'}
+                  </span>
+                </p>
               </div>
             ))}
           </div>
@@ -9122,27 +9133,48 @@ function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rule
   const [showSuccess, setShowSuccess] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showCampaignModal, setShowCampaignModal] = useState<SeasonalDate | null>(null);
-  const [newDate, setNewDate] = useState<Partial<SeasonalDate>>({ type: 'custom' });
+  const [newDate, setNewDate] = useState<Partial<SeasonalDate>>({ type: 'custom', state: '', city: '' });
   const [stateFilter, setStateFilter] = useState('');
   const [cityFilter, setCityFilter] = useState('');
   const [activeTab, setActiveTab] = useState<'dates' | 'campaigns'>('dates');
 
+  const BRAZIL_STATES = [
+    { uf: 'AC', name: 'Acre' }, { uf: 'AL', name: 'Alagoas' }, { uf: 'AP', name: 'Amapá' },
+    { uf: 'AM', name: 'Amazonas' }, { uf: 'BA', name: 'Bahia' }, { uf: 'CE', name: 'Ceará' },
+    { uf: 'DF', name: 'Distrito Federal' }, { uf: 'ES', name: 'Espírito Santo' },
+    { uf: 'GO', name: 'Goiás' }, { uf: 'MA', name: 'Maranhão' }, { uf: 'MT', name: 'Mato Grosso' },
+    { uf: 'MS', name: 'Mato Grosso do Sul' }, { uf: 'MG', name: 'Minas Gerais' },
+    { uf: 'PA', name: 'Pará' }, { uf: 'PB', name: 'Paraíba' }, { uf: 'PR', name: 'Paraná' },
+    { uf: 'PE', name: 'Pernambuco' }, { uf: 'PI', name: 'Piauí' }, { uf: 'RJ', name: 'Rio de Janeiro' },
+    { uf: 'RN', name: 'Rio Grande do Norte' }, { uf: 'RS', name: 'Rio Grande do Sul' },
+    { uf: 'RO', name: 'Rondônia' }, { uf: 'RR', name: 'Roraima' }, { uf: 'SC', name: 'Santa Catarina' },
+    { uf: 'SP', name: 'São Paulo' }, { uf: 'SE', name: 'Sergipe' }, { uf: 'TO', name: 'Tocantins' }
+  ];
+
+  // Simplified city mapping for example. In production use IBGE API.
+  const CITIES_BY_STATE: Record<string, string[]> = {
+    'RJ': ['Rio de Janeiro', 'Niterói', 'Duque de Caxias', 'Petrópolis', 'Búzios'],
+    'SP': ['São Paulo', 'Campinas', 'Santos', 'Ribeirão Preto', 'Guarulhos'],
+    'MG': ['Belo Horizonte', 'Uberlândia', 'Contagem', 'Juiz de Fora'],
+    'RS': ['Porto Alegre', 'Caxias do Sul', 'Gramado']
+  };
+
   const HOLIDAY_LIBRARY: Partial<SeasonalDate>[] = [
     { name: 'Confraternização Universal', date: '2024-01-01', type: 'national' },
     { name: 'Carnaval', date: '2024-02-13', type: 'national' },
-    { name: 'Quarta-feira de Cinzas', date: '2024-02-14', type: 'national' },
-    { name: 'Sexta-feira Santa', date: '2024-03-29', type: 'national' },
-    { name: 'Páscoa', date: '2024-03-31', type: 'national' },
     { name: 'Tiradentes', date: '2024-04-21', type: 'national' },
     { name: 'Dia do Trabalhador', date: '2024-05-01', type: 'national' },
-    { name: 'Corpus Christi', date: '2024-05-30', type: 'national' },
     { name: 'Independência do Brasil', date: '2024-09-07', type: 'national' },
     { name: 'Nossa Senhora Aparecida', date: '2024-10-12', type: 'national' },
     { name: 'Finados', date: '2024-11-02', type: 'national' },
     { name: 'Proclamação da República', date: '2024-11-15', type: 'national' },
     { name: 'Dia da Consciência Negra', date: '2024-11-20', type: 'national' },
     { name: 'Natal', date: '2024-12-25', type: 'national' },
-    { name: 'Véspera de Ano Novo', date: '2024-12-31', type: 'national' },
+    { name: 'Réveillon', date: '2024-12-31', type: 'national' },
+    // Local examples
+    { name: 'Dia de São Sebastião', date: '2024-01-20', type: 'municipal', state: 'RJ', city: 'Rio de Janeiro' },
+    { name: 'Aniversário de São Paulo', date: '2024-01-25', type: 'municipal', state: 'SP', city: 'São Paulo' },
+    { name: 'Revolução Constitucionalista', date: '2024-07-09', type: 'state', state: 'SP' },
   ];
 
   useEffect(() => {
@@ -9238,31 +9270,43 @@ function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rule
           <div className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Estado (UF)</label>
-              <input 
-                type="text" 
+              <select 
                 value={stateFilter}
-                onChange={e => setStateFilter(e.target.value.toUpperCase())}
-                placeholder="Ex: SP" 
-                maxLength={2}
+                onChange={e => {
+                  setStateFilter(e.target.value);
+                  setCityFilter(''); // Reset city when state changes
+                }}
                 className="w-full bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-primary"
-              />
+              >
+                <option value="">Brasil (Todos)</option>
+                {BRAZIL_STATES.map(s => <option key={s.uf} value={s.uf}>{s.name} ({s.uf})</option>)}
+              </select>
             </div>
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Município</label>
-              <input 
-                type="text" 
+              <select 
                 value={cityFilter}
                 onChange={e => setCityFilter(e.target.value)}
-                placeholder="Ex: São Paulo" 
-                className="w-full bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-primary"
-              />
+                disabled={!stateFilter}
+                className="w-full bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
+              >
+                <option value="">Todas as Cidades</option>
+                {(CITIES_BY_STATE[stateFilter] || []).map(city => (
+                  <option key={city} value={city}>{city}</option>
+                ))}
+              </select>
             </div>
           </div>
 
           <div className="pt-4 border-t border-gray-100">
             <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 italic">Biblioteca de Feriados</h4>
             <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-              {HOLIDAY_LIBRARY.map((h, i) => (
+              {HOLIDAY_LIBRARY.filter(h => {
+                if (h.type === 'national') return true;
+                if (h.type === 'state' && (!stateFilter || h.state === stateFilter)) return true;
+                if (h.type === 'municipal' && (!stateFilter || h.state === stateFilter) && (!cityFilter || h.city === cityFilter)) return true;
+                return false;
+              }).map((h, i) => (
                 <button
                   key={i}
                   disabled={dates.some(d => d.name === h.name)}
