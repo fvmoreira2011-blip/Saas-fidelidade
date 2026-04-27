@@ -43,13 +43,22 @@ service cloud.firestore {
 
     function isValidCustomer(data) {
       return data.name is string && data.name.size() <= 200 &&
-             data.phone is string && data.phone.size() <= 30 &&
-             data.points is number &&
+             data.phone is string && data.phone.size() <= 200 &&
+             (data.points is number || !('points' in data)) &&
              (data.companyId is string || !('companyId' in data)) &&
              (data.lastPurchaseDate is string || !('lastPurchaseDate' in data)) &&
              (data.createdAt is string || !('createdAt' in data)) &&
+             (data.updatedAt is string || !('updatedAt' in data)) &&
+             (data.isDeleted is bool || !('isDeleted' in data)) &&
+             (data.deletedAt is string || !('deletedAt' in data)) &&
              (data.photoURL is string || !('photoURL' in data)) &&
-             (data.authUid is string || !('authUid' in data));
+             (data.authUid is string || !('authUid' in data)) &&
+             (data.birthDate is string || !('birthDate' in data)) &&
+             (data.email is string || !('email' in data)) &&
+             (data.totalSpent is number || !('totalSpent' in data)) &&
+             (data.purchasesCount is number || !('purchasesCount' in data)) &&
+             (data.totalPurchases is number || !('totalPurchases' in data)) &&
+             (data.cashbackBalance is number || !('cashbackBalance' in data));
     }
 
     function isValidPurchase(data) {
@@ -57,8 +66,13 @@ service cloud.firestore {
              data.customerName is string &&
              data.amount is number &&
              data.date is string &&
-             data.pointsEarned is number &&
-             (data.companyId is string || !('companyId' in data));
+             (data.pointsEarned is number || !('pointsEarned' in data)) &&
+             (data.companyId is string || !('companyId' in data)) &&
+             (data.items is list || !('items' in data)) &&
+             (data.campaignId is string || data.campaignId == null || !('campaignId' in data)) &&
+             (data.bonusPoints is number || !('bonusPoints' in data)) &&
+             (data.cashbackEarned is number || !('cashbackEarned' in data)) &&
+             (data.originalPoints is number || !('originalPoints' in data));
     }
 
     function isValidRedemption(data) {
@@ -67,12 +81,15 @@ service cloud.firestore {
              data.pointsValue is number &&
              (data.cost is number || !('cost' in data)) &&
              data.date is string &&
-             (data.companyId is string || !('companyId' in data));
+             (data.companyId is string || !('companyId' in data)) &&
+             (data.voucherCode is string || !('voucherCode' in data)) &&
+             (data.status is string || !('status' in data));
     }
 
     function isValidGoal(data) {
       return data.month is string &&
              data.value is number &&
+             (data.workingDays is number || !('workingDays' in data)) &&
              (data.companyId is string || !('companyId' in data));
     }
 
@@ -92,52 +109,54 @@ service cloud.firestore {
     // 3. Customers Collection
     match /customers/{customerId} {
       allow read: if true;
-      allow create: if isApproved() && isValidCustomer(incoming());
-      allow update: if (isApproved() && isValidCustomer(incoming())) || 
-                     (isSignedIn() && existing().authUid == request.auth.uid && isValidCustomer(incoming()));
+      allow create: if isApproved() && incoming().companyId == request.auth.uid && isValidCustomer(incoming());
+      allow update: if (isApproved() && existing().companyId == request.auth.uid && isValidCustomer(incoming())) || 
+                     (isSignedIn() && existing().authUid == request.auth.uid && isValidCustomer(incoming())) ||
+                     isAdmin();
       allow delete: if isAdmin();
     }
 
     // 4. Purchases Collection
     match /purchases/{purchaseId} {
-      allow read: if isApproved() || (isSignedIn() && existing().customerId == request.auth.uid);
-      allow create: if isApproved() && isValidPurchase(incoming());
-      allow update: if isApproved() && isValidPurchase(incoming());
+      allow read: if isApproved() || (isSignedIn() && existing().customerId == request.auth.uid) || isAdmin();
+      allow create: if isApproved() && incoming().companyId == request.auth.uid && isValidPurchase(incoming());
+      allow update: if (isApproved() && existing().companyId == request.auth.uid && isValidPurchase(incoming())) || isAdmin();
       allow delete: if isAdmin();
     }
 
     // 5. Redemptions Collection
     match /redemptions/{redemptionId} {
-      allow list: if isApproved() || (isSignedIn() && resource.data.customerId == request.auth.uid);
-      allow get: if isApproved() || (isSignedIn() && resource.data.customerId == request.auth.uid);
-      allow create: if isApproved() && isValidRedemption(incoming());
-      allow update: if isApproved() && isValidRedemption(incoming());
+      allow read: if isApproved() || (isSignedIn() && resource.data.customerId == request.auth.uid) || isAdmin();
+      allow create: if isApproved() && incoming().companyId == request.auth.uid && isValidRedemption(incoming());
+      allow update: if (isApproved() && existing().companyId == request.auth.uid && isValidRedemption(incoming())) || isAdmin();
       allow delete: if isAdmin();
     }
 
     // 6. Configs Collections
     match /config/{configId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isAdmin() || (isSignedIn() && configId == request.auth.uid);
     }
 
     match /configs/{configId} {
       allow read: if true;
-      allow create, update: if isAdmin();
+      allow create, update: if isAdmin() || (isSignedIn() && configId == request.auth.uid);
       allow delete: if isAdmin();
     }
 
     // 7. Notifications Collection
     match /notifications/{notificationId} {
-      allow read: if true;
-      allow create: if isApproved();
-      allow update, delete: if isSignedIn();
+      allow read: if isSignedIn();
+      allow create: if isApproved() && incoming().companyId == request.auth.uid;
+      allow update, delete: if isAdmin() || (isSignedIn() && existing().customerId == request.auth.uid);
     }
 
     // 8. Goals Collection
     match /goals/{goalId} {
-      allow read: if isApproved();
-      allow write: if isAdmin() && isValidGoal(incoming());
+      allow read: if isApproved() || isAdmin();
+      allow create: if isApproved() && incoming().companyId == request.auth.uid && isValidGoal(incoming());
+      allow update: if (isApproved() && existing().companyId == request.auth.uid && isValidGoal(incoming())) || isAdmin();
+      allow delete: if isAdmin();
     }
   }
 }

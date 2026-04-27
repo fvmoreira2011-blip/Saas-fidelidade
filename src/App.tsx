@@ -3726,17 +3726,25 @@ function TeleguidedOnboarding({ companyId, rules, goals, onUpdateRules, activeTo
           >
             {isFinishing ? 'Salvando...' : (activeTour === 'goals_month_by_month' && currentGoalMonthIndex < 11 ? 'Próximo Mês' : currentStep.button)}
           </Button>
-          {(activeTour === 'profile' || activeTour === 'campaign_config' || activeTour === 'goals_month_by_month') && !isSuperAdmin && (
-             <button 
-              onClick={async () => {
-                await onUpdateRules({ ...rules, onboardingComplete: true });
-                onNextTour(null);
-              }}
-              className="w-full mt-4 text-[10px] text-gray-400 font-bold uppercase tracking-widest hover:text-gray-600 transition-colors"
+          <div className="flex flex-col gap-2 mt-4">
+            {(activeTour === 'profile' || activeTour === 'campaign_config' || activeTour === 'goals_month_by_month') && !isSuperAdmin && (
+              <button 
+                onClick={async () => {
+                  await onUpdateRules({ ...rules, onboardingComplete: true });
+                  onNextTour(null);
+                }}
+                className="w-full text-[10px] text-gray-400 font-bold uppercase tracking-widest hover:text-gray-600 transition-colors"
+              >
+                Pular Configuração por enquanto
+              </button>
+            )}
+            <button 
+              onClick={() => signOut(auth)}
+              className="w-full text-[10px] text-gray-400 font-bold uppercase tracking-widest hover:text-red-500 transition-colors flex items-center justify-center gap-1.5"
             >
-              Pular Configuração por enquanto
+              <LogOut size={12} /> Sair do Sistema agora
             </button>
-          )}
+          </div>
         </div>
       </motion.div>
     </div>
@@ -9817,6 +9825,14 @@ function ResetSystemTab({ companyId, isAdmin }: { companyId: string | null; isAd
               className="w-full py-4 bg-red-600 hover:bg-red-700 text-white font-black uppercase tracking-widest shadow-xl shadow-red-600/20"
             >
               {isResetting ? 'Processando...' : 'Zerar Todo o Sistema'}
+            </Button>
+
+            <Button 
+              onClick={() => auth.signOut()}
+              variant="outline"
+              className="w-full py-3 border-gray-100 text-gray-500 font-bold uppercase text-[10px] tracking-widest hover:text-gray-900 flex items-center justify-center gap-2"
+            >
+              <LogOut size={14} /> Sair do Sistema agora
             </Button>
           </div>
         </div>
