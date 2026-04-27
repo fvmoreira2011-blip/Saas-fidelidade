@@ -109,13 +109,17 @@ interface StoreConfig {
 
 interface Notification {
   id: string;
-  customerId: string;
-  companyId: string;
+  customerId?: string;
+  companyId?: string; // Legacy
+  targetStoreId?: string;
   title: string;
   message: string;
-  type: 'points' | 'inactivity' | 'birthday' | 'prize_near';
+  type?: 'points' | 'inactivity' | 'birthday' | 'prize_near';
+  targetType?: 'global' | 'personal' | 'store';
   date: string;
-  read: boolean;
+  read?: boolean;
+  isRead?: boolean;
+  createdAt?: any;
 }
 
 function formatCurrency(value: number) {
@@ -291,18 +295,14 @@ export default function ConsumerApp() {
     // Batch notifications listener in groups of 10 to avoid 'in' query limit if needed, 
     // but here we likely have few stores per user.
     const storeIds = Object.keys(stores);
-    if (customerIds.length === 0 && storeIds.length === 0) {
-      setNotifications([]);
-      return;
-    }
-
+    
     // Include personal notifications AND global ones AND store-specific ones
     // Simplified query to avoid complex index requirements with 'or' and 'orderBy'
     const q = query(
       collection(db, 'notifications'),
       or(
-        ...(customerIds.length > 0 ? [where('customerId', 'in', customerIds)] : []),
         where('targetType', '==', 'global'),
+        ...(customerIds.length > 0 ? [where('customerId', 'in', customerIds)] : []),
         ...(storeIds.length > 0 ? [where('targetStoreId', 'in', storeIds)] : [])
       ),
       limit(100)
@@ -1468,25 +1468,62 @@ export default function ConsumerApp() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-gray-50 p-6 rounded-3xl text-center border border-gray-100">
-                  <div className="flex flex-col items-center">
-                    {(customerRecords.find(r => r.companyId === selectedStore)?.points || 0) > 0 && (
-                      <p className={cn("text-2xl font-black", stores[selectedStore]?.rewardMode === 'points' ? "text-green-600" : "text-gray-400")}>
-                        {formatCurrency(customerRecords.find(r => r.companyId === selectedStore)?.points || 0)} pts
-                      </p>
-                    )}
-                    {(customerRecords.find(r => r.companyId === selectedStore)?.cashbackBalance || 0) > 0 && (
-                      <p className={cn("text-2xl font-black", stores[selectedStore]?.rewardMode === 'cashback' ? "text-green-600" : "text-gray-400")}>
-                        R$ {formatCurrency(customerRecords.find(r => r.companyId === selectedStore)?.cashbackBalance || 0)}
-                      </p>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Saldo Atual</p>
-                </div>
-                <div className="bg-gray-50 p-6 rounded-3xl text-center border border-gray-100">
-                  <p className="text-3xl font-black text-gray-900">{stores[selectedStore]?.rewardTiers?.length || 0}</p>
-                  <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Prêmios</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {(() => {
+                  const record = customerRecords.find(r => r.companyId === selectedStore);
+                  const store = stores[selectedStore];
+                  const hasPoints = (record?.points || 0) > 0;
+                  const hasCashback = (record?.cashbackBalance || 0) > 0 || store?.rewardMode === 'cashback';
+                  
+                  return (
+                    <>
+                      {/* Points Card */}
+                      {(hasPoints || store?.rewardMode === 'points') && (
+                        <div className={cn(
+                          "p-6 rounded-3xl text-center border transition-all",
+                          store?.rewardMode === 'points' ? "bg-white border-green-200 shadow-lg shadow-green-900/5 ring-1 ring-green-100" : "bg-gray-50 border-gray-100 opacity-60"
+                        )}>
+                          <div className="flex flex-col items-center">
+                            <p className={cn("text-3xl font-black", store?.rewardMode === 'points' ? "text-green-600" : "text-gray-900")}>
+                              {formatCurrency(record?.points || 0)}
+                            </p>
+                            <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Pontos Atuais</p>
+                            
+                            {/* BLOCKING POINTS REDEMPTION IF CASHBACK ACTIVE > 30 DAYS */}
+                            {store?.rewardMode === 'cashback' && store?.rewardModeChangedAt && differenceInDays(new Date(), parseISO(store.rewardModeChangedAt)) > 30 && (
+                              <div className="mt-2 px-3 py-1 bg-red-100 text-red-600 text-[8px] font-black uppercase rounded-full">
+                                Resgate Expirado
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Cashback Card */}
+                      {hasCashback && (
+                        <div className={cn(
+                          "p-6 rounded-3xl text-center border transition-all",
+                          store?.rewardMode === 'cashback' ? "bg-green-600 border-green-500 shadow-lg shadow-green-900/20" : "bg-gray-50 border-gray-100 opacity-60"
+                        )}>
+                          <div className="flex flex-col items-center">
+                            <p className={cn("text-3xl font-black", store?.rewardMode === 'cashback' ? "text-white" : "text-gray-900")}>
+                              R$ {formatCurrency(record?.cashbackBalance || 0)}
+                            </p>
+                            <p className={cn("text-[10px] font-black uppercase tracking-widest", store?.rewardMode === 'cashback' ? "text-green-100" : "text-gray-400")}>
+                              Saldo Cashback
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+
+              <div className="bg-gray-50 p-4 rounded-2xl text-center border border-gray-100">
+                <div className="flex items-center justify-center gap-2">
+                  <Trophy size={14} className="text-amber-500" />
+                  <p className="text-sm font-black text-gray-900">{stores[selectedStore]?.rewardTiers?.length || 0} Metas Disponíveis</p>
                 </div>
               </div>
 
@@ -1570,14 +1607,28 @@ export default function ConsumerApp() {
                               )}
                             </div>
                           </div>
-                          {isUnlocked && (
-                            <button 
-                              onClick={() => setRedeemingTier({ ...tier, companyId: selectedStore })}
-                              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg shadow-green-500/20 active:scale-95 transition-all"
-                            >
-                              Resgatar
-                            </button>
+                      {isUnlocked && (
+                        <button 
+                          onClick={() => {
+                            // Check 30-day rule
+                            const record = customerRecords.find(r => r.companyId === selectedStore);
+                            const storeRule = stores[selectedStore];
+                            if (storeRule?.rewardMode === 'cashback' && storeRule?.rewardModeChangedAt && differenceInDays(new Date(), parseISO(storeRule.rewardModeChangedAt)) > 30) {
+                              alert("O prazo de 30 dias para resgate de pontos após a mudança para Cashback expirou.");
+                              return;
+                            }
+                            setRedeemingTier({ ...tier, companyId: selectedStore });
+                          }}
+                          className={cn(
+                            "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all text-white",
+                            (stores[selectedStore]?.rewardMode === 'cashback' && stores[selectedStore]?.rewardModeChangedAt && differenceInDays(new Date(), parseISO(stores[selectedStore].rewardModeChangedAt)) > 30)
+                              ? "bg-gray-200 text-gray-400 cursor-not-allowed shadow-none"
+                              : "bg-green-500 shadow-green-500/20"
                           )}
+                        >
+                          Resgatar
+                        </button>
+                      )}
                         </div>
                       );
                     })

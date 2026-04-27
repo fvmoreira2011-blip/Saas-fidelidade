@@ -98,6 +98,8 @@ import {
   UserCircle,
   TrendingUp,
   Unlock,
+  ShieldAlert,
+  Activity,
   Lock,
   Key,
   Award,
@@ -2132,6 +2134,33 @@ function AppContent() {
       );
     }
 
+    // BLOCKING LOGIC: Check for plan expiration
+    const isPlanExpired = appUser && appUser.planEndDate && new Date(appUser.planEndDate) < new Date();
+    if (isPlanExpired && !isSuperAdmin) {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-black p-6 text-white text-center overflow-hidden relative">
+          <div className="absolute inset-0 bg-red-950/20 blur-[100px] -z-10" />
+          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="max-w-md space-y-8 bg-white/5 p-12 rounded-[3rem] border border-white/10 shadow-2xl">
+            <div className="w-24 h-24 bg-red-500/20 rounded-full flex items-center justify-center mx-auto shadow-inner">
+               <ShieldAlert size={48} className="text-red-500" />
+            </div>
+            <div className="space-y-4">
+              <h1 className="text-3xl font-black uppercase tracking-tighter italic">ACESSO BLOQUEADO</h1>
+              <p className="text-gray-400 font-medium leading-relaxed">
+                Detectamos que o prazo de vigência do seu contrato <span className="text-white font-bold">({appUser?.planEndDate ? format(new Date(appUser.planEndDate), 'dd/MM/yyyy') : 'Expirado'})</span> chegou ao fim.
+              </p>
+              <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-400 text-xs font-bold leading-tight">
+                Entre em contato com o suporte da BuyPass para renovar seu plano e retomar o acesso aos seus dados e clientes.
+              </div>
+            </div>
+            <Button onClick={handleLogout} variant="outline" className="w-full py-4 rounded-2xl text-white border-white/20 hover:bg-white/10 font-black uppercase tracking-widest transition-all">
+              Sair da Conta
+            </Button>
+          </motion.div>
+        </div>
+      );
+    }
+
     const currentLogo = isSuperAdmin ? (appUser?.photoURL || `https://ui-avatars.com/api/?name=${appUser?.displayName || user.email}&background=random`) : (appUser?.logoURL || rules.companyProfile?.photoURL || APP_LOGO);
     const currentCompanyName = isSuperAdmin ? (appUser?.displayName || 'Administrador') : (appUser?.companyName || rules.companyProfile?.companyName || rules.campaignName || 'PROGRAMA DE FIDELIDADE');
     const currentThemeColor = appUser?.themeColor || rules.themeColor || '#000000';
@@ -3859,7 +3888,7 @@ function SuperAdminProfileTab({ appUser, onboardingMode, onOnboardingNext }: { a
                   type="text" 
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-white font-bold outline-none focus:border-primary transition-all"
+                  className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 font-bold outline-none focus:border-primary transition-all"
                 />
               </div>
               <div className="space-y-2">
@@ -3868,7 +3897,7 @@ function SuperAdminProfileTab({ appUser, onboardingMode, onOnboardingNext }: { a
                   type="text" 
                   value={appUser.email || ''}
                   disabled
-                  className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-gray-400 font-bold outline-none cursor-not-allowed"
+                  className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-gray-400 font-bold outline-none cursor-not-allowed"
                 />
               </div>
               <div className="space-y-2">
@@ -3878,7 +3907,7 @@ function SuperAdminProfileTab({ appUser, onboardingMode, onOnboardingNext }: { a
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   placeholder="(00) 00000-0000"
-                  className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-white font-bold outline-none focus:border-primary transition-all"
+                  className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 font-bold outline-none focus:border-primary transition-all"
                 />
               </div>
               <div className="space-y-2">
@@ -3887,7 +3916,7 @@ function SuperAdminProfileTab({ appUser, onboardingMode, onOnboardingNext }: { a
                   type="text" 
                   value={roleInCompany}
                   onChange={(e) => setRoleInCompany(e.target.value)}
-                  className="w-full px-6 py-4 bg-white/5 border border-white/10 rounded-2xl text-white font-bold outline-none focus:border-primary transition-all"
+                  className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 font-bold outline-none focus:border-primary transition-all"
                 />
               </div>
             </div>
@@ -4210,6 +4239,8 @@ function SuperAdminManagementTab() {
                   type="text" 
                   value={newAdmin.phone}
                   onChange={(e) => setNewAdmin({...newAdmin, phone: e.target.value})}
+                  required
+                  placeholder="(00) 00000-0000"
                   className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 font-bold outline-none focus:border-primary transition-all"
                 />
               </div>
@@ -4219,6 +4250,8 @@ function SuperAdminManagementTab() {
                   type="text" 
                   value={newAdmin.roleInCompany}
                   onChange={(e) => setNewAdmin({...newAdmin, roleInCompany: e.target.value})}
+                  required
+                  placeholder="Ex: Gerente"
                   className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 font-bold outline-none focus:border-primary transition-all"
                 />
               </div>
@@ -5000,7 +5033,8 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
     themeColor: '#fb8500',
     secondaryColor: '#000000',
     clientStatus: 'monthly',
-    activationDate: new Date().toISOString(),
+    planStartDate: new Date().toISOString(),
+    planEndDate: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString(),
     erpKey: '',
     email: '',
     password: '',
@@ -5218,6 +5252,20 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
                   • <span className="font-bold">Data de Nascimento</span> (formato: DD/MM/AAAA)<br/>
                   • <span className="font-bold">Valor da Venda</span> (campo: Valor Total/Compra)
                 </p>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Vigência do Plano</label>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <span className="text-[8px] font-black text-gray-500 uppercase ml-1">Início</span>
+                  <input type="date" value={formData.planStartDate?.split('T')[0] || ''} onChange={e => setFormData({ ...formData, planStartDate: new Date(e.target.value + 'T12:00:00').toISOString() })} className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 text-xs font-bold outline-none" required />
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[8px] font-black text-gray-500 uppercase ml-1">Término</span>
+                  <input type="date" value={formData.planEndDate?.split('T')[0] || ''} onChange={e => setFormData({ ...formData, planEndDate: new Date(e.target.value + 'T12:00:00').toISOString() })} className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-900 text-xs font-bold outline-none" required />
+                </div>
               </div>
             </div>
 
@@ -9177,11 +9225,22 @@ function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rule
     { name: 'Revolução Constitucionalista', date: '2024-07-09', type: 'state', state: 'SP' },
   ];
 
-  useEffect(() => {
-    if (rules.seasonalDates) {
-      setDates(rules.seasonalDates);
-    }
-  }, [rules.seasonalDates]);
+  const filteredDates = useMemo(() => {
+    return dates.filter(d => {
+      const matchState = !stateFilter || d.state === stateFilter || d.type === 'national';
+      const matchCity = !cityFilter || d.city === cityFilter || d.type !== 'municipal';
+      return matchState && matchCity;
+    }).sort((a, b) => a.date.localeCompare(b.date));
+  }, [dates, stateFilter, cityFilter]);
+
+  const availableHolidays = useMemo(() => {
+    return HOLIDAY_LIBRARY.filter(h => {
+      const matchState = !stateFilter || h.state === stateFilter || h.type === 'national';
+      const matchCity = !cityFilter || h.city === cityFilter || h.type !== 'municipal';
+      const alreadyAdded = dates.some(d => d.name === h.name && d.date === h.date);
+      return matchState && matchCity && !alreadyAdded;
+    });
+  }, [stateFilter, cityFilter, dates]);
 
   const handleSave = async (updatedDates: SeasonalDate[]) => {
     if (!isAdmin) return;
@@ -9190,10 +9249,10 @@ function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rule
       const updatedRules = { ...rules, seasonalDates: updatedDates };
       await onUpdateRules(updatedRules);
       setDates(updatedDates);
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 3000);
+      showToast("Configurações salvas!", "success");
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'configs');
+      console.error(error);
+      showToast("Erro ao salvar.", "error");
     } finally {
       setIsSaving(false);
     }
@@ -9213,21 +9272,13 @@ function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rule
     const updated = [...dates, date].sort((a, b) => a.date.localeCompare(b.date));
     handleSave(updated);
     setShowAddModal(false);
-    setNewDate({ type: 'custom' });
+    setNewDate({ type: 'custom', state: '', city: '' });
   };
 
   const removeDate = (id: string) => {
     const updated = dates.filter(d => d.id !== id);
     handleSave(updated);
   };
-
-  const filteredDates = useMemo(() => {
-    return dates.filter(d => {
-      const matchState = !stateFilter || !d.state || d.state === stateFilter;
-      const matchCity = !cityFilter || !d.city || d.city.toLowerCase().includes(cityFilter.toLowerCase());
-      return matchState && matchCity;
-    });
-  }, [dates, stateFilter, cityFilter]);
 
   const groupedDates = useMemo(() => {
     const groups: { [key: string]: SeasonalDate[] } = {
@@ -11182,18 +11233,32 @@ function AIConfigTab({ rules, onUpdateRules }: { rules: LoyaltyRule; onUpdateRul
 function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }: { purchases: Purchase[]; customers: Customer[]; rules: LoyaltyRule; goals: Goal[]; companyId: string | null }) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<string | null>(null);
+  const [dateRange, setDateRange] = useState<{start: string, end: string}>({
+    start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
+    end: format(endOfMonth(new Date()), 'yyyy-MM-dd')
+  });
   const { showToast } = useToast();
 
   const metrics = useMemo(() => {
+    const start = parseISO(dateRange.start);
+    const end = parseISO(dateRange.end);
+    
+    // Filter purchases within range
+    const filteredPurchases = purchases.filter(p => {
+      const d = parseISO(p.date);
+      return d >= start && d <= end;
+    });
+
+    const totalSales = filteredPurchases.reduce((acc, p) => acc + p.amount, 0);
     const now = new Date();
     const currentMonthStr = format(now, 'yyyy-MM');
     const currentGoal = goals.find(g => g.month === currentMonthStr);
     
     const monthPurchases = purchases.filter(p => p.date.startsWith(currentMonthStr));
-    const totalSales = monthPurchases.reduce((acc, p) => acc + p.amount, 0);
+    const currentMonthSales = monthPurchases.reduce((acc, p) => acc + p.amount, 0);
     
     const daysWithSales = new Set(monthPurchases.map(p => p.date.split('T')[0])).size || 1;
-    const dailyAvg = totalSales / daysWithSales;
+    const dailyAvg = currentMonthSales / daysWithSales;
     const workingDays = currentGoal?.workingDays || 22;
     
     const projectedRevenue = dailyAvg * workingDays;
@@ -11204,31 +11269,45 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
     const configuredMonthlyRevenue = rules.currentMonthlyRevenue || 0;
     const configuredActiveClients = configuredAvgTicket > 0 ? configuredMonthlyRevenue / configuredAvgTicket : 0;
     
-    const avgFrequency = customers.length > 0 ? purchases.length / customers.length : 0;
+    const avgFrequency = customers.length > 0 ? (purchases.length / customers.length) : 0;
     
-    const repeatCustomers = customers.filter(c => purchases.filter(p => p.customerId === c.id).length > 1).length;
-    const repurchaseRate = customers.length > 0 ? (repeatCustomers / customers.length) * 100 : 0;
-    
-    const churnThreshold = subDays(now, 60);
+    const churnThreshold = subDays(new Date(), 60);
     const churnedCustomers = customers.filter(c => {
       const lastPurchase = purchases.filter(p => p.customerId === c.id).sort((a, b) => b.date.localeCompare(a.date))[0];
       return lastPurchase ? parseISO(lastPurchase.date) < churnThreshold : true;
     }).length;
     const churnRate = customers.length > 0 ? (churnedCustomers / customers.length) * 100 : 0;
+    const activeCustomers = customers.length - churnedCustomers;
+    const repeatCustomers = customers.filter(c => purchases.filter(p => p.customerId === c.id).length > 1).length;
+    const repurchaseRate = customers.length > 0 ? (repeatCustomers / customers.length) * 100 : 0;
 
-    const avgLtv = avgTicket * avgFrequency;
+    // IMPACT ANALYSIS: Recalculate based on campaign participation
+    const campaignParticipants = customers.filter(c => (c.points || 0) > 0 || (c.cashbackBalance || 0) > 0);
+    const nonParticipants = customers.filter(c => !((c.points || 0) > 0 || (c.cashbackBalance || 0) > 0));
+    
+    const calculateLtvForSet = (set: Customer[]) => {
+      const setPurchases = purchases.filter(p => set.some(c => c.id === p.customerId));
+      const totalRev = setPurchases.reduce((acc, p) => acc + p.amount, 0);
+      return set.length > 0 ? totalRev / set.length : 0;
+    };
+
+    const participantLtv = calculateLtvForSet(campaignParticipants);
+    const nonParticipantLtv = calculateLtvForSet(nonParticipants);
+    const ltvImpact = nonParticipantLtv > 0 ? ((participantLtv / nonParticipantLtv) - 1) * 100 : 0;
+
+    // LTV Projections: Standard formula LTV = ARPU / Churn
+    const monthlyArpu = customers.length > 0 ? (totalSales / customers.length) : 0;
+    const monthlyChurn = (churnRate / 100) / 2; // Rough monthly churn from 60-day rate
+    const projectedLtv = monthlyChurn > 0 ? monthlyArpu / monthlyChurn : monthlyArpu * 12;
+
     const ltvProjections = [12, 24, 36, 60].map(months => ({
       months,
-      value: avgLtv * months,
-      conservative: avgLtv * months * 0.7
+      value: monthlyArpu * months,
+      conservative: monthlyArpu * months * 0.8
     }));
-
-    const activeCustomers = customers.length - churnedCustomers;
-    const baseValue = activeCustomers * avgLtv;
 
     let expectedCost = 0;
     if (rules.rewardMode === 'cashback') {
-      // For cashback, the cost is roughly the total cashback assigned to users
       expectedCost = customers.reduce((acc, c) => acc + (c.cashbackBalance || 0), 0);
     } else if (rules.rewardTiers) {
       rules.rewardTiers.forEach(tier => {
@@ -11240,6 +11319,7 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
     const payback = totalSales > 0 ? expectedCost / totalSales : 0;
 
     return {
+      totalSales,
       projectedRevenue,
       goalTrend,
       avgTicket,
@@ -11249,14 +11329,17 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
       avgFrequency,
       repurchaseRate,
       churnRate,
-      baseValue,
       ltvProjections,
       expectedCost,
       payback,
       currentGoalValue: currentGoal?.value || 0,
-      activeCustomers
+      activeCustomers,
+      currentMonthSales,
+      ltvImpact,
+      participantLtv,
+      nonParticipantLtv
     };
-  }, [purchases, customers, goals, rules]);
+  }, [purchases, customers, goals, rules, dateRange]);
 
   const handleGenerateAnalysis = async () => {
     if (!rules.geminiApiKey) {
@@ -11392,21 +11475,28 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
         <BarChart3 className="text-primary" size={28} />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <MetricCard 
-          title="Projeção Faturamento" 
-          value={`R$ ${formatCurrency(metrics.projectedRevenue)}`}
-          subtitle={`Meta: R$ ${formatCurrency(metrics.currentGoalValue)}`}
-          icon={DollarSign}
+          title="Faturamento Período" 
+          value={`R$ ${formatCurrency(metrics.totalSales)}`}
+          subtitle={`Filtro selecionado`}
+          icon={Calendar}
           className="bg-white border-gray-100 shadow-sm"
         />
         <MetricCard 
-          title="Calculado: Faturamento" 
-          value={`R$ ${formatCurrency(metrics.configuredMonthlyRevenue)}`}
-          subtitle="Valor configurado"
-          icon={TrendingUp}
-          className="bg-white border-gray-100 shadow-sm"
+          title="Faturamento Atual" 
+          value={`R$ ${formatCurrency(metrics.currentMonthSales)}`}
+          subtitle="Meta do mês"
+          icon={Activity}
+          className="bg-green-600 !text-white shadow-lg shadow-green-600/20"
         />
+        <div className="bg-white border border-gray-100 shadow-sm rounded-3xl p-6 space-y-2">
+          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Período de Comparação</label>
+          <div className="flex flex-col gap-2">
+            <input type="date" value={dateRange.start} onChange={e => setDateRange({...dateRange, start: e.target.value})} className="text-[10px] bg-gray-50 border-none rounded-lg p-2 font-bold outline-none" />
+            <input type="date" value={dateRange.end} onChange={e => setDateRange({...dateRange, end: e.target.value})} className="text-[10px] bg-gray-50 border-none rounded-lg p-2 font-bold outline-none" />
+          </div>
+        </div>
         <MetricCard 
           title="Ticket Médio" 
           value={`R$ ${formatCurrency(metrics.avgTicket)}`}
@@ -11417,7 +11507,7 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
         <MetricCard 
           title="Clientes Ativos" 
           value={`${metrics.activeCustomers}`}
-          subtitle={`Metas: ${Math.ceil(metrics.configuredActiveClients)}`}
+          subtitle={`Meta: ${Math.ceil(metrics.configuredActiveClients)}`}
           icon={Users}
           className="bg-white border-gray-100 shadow-sm"
         />
