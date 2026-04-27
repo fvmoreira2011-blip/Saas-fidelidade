@@ -132,6 +132,7 @@ import {
   History,
   Shield,
   Layout,
+  Thermometer,
   PieChart as PieChartIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -219,6 +220,7 @@ interface Goal {
   month: string; // YYYY-MM
   value: number;
   workingDays?: number;
+  customersCount?: number;
 }
 
 interface RewardTier {
@@ -303,6 +305,7 @@ interface LoyaltyRule {
   webhookUrl?: string;
   onboardingComplete?: boolean;
   erpKey?: string;
+  avgTicketGoal?: number;
 }
 
 interface AppUser {
@@ -689,7 +692,7 @@ const Button = ({
 }: { 
   children: React.ReactNode; 
   onClick?: () => void; 
-  variant?: 'primary' | 'secondary' | 'outline' | 'danger';
+  variant?: 'primary' | 'secondary' | 'outline' | 'danger' | 'ghost';
   size?: 'sm' | 'md' | 'lg';
   className?: string;
   disabled?: boolean;
@@ -699,7 +702,8 @@ const Button = ({
     primary: 'bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/20',
     secondary: 'bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/20',
     outline: 'border-2 border-primary text-primary hover:bg-primary/5',
-    danger: 'bg-red-500 text-white hover:bg-red-600 shadow-lg shadow-red-500/20'
+    danger: 'bg-red-500 text-white hover:bg-red-600 shadow-lg shadow-red-500/20',
+    ghost: 'bg-transparent text-gray-500 hover:bg-gray-100'
   };
 
   const sizes = {
@@ -1624,6 +1628,34 @@ function AppContent() {
          return recency > 30 && recency <= 60;
       }).length;
 
+      // New data points for enhanced report
+      const ticketGoal = rules.avgTicketGoal || avgTicket;
+      const customersByAvgTicket = Array.from(custMap.entries()).map(([id, data]: [string, any]) => ({
+        id,
+        name: data.name,
+        avgTicket: data.earned / data.count,
+        totalSpent: data.earned,
+        count: data.count,
+        last: data.last
+      }));
+
+      const aboveGoal = customersByAvgTicket.filter(c => c.avgTicket > ticketGoal);
+      const belowGoal = customersByAvgTicket.filter(c => c.avgTicket <= ticketGoal);
+
+      const top15 = [...customersByAvgTicket].sort((a, b) => b.totalSpent - a.totalSpent).slice(0, 15);
+      const toDevelop30 = customersByAvgTicket
+        .filter(c => c.avgTicket < ticketGoal)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 30);
+
+      const weekdays = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+      const weekdayCounts = new Array(7).fill(0).map(() => 0);
+      reportPurchases.forEach(p => {
+        const d = parseISO(p.date);
+        weekdayCounts[d.getDay()] += p.amount;
+      });
+      const bestWeekday = weekdays[weekdayCounts.indexOf(Math.max(...weekdayCounts))];
+
       const addHeaderFooter = (doc: any) => {
         doc.setFillColor(...rgbTheme);
         doc.rect(0, 0, pageWidth, 5, 'F');
@@ -1913,40 +1945,63 @@ function AppContent() {
 
       // 5. RANKING RFM & DIAGNÓSTICO IA
       doc.addPage();
-      currentY = 30;
+      addHeaderFooter(doc);
+      currentY = 40;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
-      doc.text('5. SEGMENTAÇÃO RFV (RECIÊNCIA, FREQUÊNCIA, VALOR)', marginSide, currentY);
-
-      const rfmData = Array.from(custMap.values()).map(c => {
-         const lastTime = c.last instanceof Date ? c.last.getTime() : 0;
-         const recencyDays = Math.floor((now.getTime() - lastTime) / (1000 * 60 * 60 * 24));
-         let segment = 'Inativo';
-         
-         if (recencyDays < 15 && c.count > 5) { segment = 'Campeão'; }
-         else if (recencyDays < 30) { segment = 'Fiel'; }
-         else if (recencyDays < 60) { segment = 'Em Risco'; }
-         else if (recencyDays < 90) { segment = 'Hibernando'; }
-         
-         return { name: c.name, count: c.count, earned: c.earned, segment, recency: recencyDays };
-      }).sort((a, b) => b.earned - a.earned).slice(0, 10);
-
+      doc.text('5. RANKINGS E SEGMENTAÇÃO DE CLIENTES', marginSide, currentY);
+      
+      currentY += 10;
       if (typeof autoTable === 'function') {
+        doc.setFontSize(11);
+        doc.setTextColor(50, 50, 50);
+        doc.text('Top 15 Melhores Clientes (LTV)', marginSide, currentY);
+        currentY += 5;
+
         (autoTable as any)(doc, {
-          startY: currentY + 7,
+          startY: currentY,
           margin: { left: marginSide, right: marginSide },
-          head: [['Cliente Top 10', 'Visitas', 'Total Gasto (LTV)', 'Recência (Dias)', 'Status RFV']],
-          body: rfmData.map(r => [r.name, r.count, `R$ ${formatCurrency(r.earned)}`, r.recency, r.segment]),
-          theme: 'grid',
-          headStyles: { fillColor: [60, 60, 60] },
+          head: [['Cliente', 'Volume Compras', 'Visitas', 'Ticket Médio', 'Última Compra']],
+          body: top15.map(c => [
+            c.name,
+            `R$ ${formatCurrency(c.totalSpent)}`,
+            c.count,
+            `R$ ${formatCurrency(c.avgTicket)}`,
+            format(c.last, 'dd/MM/yyyy')
+          ]),
+          theme: 'striped',
+          headStyles: { fillColor: [34, 197, 94] },
           styles: { fontSize: 7 }
         });
-        currentY = (doc as any).lastAutoTable?.finalY || (currentY + 60);
-      } else {
-        currentY += 60;
+        currentY = (doc as any).lastAutoTable?.finalY + 15;
+      }
+
+      if (currentY > pageHeight - 100) { doc.addPage(); addHeaderFooter(doc); currentY = 40; }
+
+      if (typeof autoTable === 'function') {
+        doc.setFontSize(11);
+        doc.setTextColor(50, 50, 50);
+        doc.text(`Próximos 30 Clientes a Desenvolver (Ticket Médio < R$ ${formatCurrency(ticketGoal)})`, marginSide, currentY);
+        currentY += 5;
+
+        (autoTable as any)(doc, {
+          startY: currentY,
+          margin: { left: marginSide, right: marginSide },
+          head: [['Cliente', 'Ticket Médio Atual', 'Visitas', 'Total Gasto']],
+          body: toDevelop30.map(c => [
+            c.name,
+            `R$ ${formatCurrency(c.avgTicket)}`,
+            c.count,
+            `R$ ${formatCurrency(c.totalSpent)}`
+          ]),
+          theme: 'striped',
+          headStyles: { fillColor: [249, 115, 22] },
+          styles: { fontSize: 7 }
+        });
+        currentY = (doc as any).lastAutoTable?.finalY + 15;
       }
       
-      currentY += 15;
+      currentY += 5;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
       doc.text('6. PARECER TÉCNICO & IA STRATEGIC INSIGHTS', marginSide, currentY);
@@ -5489,7 +5544,8 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
         }
       }
 
-      // Record purchase
+    // Record purchase
+    try {
       await addDoc(collection(db, 'purchases'), {
         companyId,
         customerId: foundCustomer.id,
@@ -5499,6 +5555,19 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
         pointsEarned,
         cashbackEarned
       });
+
+      // Update customer aggregates
+      const customerRef = doc(db, 'customers', foundCustomer.id);
+      await updateDoc(customerRef, {
+        points: newPoints,
+        cashbackBalance: newCashback,
+        lastPurchaseDate: now,
+        totalSpent: (foundCustomer.totalSpent || 0) + val,
+        totalPurchases: (foundCustomer.totalPurchases || 0) + 1
+      });
+    } catch (e) {
+      console.error("Error updating customer aggregates:", e);
+    }
 
       setMessage({ 
         type: 'success', 
@@ -5612,7 +5681,7 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
         }
       }
       
-      // 2. Create Customer
+    // 2. Create Customer
       const registrationDoc = await addDoc(collection(db, 'customers'), {
         companyId,
         name: newName,
@@ -5629,7 +5698,7 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
       });
       
       // 3. Create Purchase Tracking if numericAmount > 0
-      if (numericAmount > 0 && (pointsEarned > 0 || cashbackEarned > 0)) {
+      if (numericAmount > 0) {
         await addDoc(collection(db, 'purchases'), {
           companyId,
           customerId: registrationDoc.id,
@@ -6770,6 +6839,7 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
   const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [value, setValue] = useState('');
   const [workingDays, setWorkingDays] = useState('22');
+  const [customersCount, setCustomersCount] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [showOnboardingFinish, setShowOnboardingFinish] = useState(false);
   
@@ -6786,24 +6856,28 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
     try {
       const goalValue = parseFloat(value);
       const days = parseInt(workingDays) || 22;
+      const customersGoal = parseInt(customersCount) || 0;
       const existingGoal = goals.find(g => g.month === month);
       
       if (existingGoal) {
         await updateDoc(doc(db, 'goals', existingGoal.id), { 
           value: goalValue,
-          workingDays: days
+          workingDays: days,
+          customersCount: customersGoal
         });
       } else {
         await addDoc(collection(db, 'goals'), { 
           companyId, 
           month, 
           value: goalValue,
-          workingDays: days
+          workingDays: days,
+          customersCount: customersGoal
         });
       }
       
       setValue('');
       setWorkingDays('22');
+      setCustomersCount('');
       showToast("Meta salva com sucesso!", "success");
 
       if (onboardingStep === 'onboarding') {
@@ -6851,6 +6925,11 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
     setShowOnboardingFinish(true);
   };
 
+  const actualAvgTicket = useMemo(() => {
+    const totalSales = purchases.reduce((acc, p) => acc + p.amount, 0);
+    return purchases.length > 0 ? totalSales / purchases.length : 0;
+  }, [purchases]);
+
   const activeClientsNeeded = useMemo(() => {
     const rev = parseFloat(monthlyRevenue) || 0;
     const tkt = parseFloat(avgTicket) || 0;
@@ -6869,7 +6948,7 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
         <Target className="text-primary" size={28} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="p-6 bg-white border-gray-100 shadow-sm">
           <div className="flex items-center gap-2 mb-6">
             <h3 className="font-bold text-gray-900">Definir Meta de Faturamento</h3>
@@ -6898,22 +6977,37 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
                 />
               </div>
             </div>
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Meta de Faturamento (R$)</label>
-              <div className="relative">
-                <DollarSign className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-                <input 
-                  type="number" 
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  placeholder="0.00"
-                  step="0.01"
-                  className={cn(
-                    "w-full bg-gray-50 border rounded-2xl pl-14 pr-6 py-4 text-gray-900 font-black text-xl outline-none transition-all shadow-inner",
-                    onboardingStep === 'onboarding' && !value ? "border-amber-400 animate-pulse" : "border-gray-100 focus:border-primary"
-                  )}
-                  required
-                />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Meta de Faturamento (R$)</label>
+                <div className="relative">
+                  <DollarSign className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                  <input 
+                    type="number" 
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    placeholder="0.00"
+                    step="0.01"
+                    className={cn(
+                      "w-full bg-gray-50 border rounded-2xl pl-14 pr-6 py-4 text-gray-900 font-black text-xl outline-none transition-all shadow-inner",
+                      onboardingStep === 'onboarding' && !value ? "border-amber-400 animate-pulse" : "border-gray-100 focus:border-primary"
+                    )}
+                    required
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Meta de Clientes</label>
+                <div className="relative">
+                  <Users className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                  <input 
+                    type="number" 
+                    value={customersCount}
+                    onChange={(e) => setCustomersCount(e.target.value)}
+                    placeholder="0"
+                    className="w-full bg-gray-50 border border-gray-100 rounded-2xl pl-14 pr-6 py-4 text-gray-900 font-black text-xl outline-none focus:border-primary transition-all shadow-inner"
+                  />
+                </div>
               </div>
             </div>
             <Button 
@@ -6964,18 +7058,67 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
 
             <div className="p-6 bg-primary/5 border border-primary/10 rounded-2xl">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-[10px] font-black text-primary uppercase tracking-widest">Cálculo de Clientes Ativos</p>
-                <Users className="text-primary" size={16} />
+                <p className="text-[10px] font-black text-primary uppercase tracking-widest">Transações média de referencia</p>
+                <TrendingUp className="text-primary" size={16} />
               </div>
               <p className="text-3xl font-black text-gray-900 italic tracking-tighter">
-                {activeClientsNeeded} <span className="text-xs font-bold text-gray-400 uppercase not-italic">Clientes</span>
+                {activeClientsNeeded} <span className="text-xs font-bold text-gray-400 uppercase not-italic">Transações</span>
               </p>
               <p className="text-[10px] text-gray-400 font-medium mt-1 italic">Baseado no faturamento dividido pelo ticket médio.</p>
             </div>
 
-            <Button onClick={handleFinishGoalsOnboarding} disabled={isSaving} variant="outline" className="w-full py-4 border-primary/20 text-primary hover:bg-primary/5 font-black uppercase tracking-widest">
-              {onboardingStep === 'onboarding' ? 'COMPARAR E SALVAR METAS' : (isSaving ? 'Gravando...' : 'Atualizar Referências')}
+            <Button onClick={handleSaveReference} disabled={isSaving} variant="outline" className="w-full py-4 border-primary/20 text-primary hover:bg-primary/5 font-black uppercase tracking-widest">
+              {isSaving ? 'Gravando...' : 'Atualizar Referências'}
             </Button>
+          </div>
+        </Card>
+
+        <Card className="p-6 bg-white border-gray-100 shadow-sm">
+          <div className="flex items-center gap-2 mb-6">
+            <h3 className="font-bold text-gray-900">Meta de Ticket Médio</h3>
+            <div className="px-2 py-0.5 bg-blue-100 text-blue-600 rounded text-[8px] font-black uppercase tracking-widest">Objetivo</div>
+          </div>
+          <div className="space-y-6">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Meta de Ticket Médio (R$)</label>
+              <div className="relative">
+                <Target className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                <input 
+                  type="number" 
+                  value={rules.avgTicketGoal || ''}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value) || 0;
+                    onUpdateRules({ ...rules, avgTicketGoal: val });
+                  }}
+                  placeholder="Ex: 150.00"
+                  className="w-full bg-gray-50 border border-gray-100 rounded-2xl pl-12 pr-4 py-4 text-gray-900 font-black text-xl outline-none focus:border-primary transition-all"
+                />
+              </div>
+            </div>
+
+            <div className="p-6 bg-blue-50 border border-blue-100 rounded-2xl">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Ticket Atual (Real) vs Meta</p>
+                <TrendingUp size={16} className="text-blue-600" />
+              </div>
+              <div className="flex items-baseline gap-2">
+                <p className="text-3xl font-black text-gray-900 tracking-tighter">
+                  {((actualAvgTicket) / (rules.avgTicketGoal || 1) * 100).toFixed(1)}%
+                </p>
+                <span className="text-[10px] font-bold text-gray-400 uppercase">da Meta</span>
+              </div>
+              <p className="text-[10px] text-blue-600 font-bold mb-2">Ticket Médio Real: R$ {formatCurrency(actualAvgTicket)}</p>
+              <div className="mt-2 w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                <div 
+                  className="bg-blue-600 h-full transition-all duration-1000" 
+                  style={{ width: `${Math.min((actualAvgTicket) / (rules.avgTicketGoal || 1) * 100, 100)}%` }} 
+                />
+              </div>
+            </div>
+
+            <p className="text-[10px] text-gray-400 italic">
+              Esta meta será usada no Dashboard para segmentar clientes acima e abaixo do desempenho esperado.
+            </p>
           </div>
         </Card>
       </div>
@@ -7340,6 +7483,8 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [detailView, setDetailView] = useState<'vendas' | 'clientes' | 'ticket' | null>(null);
+  const [ticketFilterRange, setTicketFilterRange] = useState({ min: '', max: '' });
+  const [selectedSlice, setSelectedSlice] = useState<string | null>(null);
 
   const filteredPurchases = useMemo(() => {
     const now = new Date();
@@ -7367,6 +7512,36 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
     const uniqueCustomersInPeriod = new Set(filteredPurchases.map(p => p.customerId));
     const customerCountInPeriod = uniqueCustomersInPeriod.size;
 
+    // Ticket Goal
+    const ticketGoal = rules.avgTicketGoal || 0;
+
+    // Segmentation (Uses all-time purchases for average ticket as per request)
+    const customersByAvgTicket = customers.filter(c => !c.isDeleted).map(customer => {
+      const custPurchases = purchases.filter(p => p.customerId === customer.id);
+      const custTotal = custPurchases.reduce((acc, p) => acc + p.amount, 0);
+      const custAvgTicket = custPurchases.length > 0 ? custTotal / custPurchases.length : 0;
+      
+      const frequency = custPurchases.length;
+      const lastP = custPurchases.sort((a, b) => b.date.localeCompare(a.date))[0];
+      const recency = lastP ? differenceInDays(new Date(), parseISO(lastP.date)) : 999;
+      
+      return {
+        id: customer.id,
+        name: customer.name,
+        avgTicket: custAvgTicket,
+        inCampaign: (customer.points || 0) > 0 || (customer.cashbackBalance || 0) > 0,
+        rfv: `R${recency < 30 ? 3 : (recency < 60 ? 2 : 1)} F${frequency > 5 ? 3 : (frequency > 2 ? 2 : 1)} V${custTotal > 1000 ? 3 : (custTotal > 500 ? 2 : 1)}`
+      };
+    });
+
+    const activeCustomersByAvgTicket = customersByAvgTicket.filter(c => c.avgTicket > 0);
+
+    const minFilter = parseFloat(ticketFilterRange.min) || 0;
+    const maxFilter = parseFloat(ticketFilterRange.max) || 9999999;
+
+    const aboveGoal = activeCustomersByAvgTicket.filter(c => c.avgTicket > ticketGoal && c.avgTicket >= minFilter && c.avgTicket <= maxFilter);
+    const belowGoal = activeCustomersByAvgTicket.filter(c => c.avgTicket <= ticketGoal && c.avgTicket >= minFilter && c.avgTicket <= maxFilter);
+
     // Within vs Outside rules
     // Rule: minPurchaseValue or minActivationValue depending on mode
     const ruleThreshold = rules.rewardMode === 'cashback' 
@@ -7378,7 +7553,7 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
 
     // Conversion rate: (total customers and sales) / (people who bought within rule)
     const uniqueCustomersInPeriodCount = uniqueCustomersInPeriod.size;
-    const uniqueCustomersWithinRules = new Set(filteredPurchases.filter(p => p.amount >= rules.minPurchaseValue).map(p => p.customerId)).size;
+    const uniqueCustomersWithinRules = new Set(filteredPurchases.filter(p => p.amount >= (rules.minPurchaseValue || 0)).map(p => p.customerId)).size;
     
     // Customers without purchases in period
     const customersWithoutPurchases = Math.max(0, customers.length - uniqueCustomersInPeriodCount);
@@ -7406,10 +7581,127 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
       withinRules,
       outsideRules,
       customersWithoutPurchases,
-      conversionRate: uniqueCustomersWithinRules > 0 ? (customers.length + purchases.length) / uniqueCustomersWithinRules : 0,
-      activeCustomersCount
+      conversionRate: customers.length > 0 ? (uniqueCustomersInPeriodCount / customers.length) * 100 : 0,
+      activeCustomersCount,
+      aboveGoal,
+      belowGoal,
+      ticketGoal
     };
-  }, [filteredPurchases, purchases, customers, rules]);
+  }, [filteredPurchases, purchases, customers, rules, ticketFilterRange]);
+
+  const weekdayStats = useMemo(() => {
+    const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    const ptDays = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+    const counts = new Array(7).fill(0).map(() => ({ count: 0, total: 0 }));
+    const hoursCount = new Array(24).fill(0);
+
+    purchases.forEach(p => {
+      const d = parseISO(p.date);
+      if (!isNaN(d.getTime())) {
+        const day = d.getDay();
+        const hour = d.getHours();
+        counts[day].count += 1;
+        counts[day].total += p.amount;
+        hoursCount[hour] += 1;
+      }
+    });
+
+    const maxTotal = Math.max(...counts.map(c => c.total)) || 1;
+    const bestDayIndex = counts.reduce((best, curr, idx) => curr.total > counts[best].total ? idx : best, 0);
+    const worstDayIndex = counts.reduce((worst, curr, idx) => (curr.total < counts[worst].total && curr.total > 0) ? idx : worst, 0);
+    const peakHour = hoursCount.reduce((best, curr, idx) => curr > hoursCount[best] ? idx : best, 0);
+
+    return {
+      distribution: counts.map((c, i) => ({ 
+        day: days[i], 
+        fullName: ptDays[i],
+        total: c.total, 
+        count: c.count,
+        percentage: (c.total / maxTotal) * 100
+      })),
+      bestDay: ptDays[bestDayIndex],
+      worstDay: ptDays[worstDayIndex],
+      peakHour: `${peakHour}:00 - ${peakHour + 1}:00`
+    };
+  }, [purchases]);
+
+  const handleExportSegmentPdf = async (segment: 'above' | 'below') => {
+    const data = segment === 'above' ? stats.aboveGoal : stats.belowGoal;
+    const title = segment === 'above' ? 'Clientes Acima da Meta de Ticket' : 'Clientes Abaixo da Meta de Ticket';
+    
+    try {
+      showToast("Gerando exportação...", "info");
+      const { jsPDF } = await import('jspdf');
+      const autoTableModule = await import('jspdf-autotable');
+      const autoTable = autoTableModule.default || autoTableModule;
+      
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const marginSide = 15;
+      const themeColor = rules.themeColor || '#16a34a';
+      
+      const hexToRgb = (hex: string): [number, number, number] => {
+        try {
+          const cleanHex = hex.startsWith('#') ? hex.slice(1) : hex;
+          const r = parseInt(cleanHex.slice(0, 2), 16) || 0;
+          const g = parseInt(cleanHex.slice(2, 4), 16) || 0;
+          const b = parseInt(cleanHex.slice(4, 6), 16) || 0;
+          return [r, g, b];
+        } catch (e) { return [34, 197, 94]; }
+      };
+      const rgbTheme = hexToRgb(themeColor);
+
+      const addHeaderFooter = (doc: any) => {
+        doc.setFillColor(...rgbTheme);
+        doc.rect(0, 0, pageWidth, 5, 'F');
+        doc.setFontSize(10);
+        doc.setTextColor(50, 50, 50);
+        doc.setFont('helvetica', 'bold');
+        doc.text(title, marginSide, 16);
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.text(rules.campaignName || 'Programa de Fidelidade', marginSide, 21);
+        doc.setDrawColor(240, 240, 240);
+        doc.line(marginSide, 26, pageWidth - marginSide, 26);
+        doc.setFontSize(7);
+        doc.setTextColor(150, 150, 150);
+        const str = `Página ${doc.internal.getNumberOfPages()} | Gerado em ${new Date().toLocaleDateString('pt-BR')} | BuyPass Intelligence`;
+        doc.text(str, pageWidth / 2, pageHeight - 10, { align: 'center' });
+      };
+
+      addHeaderFooter(doc);
+
+      doc.setFontSize(9);
+      doc.setTextColor(100, 100, 100);
+      doc.text(`Período analisado: ${period === 'all' ? 'Todo o histórico' : 'Personalizado'}`, marginSide, 35);
+      doc.text(`Filtro atual: R$ ${formatCurrency(parseFloat(ticketFilterRange.min || '0'))} até R$ ${formatCurrency(parseFloat(ticketFilterRange.max || 'inf'))}`, marginSide, 40);
+      doc.text(`Meta de Referência: R$ ${formatCurrency(stats.ticketGoal)}`, marginSide, 45);
+
+      if (typeof autoTable === 'function') {
+        (autoTable as any)(doc, {
+          startY: 55,
+          margin: { left: marginSide, right: marginSide },
+          head: [['Cliente', 'Ticket Médio', 'Participação', 'RFV']],
+          body: data.map(c => [
+            c.name,
+            `R$ ${formatCurrency(c.avgTicket)}`,
+            c.inCampaign ? 'Sim (Participa)' : 'Não (Inativo)',
+            c.rfv
+          ]),
+          theme: 'striped',
+          headStyles: { fillColor: segment === 'above' ? [34, 197, 94] : [249, 115, 22] },
+          styles: { fontSize: 8 }
+        });
+      }
+
+      showToast("PDF gerado!", "success");
+      doc.save(`${segment === 'above' ? 'Acima' : 'Abaixo'}_Meta_${format(new Date(), 'yyyyMMdd')}.pdf`);
+    } catch (e) {
+      console.error(e);
+      showToast("Erro ao gerar PDF", "error");
+    }
+  };
 
   const monthlySalesData = useMemo(() => {
     const months: Record<string, number> = {};
@@ -7569,6 +7861,63 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
           </div>
         </div>
       </div>
+
+      {/* Termômetro de Dias da Semana */}
+      <Card className="p-6 bg-white border-gray-100 shadow-sm relative overflow-hidden">
+        <div className="absolute top-0 right-0 p-8 opacity-5">
+          <Thermometer size={120} />
+        </div>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+          <div>
+            <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Termômetro de Vendas por Dia</h4>
+            <p className="text-lg font-black text-gray-900">Análise de Frequência Semanal</p>
+          </div>
+          <div className="flex gap-4">
+            <div className="bg-green-50 px-4 py-2 rounded-xl border border-green-100">
+              <p className="text-[10px] font-bold text-green-600 uppercase">Melhor Dia</p>
+              <p className="text-sm font-black text-green-700">{weekdayStats.bestDay}</p>
+            </div>
+            <div className="bg-blue-50 px-4 py-2 rounded-xl border border-blue-100">
+              <p className="text-[10px] font-bold text-blue-600 uppercase">Pico de Horário</p>
+              <p className="text-sm font-black text-blue-700">{weekdayStats.peakHour}</p>
+            </div>
+          </div>
+        </div>
+        
+        <div className="grid grid-cols-7 gap-2 md:gap-4 h-32 items-end">
+          {weekdayStats.distribution.map((d, i) => (
+            <div key={i} className="flex flex-col items-center gap-2 group relative h-full justify-end">
+              <div 
+                className="w-full rounded-t-lg transition-all duration-500 bg-gray-100 hover:bg-primary/20 cursor-help relative overflow-hidden" 
+                style={{ height: `${Math.max(d.percentage, 10)}%` }}
+              >
+                <div 
+                  className={cn(
+                    "absolute bottom-0 w-full transition-all duration-700",
+                    d.fullName === weekdayStats.bestDay ? "bg-primary" : "bg-primary/40",
+                    d.fullName === weekdayStats.worstDay && "bg-orange-400"
+                  )}
+                  style={{ height: '100%' }}
+                />
+              </div>
+              <span className={cn(
+                "text-[10px] font-black uppercase tracking-widest",
+                d.fullName === weekdayStats.bestDay ? "text-primary" : "text-gray-400"
+              )}>
+                {d.day}
+              </span>
+              
+              <div className="absolute bottom-full mb-2 hidden group-hover:block bg-gray-900 text-white text-[10px] p-3 rounded-xl shadow-2xl z-20 whitespace-nowrap">
+                <p className="font-bold text-primary mb-1">{d.fullName}</p>
+                <div className="space-y-1">
+                  <p className="flex justify-between gap-4"><span>Faturamento:</span> <span className="font-bold">R$ {formatCurrency(d.total)}</span></p>
+                  <p className="flex justify-between gap-4"><span>Transações:</span> <span className="font-bold">{d.count}</span></p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
 
       <AnimatePresence>
         {period === 'custom' && (
@@ -7771,6 +8120,106 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
         )}
       </AnimatePresence>
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card className="p-4 bg-white border-gray-100 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Ticket Médio Acima da Meta</h4>
+            <div className="flex items-center gap-2">
+              <Button 
+                onClick={() => handleExportSegmentPdf('above')}
+                className="p-2 h-auto text-[10px] bg-gray-900 text-white font-bold"
+              >
+                <Download size={14} className="mr-1" /> PDF
+              </Button>
+            </div>
+          </div>
+          <div className="flex gap-2 mb-4">
+            <input 
+              type="number" 
+              placeholder="Min R$" 
+              value={ticketFilterRange.min}
+              onChange={(e) => setTicketFilterRange(prev => ({ ...prev, min: e.target.value }))}
+              className="w-1/2 p-2 bg-gray-50 border border-gray-100 rounded text-[10px] outline-none"
+            />
+            <input 
+              type="number" 
+              placeholder="Max R$" 
+              value={ticketFilterRange.max}
+              onChange={(e) => setTicketFilterRange(prev => ({ ...prev, max: e.target.value }))}
+              className="w-1/2 p-2 bg-gray-50 border border-gray-100 rounded text-[10px] outline-none"
+            />
+          </div>
+          <div className="h-48 overflow-y-auto pr-1">
+            <div className="space-y-2">
+              {stats.aboveGoal.map(c => (
+                <div key={c.id} className="flex justify-between items-center p-2 bg-green-50/30 border border-green-100 rounded text-[10px]">
+                  <div>
+                    <p className="font-bold text-gray-900">{c.name}</p>
+                    <p className="text-gray-400">RFV: {c.rfv}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-green-600">R$ {formatCurrency(c.avgTicket)}</p>
+                    <p className={c.inCampaign ? "text-green-500" : "text-gray-400"}>
+                      {c.inCampaign ? 'No Programa' : 'Fora'}
+                    </p>
+                  </div>
+                </div>
+              ))}
+              {stats.aboveGoal.length === 0 && <p className="text-center py-8 text-gray-400 italic text-[10px]">Nenhum cliente.</p>}
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-4 bg-white border-gray-100 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Ticket Médio Abaixo da Meta</h4>
+            <div className="flex items-center gap-2">
+              <Button 
+                onClick={() => handleExportSegmentPdf('below')}
+                className="p-2 h-auto text-[10px] bg-gray-900 text-white font-bold"
+              >
+                <Download size={14} className="mr-1" /> PDF
+              </Button>
+            </div>
+          </div>
+          <div className="flex gap-2 mb-4">
+            <input 
+              type="number" 
+              placeholder="Min R$" 
+              value={ticketFilterRange.min}
+              onChange={(e) => setTicketFilterRange(prev => ({ ...prev, min: e.target.value }))}
+              className="w-1/2 p-2 bg-gray-50 border border-gray-100 rounded text-[10px] outline-none"
+            />
+            <input 
+              type="number" 
+              placeholder="Max R$" 
+              value={ticketFilterRange.max}
+              onChange={(e) => setTicketFilterRange(prev => ({ ...prev, max: e.target.value }))}
+              className="w-1/2 p-2 bg-gray-50 border border-gray-100 rounded text-[10px] outline-none"
+            />
+          </div>
+          <div className="h-48 overflow-y-auto pr-1">
+            <div className="space-y-2">
+              {stats.belowGoal.map(c => (
+                <div key={c.id} className="flex justify-between items-center p-2 bg-amber-50/30 border border-amber-100 rounded text-[10px]">
+                  <div>
+                    <p className="font-bold text-gray-900">{c.name}</p>
+                    <p className="text-gray-400">RFV: {c.rfv}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-amber-600">R$ {formatCurrency(c.avgTicket)}</p>
+                    <p className={c.inCampaign ? "text-green-500" : "text-gray-400"}>
+                      {c.inCampaign ? 'No Programa' : 'Fora'}
+                    </p>
+                  </div>
+                </div>
+              ))}
+              {stats.belowGoal.length === 0 && <p className="text-center py-8 text-gray-400 italic text-[10px]">Nenhum cliente.</p>}
+            </div>
+          </div>
+        </Card>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="p-4 bg-white border-gray-100 shadow-sm">
           <h4 className="text-xs font-bold text-gray-500 uppercase mb-4">Ticket Médio por Período</h4>
@@ -7836,11 +8285,11 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
             </div>
             <div>
               <p className="text-xs font-bold text-gray-500 uppercase">Taxa de Conversão</p>
-              <h3 className="text-2xl font-bold text-gray-900">{stats.conversionRate.toFixed(2)}x</h3>
+              <h3 className="text-2xl font-bold text-gray-900">{stats.conversionRate.toFixed(1)}%</h3>
             </div>
           </div>
           <p className="text-xs text-gray-500">
-            Relação entre base total e vendas sobre clientes que compraram dentro da regra.
+            Penetração na base de clientes (Clientes ativos no período / Base total).
           </p>
         </Card>
       </div>
@@ -7906,7 +8355,7 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
           </div>
         </Card>
 
-        <Card className="p-4 bg-white border-gray-100 shadow-sm">
+        <Card className="p-4 bg-white border-gray-100 shadow-sm relative">
           <h4 className="text-xs font-bold text-gray-500 uppercase mb-4">Distribuição por Regra</h4>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -7919,9 +8368,16 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
                   outerRadius={80}
                   paddingAngle={5}
                   dataKey="value"
+                  onClick={(data) => setSelectedSlice(data.name === selectedSlice ? null : data.name)}
+                  cursor="pointer"
                 >
                   {ruleData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    <Cell 
+                      key={`cell-${index}`} 
+                      fill={COLORS[index % COLORS.length]}
+                      stroke={selectedSlice === entry.name ? '#000' : 'none'}
+                      strokeWidth={2}
+                    />
                   ))}
                 </Pie>
                 <Tooltip 
@@ -7932,9 +8388,67 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
               </PieChart>
             </ResponsiveContainer>
           </div>
+
+          <AnimatePresence>
+            {selectedSlice && (
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="absolute inset-x-4 top-12 bottom-4 bg-white/95 backdrop-blur-sm z-30 flex flex-col p-4 border border-gray-100 rounded-2xl shadow-2xl"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <h5 className="text-[10px] font-black uppercase text-gray-400 tracking-widest">{selectedSlice}</h5>
+                  <Button variant="ghost" size="sm" onClick={() => setSelectedSlice(null)} className="h-6 w-6 p-0 rounded-full">
+                    <X size={14} />
+                  </Button>
+                </div>
+                <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                  {selectedSlice === 'Clientes sem Compras' ? (
+                     customers
+                       .filter(c => !purchases.some(p => p.customerId === c.id))
+                       .slice(0, 50)
+                       .map(c => (
+                         <div key={c.id} className="p-2 bg-gray-50 rounded-lg text-[10px] flex justify-between items-center border border-gray-100">
+                           <span className="font-bold text-gray-900">{c.name}</span>
+                           <span className="text-gray-400 font-bold italic">Sem compras</span>
+                         </div>
+                       ))
+                  ) : (
+                    filteredPurchases
+                      .filter(p => {
+                        const ruleThreshold = rules.rewardMode === 'cashback' 
+                          ? (rules.cashbackConfig?.minActivationValue || 0) 
+                          : (rules.minPurchaseValue || 0);
+                        return selectedSlice === 'Vendas com Pontuação' ? p.amount >= ruleThreshold : p.amount < ruleThreshold;
+                      })
+                      .slice(0, 50)
+                      .map(p => (
+                        <div key={p.id} className="p-2 bg-gray-50 rounded-lg text-[10px] flex justify-between items-center border border-gray-100">
+                          <div className="flex flex-col">
+                            <span className="font-bold text-gray-900">{p.customerName}</span>
+                            <span className="text-[8px] text-gray-400 font-bold uppercase">{format(parseISO(p.date), 'dd/MM HH:mm')}</span>
+                          </div>
+                          <span className="font-black text-primary">R$ {formatCurrency(p.amount)}</span>
+                        </div>
+                      ))
+                  )}
+                </div>
+                <p className="text-[8px] text-gray-400 italic text-center mt-2">Exibindo até 50 registros.</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <div className="mt-4 grid grid-cols-2 gap-2">
             {ruleData.map((d, i) => (
-              <div key={i} className="p-2 bg-gray-50 rounded-lg text-center">
+              <div 
+                key={i} 
+                onClick={() => setSelectedSlice(d.name === selectedSlice ? null : d.name)}
+                className={cn(
+                  "p-2 rounded-lg text-center cursor-pointer transition-all border",
+                  selectedSlice === d.name ? "bg-gray-100 border-gray-300 scale-105" : "bg-gray-50 border-gray-100 hover:bg-gray-100"
+                )}
+              >
                 <p className="text-[10px] font-bold text-gray-400 uppercase">{d.name}</p>
                 <p className="text-sm font-black text-gray-900">
                   {d.value} 
@@ -11269,7 +11783,7 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
     const avgTicket = purchases.length > 0 ? purchases.reduce((acc, p) => acc + p.amount, 0) / purchases.length : 0;
     const configuredAvgTicket = rules.currentAvgTicket || 0;
     const configuredMonthlyRevenue = rules.currentMonthlyRevenue || 0;
-    const configuredActiveClients = configuredAvgTicket > 0 ? configuredMonthlyRevenue / configuredAvgTicket : 0;
+    const configuredActiveClients = currentGoal?.customersCount || (configuredAvgTicket > 0 ? configuredMonthlyRevenue / configuredAvgTicket : 0);
     
     const avgFrequency = customers.length > 0 ? (purchases.length / customers.length) : 0;
     
