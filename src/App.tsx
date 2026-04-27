@@ -7555,8 +7555,21 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [detailView, setDetailView] = useState<'vendas' | 'clientes' | 'ticket' | null>(null);
-  const [ticketFilterRange, setTicketFilterRange] = useState({ min: '', max: '' });
+  const [aboveFilter, setAboveFilter] = useState({ min: '', max: '' });
+  const [belowFilter, setBelowFilter] = useState({ min: '', max: '' });
   const [selectedSlice, setSelectedSlice] = useState<string | null>(null);
+  const [isReportDialogOpen, setIsReportDialogOpen] = useState(false);
+  const [reportDates, setReportDates] = useState({ 
+    start: startDate || format(subDays(new Date(), 30), 'yyyy-MM-dd'), 
+    end: endDate || format(new Date(), 'yyyy-MM-dd') 
+  });
+
+  // Sync report dates when dashboard dates change
+  useEffect(() => {
+    if (startDate && endDate) {
+      setReportDates({ start: startDate, end: endDate });
+    }
+  }, [startDate, endDate]);
 
   const filteredPurchases = useMemo(() => {
     const now = new Date();
@@ -7608,11 +7621,13 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
 
     const activeCustomersByAvgTicket = customersByAvgTicket.filter(c => c.avgTicket > 0);
 
-    const minFilter = parseFloat(ticketFilterRange.min) || 0;
-    const maxFilter = parseFloat(ticketFilterRange.max) || 9999999;
+    const minAbove = parseFloat(aboveFilter.min) || 0;
+    const maxAbove = parseFloat(aboveFilter.max) || 9999999;
+    const minBelow = parseFloat(belowFilter.min) || 0;
+    const maxBelow = parseFloat(belowFilter.max) || 9999999;
 
-    const aboveGoal = activeCustomersByAvgTicket.filter(c => c.avgTicket > ticketGoal && c.avgTicket >= minFilter && c.avgTicket <= maxFilter);
-    const belowGoal = activeCustomersByAvgTicket.filter(c => c.avgTicket <= ticketGoal && c.avgTicket >= minFilter && c.avgTicket <= maxFilter);
+    const aboveGoal = activeCustomersByAvgTicket.filter(c => c.avgTicket > ticketGoal && c.avgTicket >= minAbove && c.avgTicket <= maxAbove);
+    const belowGoal = activeCustomersByAvgTicket.filter(c => c.avgTicket <= ticketGoal && c.avgTicket >= minBelow && c.avgTicket <= maxBelow);
 
     // Within vs Outside rules
     // Rule: minPurchaseValue or minActivationValue depending on mode
@@ -7659,7 +7674,7 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
       belowGoal,
       ticketGoal
     };
-  }, [filteredPurchases, purchases, customers, rules, ticketFilterRange]);
+  }, [filteredPurchases, purchases, customers, rules, aboveFilter, belowFilter]);
 
   const weekdayStats = useMemo(() => {
     const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -7667,7 +7682,7 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
     const counts = new Array(7).fill(0).map(() => ({ count: 0, total: 0 }));
     const hoursCount = new Array(24).fill(0);
 
-    purchases.forEach(p => {
+    filteredPurchases.forEach(p => {
       const d = parseISO(p.date);
       if (!isNaN(d.getTime())) {
         const day = d.getDay();
@@ -7702,10 +7717,11 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
       worstDay: ptDays[worstDayIndex],
       peakHour: `${peakHour}:00 - ${peakHour + 1}:00`
     };
-  }, [purchases]);
+  }, [filteredPurchases]);
 
   const handleExportSegmentPdf = async (segment: 'above' | 'below') => {
     const data = segment === 'above' ? stats.aboveGoal : stats.belowGoal;
+    const filter = segment === 'above' ? aboveFilter : belowFilter;
     const title = segment === 'above' ? 'Clientes Acima da Meta de Ticket' : 'Clientes Abaixo da Meta de Ticket';
     
     try {
@@ -7754,7 +7770,7 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
       doc.setFontSize(9);
       doc.setTextColor(100, 100, 100);
       doc.text(`Período analisado: ${period === 'all' ? 'Todo o histórico' : 'Personalizado'}`, marginSide, 35);
-      doc.text(`Filtro atual: R$ ${formatCurrency(parseFloat(ticketFilterRange.min || '0'))} até R$ ${formatCurrency(parseFloat(ticketFilterRange.max || 'inf'))}`, marginSide, 40);
+      doc.text(`Filtro atual: R$ ${formatCurrency(parseFloat(filter.min || '0'))} até R$ ${formatCurrency(parseFloat(filter.max || 'inf'))}`, marginSide, 40);
       doc.text(`Meta de Referência: R$ ${formatCurrency(stats.ticketGoal)}`, marginSide, 45);
 
       if (typeof autoTable === 'function') {
@@ -7912,13 +7928,7 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
         </div>
         <div className="flex items-center gap-4">
           <Button 
-            onClick={() => {
-              if (period === 'custom' && startDate && endDate) {
-                onExportReport?.(startDate, endDate);
-              } else {
-                onExportReport?.();
-              }
-            }}
+            onClick={() => setIsReportDialogOpen(true)}
             className="hidden sm:flex items-center gap-2 px-6 py-2.5 bg-gray-900 border border-gray-800 rounded-xl hover:bg-black transition-all text-sm font-black uppercase tracking-widest text-white shadow-xl shadow-black/10"
           >
             <Download size={18} className="text-green-400" />
@@ -7940,6 +7950,65 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
           </div>
         </div>
       </div>
+
+      {/* Report Period Modal */}
+      <AnimatePresence>
+        {isReportDialogOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[2rem] shadow-2xl max-w-md w-full p-8 space-y-6"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-xl font-black text-gray-900 uppercase tracking-tighter">Gerar Relatório</h3>
+                <button onClick={() => setIsReportDialogOpen(false)} className="p-2 hover:bg-gray-100 rounded-full transition-all">
+                  <X size={20} className="text-gray-400" />
+                </button>
+              </div>
+              <p className="text-sm text-gray-500 font-medium">Informe o período desejado para o Relatório de Gestão:</p>
+              
+              <div className="grid grid-cols-1 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Data de Início</label>
+                  <input 
+                    type="date" 
+                    value={reportDates.start}
+                    onChange={(e) => setReportDates(prev => ({ ...prev, start: e.target.value }))}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Data de Fim</label>
+                  <input 
+                    type="date" 
+                    value={reportDates.end}
+                    onChange={(e) => setReportDates(prev => ({ ...prev, end: e.target.value }))}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <Button 
+                  onClick={async () => {
+                    if (reportDates.start && reportDates.end) {
+                      await onExportReport?.(reportDates.start, reportDates.end);
+                      setIsReportDialogOpen(false);
+                    } else {
+                      showToast("Selecione as duas datas", "warning");
+                    }
+                  }}
+                  className="w-full py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-primary/20"
+                >
+                  Download Relatório PDF
+                </Button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Termômetro de Dias da Semana */}
       <Card className="p-6 bg-white border-gray-100 shadow-sm relative overflow-hidden">
@@ -8220,15 +8289,15 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
             <input 
               type="number" 
               placeholder="Min R$" 
-              value={ticketFilterRange.min}
-              onChange={(e) => setTicketFilterRange(prev => ({ ...prev, min: e.target.value }))}
+              value={aboveFilter.min}
+              onChange={(e) => setAboveFilter(prev => ({ ...prev, min: e.target.value }))}
               className="w-1/2 p-2 bg-gray-50 border border-gray-100 rounded text-[10px] outline-none"
             />
             <input 
               type="number" 
               placeholder="Max R$" 
-              value={ticketFilterRange.max}
-              onChange={(e) => setTicketFilterRange(prev => ({ ...prev, max: e.target.value }))}
+              value={aboveFilter.max}
+              onChange={(e) => setAboveFilter(prev => ({ ...prev, max: e.target.value }))}
               className="w-1/2 p-2 bg-gray-50 border border-gray-100 rounded text-[10px] outline-none"
             />
           </div>
@@ -8269,15 +8338,15 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
             <input 
               type="number" 
               placeholder="Min R$" 
-              value={ticketFilterRange.min}
-              onChange={(e) => setTicketFilterRange(prev => ({ ...prev, min: e.target.value }))}
+              value={belowFilter.min}
+              onChange={(e) => setBelowFilter(prev => ({ ...prev, min: e.target.value }))}
               className="w-1/2 p-2 bg-gray-50 border border-gray-100 rounded text-[10px] outline-none"
             />
             <input 
               type="number" 
               placeholder="Max R$" 
-              value={ticketFilterRange.max}
-              onChange={(e) => setTicketFilterRange(prev => ({ ...prev, max: e.target.value }))}
+              value={belowFilter.max}
+              onChange={(e) => setBelowFilter(prev => ({ ...prev, max: e.target.value }))}
               className="w-1/2 p-2 bg-gray-50 border border-gray-100 rounded text-[10px] outline-none"
             />
           </div>
