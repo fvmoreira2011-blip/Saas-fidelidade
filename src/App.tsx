@@ -121,7 +121,16 @@ import {
   Percent,
   Pause,
   Play,
-  PlayCircle
+  PlayCircle,
+  Megaphone,
+  Smartphone,
+  Hash,
+  Gift,
+  Briefcase,
+  History,
+  Shield,
+  Layout,
+  PieChart as PieChartIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import 'react-phone-number-input/style.css';
@@ -4242,9 +4251,11 @@ function SuperAdminPanel({ onBack, isSuperAdmin, appUser }: { onBack: () => void
   const [isAuthenticated, setIsAuthenticated] = useState(isSuperAdmin);
   const [loading, setLoading] = useState(false);
   const [clients, setClients] = useState<AppUser[]>([]);
-  const [activeSubTab, setActiveSubTab] = useState<'clients' | 'reports'>('clients');
+  const [activeSubTab, setActiveSubTab] = useState<'clients' | 'reports' | 'messages'>('clients');
   const [editingClient, setEditingClient] = useState<AppUser | null>(null);
   const [showFormModal, setShowFormModal] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState({ title: 'Mensagem da BuyPass', body: '', targetStoreId: 'all' });
+  const [isSending, setIsSending] = useState(false);
   const { showToast } = useToast();
   const { askConfirmation } = useConfirm();
 
@@ -4281,36 +4292,54 @@ function SuperAdminPanel({ onBack, isSuperAdmin, appUser }: { onBack: () => void
       async () => {
         try {
           setLoading(true);
+          console.log(`Starting absolute deletion for client: ${client.id}`);
+          
           // 1. Delete configs
           await deleteDoc(doc(db, 'configs', client.id));
           
           // 2. Delete customers
           const qCust = query(collection(db, 'customers'), where('companyId', '==', client.id));
           const snapCust = await getDocs(qCust);
-          const batchCust = writeBatch(db);
-          snapCust.docs.forEach(d => batchCust.delete(d.ref));
-          await batchCust.commit();
+          if (!snapCust.empty) {
+            const batchCust = writeBatch(db);
+            snapCust.docs.forEach(d => batchCust.delete(d.ref));
+            await batchCust.commit();
+          }
 
           // 3. Delete purchases
           const qPurc = query(collection(db, 'purchases'), where('companyId', '==', client.id));
           const snapPurc = await getDocs(qPurc);
-          const batchPurc = writeBatch(db);
-          snapPurc.docs.forEach(d => batchPurc.delete(d.ref));
-          await batchPurc.commit();
+          if (!snapPurc.empty) {
+            const batchPurc = writeBatch(db);
+            snapPurc.docs.forEach(d => batchPurc.delete(d.ref));
+            await batchPurc.commit();
+          }
 
           // 4. Delete goals
           const qGoal = query(collection(db, 'goals'), where('companyId', '==', client.id));
           const snapGoal = await getDocs(qGoal);
-          const batchGoal = writeBatch(db);
-          snapGoal.docs.forEach(d => batchGoal.delete(d.ref));
-          await batchGoal.commit();
+          if (!snapGoal.empty) {
+            const batchGoal = writeBatch(db);
+            snapGoal.docs.forEach(d => batchGoal.delete(d.ref));
+            await batchGoal.commit();
+          }
 
-          // 5. Delete user document
+          // 5. Delete redemptions
+          const qRed = query(collection(db, 'redemptions'), where('companyId', '==', client.id));
+          const snapRed = await getDocs(qRed);
+          if (!snapRed.empty) {
+            const batchRed = writeBatch(db);
+            snapRed.docs.forEach(d => batchRed.delete(d.ref));
+            await batchRed.commit();
+          }
+
+          // 6. Delete user document
           await deleteDoc(doc(db, 'users', client.id));
 
           showToast('Cliente e todos os seus dados foram excluídos com sucesso.', "success");
         } catch (err: any) {
-          showToast('Erro ao excluir cliente: ' + err.message, "error");
+          console.error("Critical error during client deletion:", err);
+          showToast('Erro ao excluir cliente: ' + (err.message || 'Erro desconhecido'), "error");
         } finally {
           setLoading(false);
         }
@@ -4367,11 +4396,20 @@ function SuperAdminPanel({ onBack, isSuperAdmin, appUser }: { onBack: () => void
             >
               Relatórios
             </button>
+            <button 
+              onClick={() => setActiveSubTab('messages')}
+              className={cn(
+                "px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                activeSubTab === 'messages' ? "bg-primary text-white shadow-lg shadow-primary/20" : "text-gray-500 hover:text-white"
+              )}
+            >
+              Mensagens
+            </button>
           </div>
         </div>
       </div>
 
-      {activeSubTab === 'clients' ? (
+      {activeSubTab === 'clients' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {clients.map((client) => (
             <div key={client.id} className="bg-black border border-white/10 rounded-[2.5rem] p-8 space-y-6 shadow-2xl">
@@ -4445,8 +4483,14 @@ function SuperAdminPanel({ onBack, isSuperAdmin, appUser }: { onBack: () => void
             </div>
           ))}
         </div>
-      ) : (
+      )}
+
+      {activeSubTab === 'reports' && (
         <SuperAdminReportsTab clients={clients} appUser={appUser} />
+      )}
+
+      {activeSubTab === 'messages' && (
+        <SuperAdminMessagesTab clients={clients} />
       )}
 
       {showFormModal && (
@@ -4459,6 +4503,99 @@ function SuperAdminPanel({ onBack, isSuperAdmin, appUser }: { onBack: () => void
         />
       )}
     </div>
+  );
+}
+
+function SuperAdminMessagesTab({ clients }: { clients: AppUser[] }) {
+  const [title, setTitle] = useState('Mensagem da BuyPass');
+  const [message, setMessage] = useState('');
+  const [targetStoreId, setTargetStoreId] = useState('all'); // 'all' or specific companyId
+  const [isSending, setIsSending] = useState(false);
+  const { showToast } = useToast();
+
+  const handleSendMessage = async () => {
+    if (!message) return;
+    setIsSending(true);
+    try {
+      // Logic: Create a notification document with special target field
+      // Consumer app will listen for its specific UIDs AND target: 'all' or storeId
+      await addDoc(collection(db, 'notifications'), {
+        title,
+        message,
+        customerId: 'admin_broadcast', // Special ID
+        targetType: targetStoreId === 'all' ? 'global' : 'store',
+        targetStoreId: targetStoreId === 'all' ? 'all' : targetStoreId,
+        type: 'info',
+        isRead: false,
+        createdAt: new Date().toISOString()
+      });
+      
+      showToast("Mensagem enviada com sucesso!", "success");
+      setMessage('');
+    } catch (err: any) {
+      showToast("Erro ao enviar: " + err.message, "error");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  return (
+    <Card className="max-w-2xl mx-auto p-8 bg-white border-gray-100 shadow-xl rounded-[2.5rem] space-y-8">
+      <div className="flex items-center gap-4">
+        <div className="p-4 bg-primary/10 rounded-2xl text-primary">
+          <Send size={32} />
+        </div>
+        <div>
+          <h3 className="text-2xl font-black text-gray-900 tracking-tighter italic uppercase">Notificação Geral</h3>
+          <p className="text-gray-500 text-sm">Dispare mensagens administrativas para os usuários do WebApp.</p>
+        </div>
+      </div>
+
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">Headline (Título)</label>
+          <input 
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 font-bold outline-none focus:ring-2 focus:ring-primary transition-all"
+            placeholder="Ex: Mensagem da BuyPass"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">Mensagem</label>
+          <textarea 
+            value={message}
+            onChange={e => setMessage(e.target.value)}
+            rows={4}
+            className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 font-bold outline-none focus:ring-2 focus:ring-primary transition-all resize-none"
+            placeholder="Digite sua mensagem aqui..."
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">Filtro por Empresa (Opcional)</label>
+          <select 
+            value={targetStoreId}
+            onChange={e => setTargetStoreId(e.target.value)}
+            className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-gray-900 font-bold outline-none focus:ring-2 focus:ring-primary appearance-none transition-all"
+          >
+            <option value="all">Todas as Empresas</option>
+            {clients.map(c => (
+              <option key={c.id} value={c.id}>{c.companyName}</option>
+            ))}
+          </select>
+        </div>
+
+        <Button 
+          onClick={handleSendMessage}
+          disabled={isSending || !message}
+          className="w-full py-5 rounded-2xl font-black uppercase tracking-[0.2em] shadow-xl shadow-primary/20"
+        >
+          {isSending ? 'Enviando...' : 'ENVIAR NOTIFICAÇÃO'}
+        </Button>
+      </div>
+    </Card>
   );
 }
 
@@ -6847,9 +6984,21 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
                 
                 <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h4 className="font-black text-gray-900 uppercase tracking-tighter text-lg">
+                    <h4 className="font-black text-gray-900 uppercase tracking-tighter text-lg flex items-center">
                       {format(parseISO(goal.month + '-01'), 'MMMM yyyy', { locale: ptBR })}
                       {isPast && <span className="ml-2 text-[8px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded uppercase font-black tracking-normal">Encerrado</span>}
+                      <button 
+                        onClick={() => {
+                          setMonth(goal.month);
+                          setValue(goal.value.toString());
+                          setWorkingDays(goal.workingDays?.toString() || '22');
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="ml-2 p-1 text-primary hover:bg-primary/10 rounded transition-colors group-hover:scale-110"
+                        title="Editar Meta"
+                      >
+                        <Settings size={14} />
+                      </button>
                     </h4>
                     <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{goal.workingDays} dias úteis</p>
                   </div>
@@ -7174,8 +7323,11 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
     const outsideRules = count - withinRules;
 
     // Conversion rate: (total customers and sales) / (people who bought within rule)
+    const uniqueCustomersInPeriodCount = uniqueCustomersInPeriod.size;
     const uniqueCustomersWithinRules = new Set(filteredPurchases.filter(p => p.amount >= rules.minPurchaseValue).map(p => p.customerId)).size;
-    const conversionRate = uniqueCustomersWithinRules > 0 ? (customers.length + purchases.length) / uniqueCustomersWithinRules : 0;
+    
+    // Customers without purchases in period
+    const customersWithoutPurchases = Math.max(0, customers.length - uniqueCustomersInPeriodCount);
 
     const now = new Date();
     const todayP = purchases.filter(p => isToday(parseISO(p.date)));
@@ -7199,7 +7351,8 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
       customerCountInPeriod,
       withinRules,
       outsideRules,
-      conversionRate,
+      customersWithoutPurchases,
+      conversionRate: uniqueCustomersWithinRules > 0 ? (customers.length + purchases.length) / uniqueCustomersWithinRules : 0,
       activeCustomersCount
     };
   }, [filteredPurchases, purchases, customers, rules]);
@@ -7305,12 +7458,13 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
 
   const ruleData = useMemo(() => {
     return [
-      { name: 'Dentro da Regra', value: stats.withinRules },
-      { name: 'Fora da Regra', value: stats.outsideRules }
+      { name: 'Vendas com Pontuação', value: stats.withinRules },
+      { name: 'Vendas sem Pontuação', value: stats.outsideRules },
+      { name: 'Clientes sem Compras', value: stats.customersWithoutPurchases }
     ];
   }, [stats]);
 
-  const COLORS = ['#3B82F6', '#22C55E']; // Blue and Green
+  const COLORS = ['#22C55E', '#F97316', '#9CA3AF']; // Green, Orange, Gray
 
   const todayFormatted = format(new Date(), "'Hoje é dia' dd 'de' MMMM 'de' yyyy", { locale: ptBR });
 
@@ -7723,6 +7877,14 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
                 <Legend verticalAlign="bottom" height={36}/>
               </PieChart>
             </ResponsiveContainer>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            {ruleData.map((d, i) => (
+              <div key={i} className="p-2 bg-gray-50 rounded-lg text-center">
+                <p className="text-[10px] font-bold text-gray-400 uppercase">{d.name}</p>
+                <p className="text-sm font-black text-gray-900">{d.value} <span className="text-[10px] text-gray-400 font-normal">vendas</span></p>
+              </div>
+            ))}
           </div>
         </Card>
       </div>
@@ -8846,7 +9008,7 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Valor Mínimo p/ Ativação</label>
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Valor mínimo para Cashback</label>
                   <div className="relative">
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">R$</span>
                     <input 
@@ -8873,14 +9035,14 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
                           const currentGoal = goals.find(g => g.month === currentMonthStr)?.value || 0;
                           const billing = currentGoal || 0;
                           const factor = cashbackConfig.minActivationValue > 0 ? (billing / cashbackConfig.minActivationValue) : 0;
-                          return factor * (cashbackConfig.percentage);
+                          return factor * (cashbackConfig.percentage / 100 * billing);
                         })()
                       )}
                     </p>
                     <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Custo Mensal Estimado</span>
                   </div>
                   <p className="text-[9px] text-amber-600 leading-tight">
-                    Fórmula solicitada: (Faturamento Mensal Planejado / Valor Mínimo de Ativação) * Valor do Cashback.
+                    Fórmula: (Faturamento Mensal Planejado / Valor Mínimo para Cashback) * (% do Faturamento).
                   </p>
                 </div>
                 <div className="space-y-1.5">
@@ -8959,7 +9121,29 @@ function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rule
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showCampaignModal, setShowCampaignModal] = useState<SeasonalDate | null>(null);
   const [newDate, setNewDate] = useState<Partial<SeasonalDate>>({ type: 'custom' });
+  const [stateFilter, setStateFilter] = useState('');
+  const [cityFilter, setCityFilter] = useState('');
+  const [activeTab, setActiveTab] = useState<'dates' | 'campaigns'>('dates');
+
+  const HOLIDAY_LIBRARY: Partial<SeasonalDate>[] = [
+    { name: 'Confraternização Universal', date: '2024-01-01', type: 'national' },
+    { name: 'Carnaval', date: '2024-02-13', type: 'national' },
+    { name: 'Quarta-feira de Cinzas', date: '2024-02-14', type: 'national' },
+    { name: 'Sexta-feira Santa', date: '2024-03-29', type: 'national' },
+    { name: 'Páscoa', date: '2024-03-31', type: 'national' },
+    { name: 'Tiradentes', date: '2024-04-21', type: 'national' },
+    { name: 'Dia do Trabalhador', date: '2024-05-01', type: 'national' },
+    { name: 'Corpus Christi', date: '2024-05-30', type: 'national' },
+    { name: 'Independência do Brasil', date: '2024-09-07', type: 'national' },
+    { name: 'Nossa Senhora Aparecida', date: '2024-10-12', type: 'national' },
+    { name: 'Finados', date: '2024-11-02', type: 'national' },
+    { name: 'Proclamação da República', date: '2024-11-15', type: 'national' },
+    { name: 'Dia da Consciência Negra', date: '2024-11-20', type: 'national' },
+    { name: 'Natal', date: '2024-12-25', type: 'national' },
+    { name: 'Véspera de Ano Novo', date: '2024-12-31', type: 'national' },
+  ];
 
   useEffect(() => {
     if (rules.seasonalDates) {
@@ -8983,15 +9167,16 @@ function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rule
     }
   };
 
-  const addDate = () => {
-    if (!newDate.name || !newDate.date) return;
+  const addDate = (customDate?: Partial<SeasonalDate>) => {
+    const data = customDate || newDate;
+    if (!data.name || !data.date) return;
     const date: SeasonalDate = {
       id: Math.random().toString(36).substr(2, 9),
-      name: newDate.name,
-      date: newDate.date,
-      type: newDate.type as any,
-      state: newDate.state,
-      city: newDate.city
+      name: data.name,
+      date: data.date,
+      type: (data.type as any) || 'custom',
+      state: data.state,
+      city: data.city
     };
     const updated = [...dates, date].sort((a, b) => a.date.localeCompare(b.date));
     handleSave(updated);
@@ -9004,182 +9189,342 @@ function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rule
     handleSave(updated);
   };
 
+  const filteredDates = useMemo(() => {
+    return dates.filter(d => {
+      const matchState = !stateFilter || !d.state || d.state === stateFilter;
+      const matchCity = !cityFilter || !d.city || d.city.toLowerCase().includes(cityFilter.toLowerCase());
+      return matchState && matchCity;
+    });
+  }, [dates, stateFilter, cityFilter]);
+
   const groupedDates = useMemo(() => {
     const groups: { [key: string]: SeasonalDate[] } = {
-      'Nacionais': dates.filter(d => d.type === 'national'),
-      'Estaduais': dates.filter(d => d.type === 'state'),
-      'Municipais': dates.filter(d => d.type === 'municipal'),
-      'Personalizadas': dates.filter(d => d.type === 'custom'),
+      'Nacionais': filteredDates.filter(d => d.type === 'national'),
+      'Estaduais': filteredDates.filter(d => d.type === 'state'),
+      'Municipais': filteredDates.filter(d => d.type === 'municipal'),
+      'Personalizadas': filteredDates.filter(d => d.type === 'custom'),
     };
     return groups;
-  }, [dates]);
+  }, [filteredDates]);
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-6 pb-24 lg:pb-8">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-white">Datas Sazonais</h2>
-        <Calendar className="text-white" size={28} />
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {Object.entries(groupedDates).map(([group, items]: [string, SeasonalDate[]]) => (
-          <Card key={group} className="p-6 bg-white border-gray-100 shadow-sm">
-            <h3 className="font-bold text-gray-900 mb-4 flex items-center justify-between">
-              {group}
-              <span className="text-[10px] bg-gray-100 px-2 py-1 rounded-full text-gray-500">{items.length}</span>
-            </h3>
-            <div className="space-y-3">
-              {items.map((d: SeasonalDate) => (
-                <div key={d.id} className="flex items-center justify-between p-3 bg-gray-50 border border-gray-100 rounded-xl group">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex flex-col items-center justify-center text-primary relative">
-                      <span className="text-[10px] font-bold uppercase leading-none">{format(parseISO(d.date), 'MMM', { locale: ptBR })}</span>
-                      <span className="text-sm font-bold leading-none">{format(parseISO(d.date), 'dd')}</span>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-bold text-gray-900">{d.name}</p>
-                        <button 
-                          onClick={() => onTabChange('promotion')}
-                          className="p-1 text-primary hover:bg-primary/10 rounded transition-colors"
-                          title="Envio WhatsApp"
-                        >
-                          <MessageSquare size={14} />
-                        </button>
-                        <button 
-                          onClick={() => {
-                            const newMemo = window.prompt("Anotação para esta data:", d.memo || '');
-                            if (newMemo !== null) {
-                              const updated = dates.map(item => item.id === d.id ? { ...item, memo: newMemo.slice(0, 400) } : item);
-                              handleSave(updated);
-                            }
-                          }}
-                          className={cn("p-1 rounded transition-colors", d.memo ? "text-green-600 bg-green-50" : "text-gray-400 hover:bg-gray-100")}
-                          title="Adicionar Anotação"
-                        >
-                          <PlusCircle size={14} />
-                        </button>
-                      </div>
-                      {d.memo && (
-                        <p className="text-[10px] text-gray-500 italic bg-gray-100/50 p-2 rounded-lg border border-gray-100 max-w-[200px] break-words">
-                          "{d.memo}"
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  {isAdmin && (
-                    <button 
-                      onClick={() => removeDate(d.id)}
-                      className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  )}
-                </div>
-              ))}
-              {items.length === 0 && (
-                <p className="text-xs text-gray-600 text-center py-4 italic">Nenhuma data cadastrada nesta categoria.</p>
-              )}
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      {isAdmin && (
-        <div className="flex justify-center pt-4">
+        <div className="flex items-center gap-4">
+          <Calendar className="text-gray-900" size={28} />
+          <h2 className="text-2xl font-bold text-gray-900 tracking-tight italic">Datas Sazonais</h2>
+        </div>
+        
+        <div className="flex bg-gray-100 p-1 rounded-xl">
           <button 
-            onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-2 px-6 py-3 bg-white text-gray-600 rounded-xl hover:bg-gray-50 hover:text-primary transition-all text-sm font-bold border border-gray-200 shadow-sm"
+            onClick={() => setActiveTab('dates')}
+            className={cn("px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all", activeTab === 'dates' ? "bg-white text-primary shadow-sm" : "text-gray-500")}
           >
-            <PlusCircle size={18} />
-            Adicionar Nova Data Personalizada
+            Datas
+          </button>
+          <button 
+            onClick={() => setActiveTab('campaigns')}
+            className={cn("px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all", activeTab === 'campaigns' ? "bg-white text-primary shadow-sm" : "text-gray-500")}
+          >
+            Campanhas
           </button>
         </div>
-      )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card className="md:col-span-1 p-6 bg-white border-gray-100 shadow-sm space-y-6">
+          <h3 className="font-bold text-gray-900 text-sm uppercase tracking-widest border-b border-gray-100 pb-2">Filtros Geográficos</h3>
+          
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Estado (UF)</label>
+              <input 
+                type="text" 
+                value={stateFilter}
+                onChange={e => setStateFilter(e.target.value.toUpperCase())}
+                placeholder="Ex: SP" 
+                maxLength={2}
+                className="w-full bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Município</label>
+              <input 
+                type="text" 
+                value={cityFilter}
+                onChange={e => setCityFilter(e.target.value)}
+                placeholder="Ex: São Paulo" 
+                className="w-full bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-gray-100">
+            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 italic">Biblioteca de Feriados</h4>
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+              {HOLIDAY_LIBRARY.map((h, i) => (
+                <button
+                  key={i}
+                  disabled={dates.some(d => d.name === h.name)}
+                  onClick={() => addDate(h)}
+                  className="w-full text-left p-2 rounded-lg bg-gray-50 border border-gray-100 hover:border-primary/50 transition-all flex items-center justify-between group disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <div className="overflow-hidden">
+                    <p className="text-[10px] font-bold text-gray-900 truncate">{h.name}</p>
+                    <p className="text-[8px] text-gray-500">{format(parseISO(h.date!), 'dd/MM')}</p>
+                  </div>
+                  <PlusCircle size={14} className="text-gray-300 group-hover:text-primary shrink-0" />
+                </button>
+              ))}
+            </div>
+          </div>
+        </Card>
+
+        <div className="md:col-span-3 space-y-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {Object.entries(groupedDates).map(([group, items]: [string, SeasonalDate[]]) => (
+              <Card key={group} className="p-4 bg-white border-gray-100 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-xs font-black text-gray-900 uppercase tracking-[0.2em] italic flex items-center gap-2">
+                    {group}
+                    <span className="text-[9px] bg-gray-100 px-1.5 py-0.5 rounded-full text-gray-400 font-bold not-italic">{items.length}</span>
+                  </h3>
+                </div>
+                <div className="space-y-2">
+                  {items.map((d: SeasonalDate) => (
+                    <div key={d.id} className="flex items-center justify-between p-3 bg-gray-50/50 border border-gray-100 rounded-2xl hover:border-primary/30 transition-all">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-primary text-white flex flex-col items-center justify-center shadow-lg shadow-primary/20">
+                          <span className="text-[8px] font-black uppercase leading-none opacity-80">{format(parseISO(d.date), 'MMM', { locale: ptBR })}</span>
+                          <span className="text-sm font-black leading-none">{format(parseISO(d.date), 'dd')}</span>
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="text-xs font-black text-gray-900 uppercase italic tracking-tighter">{d.name}</p>
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">
+                              {d.type === 'national' ? 'Brasil' : (d.city ? `${d.city}-${d.state}` : d.state)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button 
+                          onClick={() => setShowCampaignModal(d)}
+                          className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-all"
+                          title="Criar Campanha"
+                        >
+                          <Megaphone size={16} />
+                        </button>
+                        {isAdmin && (
+                          <button 
+                            onClick={() => removeDate(d.id)}
+                            className="p-2 text-red-400 hover:bg-red-50 rounded-xl transition-all"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {items.length === 0 && (
+                    <div className="text-center py-8 opacity-40">
+                      <Calendar className="mx-auto mb-2" size={24} />
+                      <p className="text-[10px] font-bold uppercase">Vazio</p>
+                    </div>
+                  )}
+                </div>
+              </Card>
+            ))}
+          </div>
+
+          {isAdmin && (
+            <div className="flex justify-center">
+              <button 
+                onClick={() => setShowAddModal(true)}
+                className="flex items-center gap-2 px-8 py-3 bg-gray-900 text-white rounded-2xl hover:bg-black transition-all text-[10px] font-black uppercase tracking-[0.2em] shadow-xl shadow-black/10"
+              >
+                <PlusCircle size={18} />
+                Nova Data Personalizada
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
 
       {showAddModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-gray-900 border border-gray-800 rounded-2xl p-6 w-full max-w-md shadow-2xl">
-            <h3 className="text-xl font-bold text-white mb-6">Nova Data Sazonal</h3>
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-500 uppercase">Nome da Data</label>
+          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white border border-gray-100 rounded-3xl p-8 w-full max-w-md shadow-2xl relative">
+            <button onClick={() => setShowAddModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors">
+              <X size={24} />
+            </button>
+            <h3 className="text-xl font-black text-gray-900 mb-8 uppercase tracking-tighter italic">Nova Data Personalizada</h3>
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Nome da Data</label>
                 <input 
                   type="text"
                   value={newDate.name || ''}
                   onChange={e => setNewDate(prev => ({ ...prev, name: e.target.value }))}
                   placeholder="Ex: Aniversário da Loja"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white outline-none focus:ring-2 focus:ring-primary"
+                  className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-5 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-primary font-bold"
                 />
               </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-500 uppercase">Data</label>
-                <input 
-                  type="date"
-                  value={newDate.date || ''}
-                  onChange={e => setNewDate(prev => ({ ...prev, date: e.target.value }))}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white outline-none focus:ring-2 focus:ring-primary"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-gray-500 uppercase">Tipo</label>
-                <select 
-                  value={newDate.type}
-                  onChange={e => setNewDate(prev => ({ ...prev, type: e.target.value as any }))}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white outline-none focus:ring-2 focus:ring-primary"
-                >
-                  <option value="custom">Personalizada</option>
-                  <option value="state">Estadual</option>
-                  <option value="municipal">Municipal</option>
-                </select>
-              </div>
-              {newDate.type === 'state' && (
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-500 uppercase">Estado (UF)</label>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Data</label>
                   <input 
-                    type="text"
-                    value={newDate.state || ''}
-                    onChange={e => setNewDate(prev => ({ ...prev, state: e.target.value.toUpperCase() }))}
-                    placeholder="Ex: SP"
-                    maxLength={2}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white outline-none focus:ring-2 focus:ring-primary"
+                    type="date"
+                    value={newDate.date || ''}
+                    onChange={e => setNewDate(prev => ({ ...prev, date: e.target.value }))}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-5 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-primary font-bold"
                   />
                 </div>
-              )}
-              {newDate.type === 'municipal' && (
-                <>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-gray-500 uppercase">Estado (UF)</label>
-                    <input 
-                      type="text"
-                      value={newDate.state || ''}
-                      onChange={e => setNewDate(prev => ({ ...prev, state: e.target.value.toUpperCase() }))}
-                      placeholder="Ex: SP"
-                      maxLength={2}
-                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white outline-none focus:ring-2 focus:ring-primary"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-gray-500 uppercase">Cidade</label>
-                    <input 
-                      type="text"
-                      value={newDate.city || ''}
-                      onChange={e => setNewDate(prev => ({ ...prev, city: e.target.value }))}
-                      placeholder="Ex: São Paulo"
-                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white outline-none focus:ring-2 focus:ring-primary"
-                    />
-                  </div>
-                </>
-              )}
-              <div className="flex gap-3 pt-4">
-                <Button onClick={() => setShowAddModal(false)} variant="outline" className="flex-1 border-gray-700 text-gray-400">Cancelar</Button>
-                <Button onClick={addDate} className="flex-1">Adicionar</Button>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Tipo</label>
+                  <select 
+                    value={newDate.type}
+                    onChange={e => setNewDate(prev => ({ ...prev, type: e.target.value as any }))}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-5 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-primary font-bold appearance-none bg-no-repeat bg-[right_1rem_center]"
+                  >
+                    <option value="custom">Personalizada</option>
+                    <option value="state">Estadual</option>
+                    <option value="municipal">Municipal</option>
+                    <option value="national">Nacional</option>
+                  </select>
+                </div>
               </div>
+              <Button onClick={() => addDate()} className="w-full py-4 text-xs font-black uppercase tracking-[0.2em] shadow-xl shadow-primary/20">Adicionar à Minha Lista</Button>
             </div>
           </motion.div>
         </div>
       )}
+
+      {showCampaignModal && (
+        <CampaignCreationModal 
+          targetDate={showCampaignModal} 
+          onClose={() => setShowCampaignModal(null)} 
+          rules={rules} 
+          onUpdateRules={onUpdateRules}
+        />
+      )}
     </motion.div>
+  );
+}
+
+function CampaignCreationModal({ targetDate, onClose, rules, onUpdateRules }: { targetDate: SeasonalDate; onClose: () => void; rules: LoyaltyRule; onUpdateRules: (rules: LoyaltyRule) => Promise<void> }) {
+  const [step, setStep] = useState(1);
+  const [campaignData, setCampaignData] = useState({
+    title: `Oferta Especial: ${targetDate.name}`,
+    message: `Olá! Preparamos algo incrível para você no ${targetDate.name}. Venha conferir!`,
+    target: 'all' as 'all' | 'loyal' | 'inactive' | 'new',
+    delivery: ['webapp'] as string[]
+  });
+  const [isSending, setIsSending] = useState(false);
+
+  const handleCreate = async () => {
+    setIsSending(true);
+    try {
+      // In a real app, this would trigger an edge function or queue.
+      // For now, we update the seasonal date in rules to mark it as having a campaign
+      const updatedDates = (rules.seasonalDates || []).map(d => 
+        d.id === targetDate.id ? { ...d, hasCampaign: true, campaignData } : d
+      );
+      await onUpdateRules({ ...rules, seasonalDates: updatedDates });
+      onClose();
+      alert("Campanha agendada com sucesso via WebApp!");
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-gray-950/90 backdrop-blur-xl flex items-center justify-center p-4 z-[60]">
+      <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-[2.5rem] p-8 w-full max-w-lg shadow-2xl relative">
+        <button onClick={onClose} className="absolute top-6 right-6 text-gray-400 hover:text-gray-600 transition-colors">
+          <X size={24} />
+        </button>
+        
+        <div className="flex items-center gap-4 mb-8">
+          <div className="p-4 bg-primary/10 rounded-2xl text-primary">
+            <Megaphone size={32} />
+          </div>
+          <div>
+            <h3 className="text-xl font-black text-gray-900 uppercase tracking-tighter italic">Nova Campanha Sazonal</h3>
+            <p className="text-[10px] font-bold text-primary uppercase tracking-widest">{targetDate.name} • {format(parseISO(targetDate.date), 'dd/MM')}</p>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Título da Notificação</label>
+              <input 
+                value={campaignData.title}
+                onChange={e => setCampaignData(prev => ({ ...prev, title: e.target.value }))}
+                className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-5 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Mensagem</label>
+              <textarea 
+                rows={3}
+                value={campaignData.message}
+                onChange={e => setCampaignData(prev => ({ ...prev, message: e.target.value }))}
+                className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-5 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-primary resize-none"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-3">
+             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Público Alvo</label>
+             <div className="grid grid-cols-2 gap-2">
+               {[
+                 { id: 'all', label: 'Todos os Clientes' },
+                 { id: 'loyal', label: 'Clientes Fiéis' },
+                 { id: 'inactive', label: 'Em Inatividade' },
+                 { id: 'new', label: 'Novos (15 dias)' },
+               ].map(target => (
+                 <button
+                   key={target.id}
+                   onClick={() => setCampaignData(prev => ({ ...prev, target: target.id as any }))}
+                   className={cn(
+                     "p-3 rounded-2xl text-[10px] font-black uppercase tracking-widest border-2 transition-all",
+                     campaignData.target === target.id ? "bg-primary border-primary text-white shadow-lg shadow-primary/20" : "bg-gray-50 border-gray-100 text-gray-400 hover:bg-gray-100"
+                   )}
+                 >
+                   {target.label}
+                 </button>
+               ))}
+             </div>
+          </div>
+
+          <div className="space-y-3">
+             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Canais de Envio</label>
+             <div className="flex gap-2">
+               <button className="flex-1 p-3 rounded-2xl text-[10px] font-black uppercase tracking-widest bg-primary text-white flex items-center justify-center gap-2">
+                  <Smartphone size={14} /> WebApp
+               </button>
+               <button disabled className="flex-1 p-3 rounded-2xl text-[10px] font-black uppercase tracking-widest bg-gray-100 text-gray-400 border border-dashed border-gray-200 cursor-not-allowed group relative">
+                  <MessageSquare size={14} className="inline mr-2" /> WhatsApp
+                  <span className="absolute -top-2 -right-1 bg-amber-500 text-white text-[7px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-tighter">BREVE</span>
+               </button>
+             </div>
+          </div>
+
+          <Button 
+            onClick={handleCreate} 
+            disabled={isSending}
+            className="w-full py-5 text-sm font-black uppercase tracking-[0.2em] shadow-xl shadow-primary/20 mt-4"
+          >
+            {isSending ? 'Agendando...' : 'FINALIZAR E AGENDAR'}
+          </Button>
+        </div>
+      </motion.div>
+    </div>
   );
 }
 
@@ -9209,28 +9554,30 @@ function LTVTab({ purchases, customers, rules, onUpdateRules, isAdmin }: { purch
       const groupIds = new Set(groupCustomers.map(c => c.id));
       const groupPurchases = purchases.filter(p => groupIds.has(p.customerId));
       
-      if (groupCustomers.length === 0) return { ltv: 0, frequency: 0, avgValue: 0, recency: 0, projectedLtv: 0 };
+      // Filter only those who actually bought
+      const buyers = groupCustomers.filter(c => groupPurchases.some(p => p.customerId === c.id));
+      
+      if (buyers.length === 0) return { ltv: 0, frequency: 0, avgValue: 0, recency: 0, projectedLtv: 0 };
 
       const totalValue = groupPurchases.reduce((acc, p) => acc + p.amount, 0);
-      const totalFrequency = groupPurchases.length / groupCustomers.length;
+      const totalFrequency = groupPurchases.length / buyers.length;
       const avgValue = groupPurchases.length > 0 ? totalValue / groupPurchases.length : 0;
       
-      const recencySum = groupCustomers.reduce((acc, c) => {
+      const recencySum = buyers.reduce((acc, c) => {
         const lastDate = parseISO(c.lastPurchaseDate);
         return acc + differenceInDays(now, lastDate);
       }, 0);
-      const avgRecency = recencySum / groupCustomers.length;
+      const avgRecency = recencySum / buyers.length;
 
       // Projected LTV based on life expectancy
-      // LTV = Avg Ticket * Frequency (per year) * Remaining Years
-      const avgAge = groupCustomers.reduce((acc, c) => acc + (c.age || 30), 0) / groupCustomers.length;
+      const avgAge = buyers.reduce((acc, c) => acc + (c.age || 30), 0) / buyers.length;
       const remainingYears = Math.max(0, lifeExpectancy - avgAge);
       
-      // Frequency per year (assuming 1 year of data or normalizing)
+      // Frequency per year - assuming we have some history or normalizing
       const projectedLtv = avgValue * totalFrequency * remainingYears;
 
       return {
-        ltv: totalValue / groupCustomers.length,
+        ltv: totalValue / buyers.length,
         frequency: totalFrequency,
         avgValue,
         recency: avgRecency,

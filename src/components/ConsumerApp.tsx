@@ -10,7 +10,10 @@ import {
   getDoc,
   deleteDoc,
   updateDoc,
-  writeBatch
+  writeBatch,
+  orderBy,
+  limit,
+  or
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { 
@@ -41,7 +44,10 @@ import {
   X,
   Trash2,
   Key,
-  AlertTriangle
+  AlertTriangle,
+  Eye,
+  EyeOff,
+  User as UserIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -124,6 +130,8 @@ export default function ConsumerApp() {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [keepLoggedIn, setKeepLoggedIn] = useState(true);
   const [isRegistering, setIsRegistering] = useState(false);
   const [customerRecords, setCustomerRecords] = useState<CustomerRecord[]>([]);
   const [stores, setStores] = useState<Record<string, StoreConfig>>({});
@@ -279,7 +287,23 @@ export default function ConsumerApp() {
     const customerIds = customerRecords.map(r => r.id);
     // Batch notifications listener in groups of 10 to avoid 'in' query limit if needed, 
     // but here we likely have few stores per user.
-    const q = query(collection(db, 'notifications'), where('customerId', 'in', customerIds));
+    const storeIds = Object.keys(stores);
+    if (customerIds.length === 0 && storeIds.length === 0) {
+      setNotifications([]);
+      return;
+    }
+
+    // Include personal notifications AND global ones AND store-specific ones
+    const q = query(
+      collection(db, 'notifications'),
+      or(
+        ...(customerIds.length > 0 ? [where('customerId', 'in', customerIds)] : []),
+        where('targetType', '==', 'global'),
+        ...(storeIds.length > 0 ? [where('targetStoreId', 'in', storeIds)] : [])
+      ),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const notifs = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as Notification));
@@ -613,6 +637,8 @@ export default function ConsumerApp() {
         await batch.commit();
         
         showToast("Foto de perfil atualizada!", "success");
+        // Reload page to ensure all components see the change or just update authUser local state
+        setAuthUser({...authUser, photoURL: base64} as User);
       } catch (err: any) {
         console.error("Photo upload error:", err);
         showToast("Erro ao atualizar foto: " + (err.message || ""), "error");
@@ -884,15 +910,35 @@ export default function ConsumerApp() {
                           </button>
                         )}
                       </div>
-                      <input 
-                        type="password" 
-                        value={password || ''}
-                        onChange={e => setPassword(e.target.value)}
-                        className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-primary"
-                        required
-                        placeholder="••••••••"
-                      />
+                      <div className="relative">
+                        <input 
+                          type={showPassword ? "text" : "password"} 
+                          value={password || ''}
+                          onChange={e => setPassword(e.target.value)}
+                          className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-primary pr-12"
+                          required
+                          placeholder="••••••••"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                        >
+                          {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                        </button>
+                      </div>
                     </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 mb-4">
+                    <input 
+                      type="checkbox" 
+                      id="keepLoggedIn"
+                      checked={keepLoggedIn}
+                      onChange={(e) => setKeepLoggedIn(e.target.checked)}
+                      className="w-4 h-4 rounded border-gray-200 text-primary focus:ring-primary"
+                    />
+                    <label htmlFor="keepLoggedIn" className="text-[10px] font-black text-gray-400 uppercase tracking-widest cursor-pointer select-none">Manter conectado</label>
                   </div>
 
                   <div className="space-y-3 pt-2">
@@ -927,9 +973,9 @@ export default function ConsumerApp() {
   return (
     <div className="min-h-screen bg-gray-50 font-sans pb-24">
       {/* Header */}
-      <header className="bg-white px-6 py-12 sticky top-0 z-10 border-b border-gray-100 flex items-center justify-between">
+      <header className="bg-white px-6 py-6 sticky top-0 z-10 border-b border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center overflow-hidden border-4 border-gray-50 shadow-xl shrink-0">
+          <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center overflow-hidden border-2 border-gray-50 shadow-md shrink-0">
             <img 
               src="https://lh3.googleusercontent.com/d/1ZhXnY35i4ewk-duviq6ilIMGmDhzy0Ui" 
               alt="Logo" 
@@ -938,16 +984,16 @@ export default function ConsumerApp() {
             />
           </div>
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl overflow-hidden border-2 border-green-500/30 shadow-lg bg-gray-50 flex items-center justify-center shrink-0">
+            <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-green-500 shadow-xl bg-gray-50 flex items-center justify-center shrink-0 ring-4 ring-green-50">
                {authUser?.photoURL ? (
                  <img src={authUser.photoURL} alt="Profile" className="w-full h-full object-cover" />
                ) : (
-                 <img src={`https://ui-avatars.com/api/?name=${authUser?.displayName || customerRecords[0]?.name || 'U'}&background=random`} className="w-full h-full object-cover" alt="Avatar" />
+                 <UserIcon className="text-gray-300" size={24} />
                )}
             </div>
-            <div>
-              <h2 className="text-2xl font-black text-gray-900 tracking-tight leading-none uppercase italic">Meus Pontos</h2>
-              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest leading-relaxed mt-2">
+            <div className="flex flex-col">
+              <h2 className="text-lg font-black text-gray-900 tracking-tight leading-none uppercase italic">Fidelidade</h2>
+              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest leading-relaxed mt-1">
                 Olá, {customerRecords[0]?.name?.split(' ')[0] || 'Cliente'}
               </p>
             </div>
