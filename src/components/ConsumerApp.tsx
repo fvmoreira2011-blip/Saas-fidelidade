@@ -307,7 +307,7 @@ export default function ConsumerApp() {
         ...(storeIds.length > 0 ? [where('targetStoreId', 'in', storeIds)] : []),
         ...(storeIds.length > 0 ? [where('companyId', 'in', storeIds)] : [])
       ),
-      limit(100)
+      limit(500)
     );
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -1274,7 +1274,23 @@ export default function ConsumerApp() {
         {activeView === 'alerts' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between ml-1">
-              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Suas Notificações</h4>
+              <div className="flex flex-col">
+                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Suas Notificações</h4>
+                {typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted' && (
+                  <button 
+                    onClick={async () => {
+                      try {
+                        const p = await Notification.requestPermission();
+                        if (p === 'granted') showToast("Alertas ativados!", "success");
+                        setActiveView('alerts');
+                      } catch (e) {}
+                    }}
+                    className="text-[9px] text-green-600 font-bold uppercase tracking-tight mt-0.5 hover:underline text-left animate-pulse"
+                  >
+                    Toque aqui para ativar alertas no celular
+                  </button>
+                )}
+              </div>
               {notifications.length > 0 && (
                 <button 
                   onClick={async () => {
@@ -1326,7 +1342,9 @@ export default function ConsumerApp() {
                         {!notif.read && <div className="w-2 h-2 bg-green-500 rounded-full" />}
                         <h5 className="font-black text-gray-900 text-sm tracking-tight">{notif.title}</h5>
                       </div>
-                      <span className="text-[8px] text-gray-400 font-bold uppercase">{new Date(notif.date).toLocaleDateString()}</span>
+                      <span className="text-[8px] text-gray-400 font-bold uppercase">
+                        {notif.date || notif.createdAt ? new Date(notif.date || notif.createdAt).toLocaleDateString() : 'N/A'}
+                      </span>
                     </div>
                     <p className="text-xs text-gray-500 font-medium leading-relaxed">{notif.message}</p>
                   </motion.div>
@@ -1401,61 +1419,27 @@ export default function ConsumerApp() {
                       >
                         {localStorage.getItem('biometric_id') ? 'Ativado' : 'Ativar'}
                       </button>
-                   ) : (
-                     <span className="text-[8px] text-gray-300 font-black uppercase tracking-widest">Incompatível</span>
-                   )}
-                 </div>
+                    ) : (
+                      <span className="text-[8px] text-gray-300 font-black uppercase tracking-widest">Incompatível</span>
+                    )}
+                  </div>
 
-                 {customerRecords.some((r: any) => r.planEndDate) && (
-                   <div className="bg-white rounded-[2rem] p-6 border border-gray-100 shadow-sm space-y-4">
-                     <div className="flex items-center gap-2 ml-1">
-                       <ShieldCheck size={14} className="text-amber-500" />
-                       <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Planos e Vigências</h4>
-                     </div>
-                     
-                     <div className="space-y-3">
-                       {customerRecords.filter((r: any) => r.planEndDate).map((record: any) => {
-                         const store = (stores as any)[record.companyId];
-                         return (
-                           <div key={record.id} className="p-4 bg-amber-50/50 rounded-2xl border border-amber-100/50 flex items-center justify-between group">
-                             <div className="flex items-center gap-4">
-                                <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-amber-600 shadow-sm shrink-0">
-                                  <ShieldCheck size={20} />
-                                </div>
-                                <div>
-                                  <p className="text-xs font-black text-gray-900 uppercase tracking-tight italic">{store?.companyProfile?.companyName || 'Loja'}</p>
-                                  <p className="text-[8px] text-amber-600 font-bold uppercase mt-0.5 tracking-tighter">Vigência do Contrato</p>
-                                </div>
-                             </div>
-                             <div className="text-right">
-                               <p className="text-xs font-black text-amber-900 tracking-tighter">
-                                 {format(parseISO(record.planEndDate), 'dd/MM/yyyy')}
-                               </p>
-                               <p className="text-[8px] text-amber-600/50 font-bold uppercase tracking-tighter">Somente Leitura</p>
-                             </div>
-                           </div>
-                         );
-                       })}
-                     </div>
-                   </div>
-                 )}
-
-                 <button 
+                  <button 
                     onClick={handleLogout}
                     className="w-full flex items-center justify-between p-4 bg-red-50 text-red-600 rounded-2xl border border-red-100 group transition-all"
-                 >
-                   <div className="flex items-center gap-4 text-left">
-                     <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm shrink-0">
-                       <LogOut size={20} />
-                     </div>
-                     <div>
-                        <span className="text-xs font-black uppercase tracking-widest block">Sair do Aplicativo</span>
-                        <span className="text-[8px] font-bold opacity-70 uppercase tracking-tighter">Encerrar sessão atual</span>
-                     </div>
-                   </div>
-                   <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
-                 </button>
-               </div>
+                  >
+                    <div className="flex items-center gap-4 text-left">
+                      <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm shrink-0">
+                        <LogOut size={20} />
+                      </div>
+                      <div>
+                         <span className="text-xs font-black uppercase tracking-widest block">Sair do Aplicativo</span>
+                         <span className="text-[8px] font-bold opacity-70 uppercase tracking-tighter">Encerrar sessão atual</span>
+                      </div>
+                    </div>
+                    <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                  </button>
+                </div>
 
                <div className="text-center pt-8">
                  <p className="text-[9px] font-black text-gray-300 uppercase tracking-[0.3em]">Versão 2.4.0</p>

@@ -97,10 +97,10 @@ import {
   ShieldCheck,
   UserCircle,
   TrendingUp,
+  TrendingDown,
   Unlock,
   ShieldAlert,
   Activity,
-  Lock,
   Key,
   Award,
   Info,
@@ -124,7 +124,6 @@ import {
   Pause,
   Play,
   PlayCircle,
-  Megaphone,
   Smartphone,
   Hash,
   Gift,
@@ -133,7 +132,12 @@ import {
   Shield,
   Layout,
   Thermometer,
-  PieChart as PieChartIcon
+  PieChart as PieChartIcon,
+  BookOpen,
+  CheckCircle,
+  Lock,
+  LockOpen,
+  Megaphone
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import 'react-phone-number-input/style.css';
@@ -189,7 +193,6 @@ interface Customer {
   authUid?: string;
   age?: number;
   birthDate?: string;
-  planEndDate?: string;
   lastPurchaseDate: string;
   createdAt: string;
   updatedAt?: string;
@@ -239,6 +242,8 @@ interface SeasonalDate {
   state?: string;
   city?: string;
   memo?: string;
+  hasCampaign?: boolean;
+  campaignData?: any;
 }
 
 interface Notification {
@@ -344,6 +349,8 @@ interface AppUser {
   roleInCompany?: string;
   redemptionCode?: string;
   erpKey?: string;
+  canCreatePromotions?: boolean;
+  canUseLoyalty?: boolean;
 }
 
 function RedemptionCodesTab() {
@@ -942,7 +949,7 @@ function AppContent() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'score' | 'customers' | 'rewarded_customers' | 'rewards' | 'seasonal_dates' | 'ltv' | 'goals' | 'promotion' | 'reset' | 'admin' | 'company_profile' | 'plans' | 'super_admin_profile' | 'super_admin_management' | 'painel_master' | 'notificar' | 'redemption_codes'>(() => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'score' | 'customers' | 'rewarded_customers' | 'rewards' | 'create_promotion' | 'seasonal_dates' | 'ltv' | 'goals' | 'promotion' | 'reset' | 'admin' | 'company_profile' | 'plans' | 'super_admin_profile' | 'super_admin_management' | 'painel_master' | 'notificar' | 'redemption_codes'>(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('mode') === 'compact' && params.get('tab')) {
       return params.get('tab') as any;
@@ -1349,19 +1356,6 @@ function AppContent() {
           return; // Let the next snapshot handle it
         }
 
-        // Auto-merge national holidays from Google Calendar defaults if missing
-        const currentDates = data.seasonalDates || [];
-        const nationalDefaults = DEFAULT_RULES.seasonalDates?.filter(d => d.type === 'national') || [];
-        const missingNationals = nationalDefaults.filter(nd => 
-          !currentDates.some(cd => cd.name === nd.name && cd.date === nd.date)
-        );
-
-        if (missingNationals.length > 0 && isAdminUser) {
-          const updatedDates = [...currentDates, ...missingNationals].sort((a, b) => a.date.localeCompare(b.date));
-          updateDoc(snapshot.ref, { seasonalDates: updatedDates });
-          return; // Let the next snapshot handle it
-        }
-        
         setRules(data);
         setIsRulesPreloaded(true);
       } else if (isAdminUser) {
@@ -1798,6 +1792,21 @@ function AppContent() {
       doc.text('Comparação entre os dados informados no início do projeto e a performance atual:', marginSide, currentY);
 
       currentY += 5;
+
+      // Calculate Customer Analysis for PDF
+      const currentMonthStr = format(now, 'yyyy-MM');
+      const totalCurrentCust = customers.filter(c => !c.isDeleted).length;
+      const totalPrevMonthCust = customers.filter(c => 
+        !c.isDeleted && c.createdAt && c.createdAt < format(startOfMonth(now), 'yyyy-MM-dd')
+      ).length;
+      const custGoal = goals.find(g => g.month === currentMonthStr)?.customersCount || 0;
+      const growthPct = totalPrevMonthCust > 0 ? ((totalCurrentCust / totalPrevMonthCust) - 1) * 100 : 0;
+      const periodNewCust = customers.filter(c => {
+         if (c.isDeleted || !c.createdAt) return false;
+         if (!startDateStr || !endDateStr) return false;
+         return c.createdAt >= startDateStr && c.createdAt <= endDateStr;
+      }).length;
+
       const drawGrowthCard = (label: string, baseline: number, current: number, x: number, y: number, w: number) => {
         const growth = baseline > 0 ? ((current / baseline) - 1) * 100 : 0;
         const color = growth >= 0 ? [22, 163, 74] : [220, 38, 38];
@@ -1826,6 +1835,32 @@ function AppContent() {
       drawGrowthCard('Faturamento Mensal', refMonthlyRev, rev30d, marginSide + contentWidth / 2 + 2, currentY, contentWidth / 2 - 2);
 
       currentY += 35;
+
+      // 3. BASE DE CLIENTES E METAS
+      doc.setFontSize(12);
+      doc.setTextColor(...rgbTheme);
+      doc.setFont('helvetica', 'bold');
+      doc.text('3. BASE DE CLIENTES E PERFORMANCE DE CAPTAÇÃO', marginSide, currentY);
+      
+      currentY += 8;
+      drawDataBox('Base Total', `${totalCurrentCust} Ativos`, marginSide, currentY, contentWidth / 4 - 1.5);
+      drawDataBox('Meta Clientes', `${custGoal || '---'} Alvo`, marginSide + (contentWidth / 4), currentY, contentWidth / 4 - 1.5);
+      drawDataBox('Cresc. Mês (%)', `${growthPct.toFixed(1)}%`, marginSide + (2 * contentWidth / 4), currentY, contentWidth / 4 - 1.5);
+      drawDataBox('Novos Filtro', `${periodNewCust}`, marginSide + (3 * contentWidth / 4), currentY, contentWidth / 4 - 1.5);
+      
+      currentY += 25;
+
+      if (custGoal > 0) {
+        const goalProgress = Math.min((totalCurrentCust / custGoal) * 100, 100);
+        doc.setFontSize(8);
+        doc.setTextColor(100, 100, 100);
+        doc.text(`Progresso da Meta de Clientes: ${goalProgress.toFixed(1)}%`, marginSide, currentY);
+        doc.setFillColor(245, 245, 245);
+        doc.roundedRect(marginSide, currentY + 2, contentWidth, 3, 1.5, 1.5, 'F');
+        doc.setFillColor(...rgbTheme);
+        doc.roundedRect(marginSide, currentY + 2, (contentWidth * goalProgress) / 100, 3, 1.5, 1.5, 'F');
+        currentY += 12;
+      }
       
       // Evolução do Ticket Médio - Mini Chart
       doc.setFontSize(10);
@@ -1860,12 +1895,12 @@ function AppContent() {
         try { doc.text(format(parseISO(h.m + '-01'), 'MMM', { locale: ptBR }), x - 2, currentY + chartH + 5); } catch(e){}
       });
 
-      // 3. VIABILIDADE FINANCEIRA & ROI
+      // 4. VIABILIDADE FINANCEIRA & ROI
       doc.addPage();
       currentY = 30;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
-      doc.text('3. MÉTRICAS DE VIABILIDADE E ROI DO PROGRAMA', marginSide, currentY);
+      doc.text('4. MÉTRICAS DE VIABILIDADE E ROI DO PROGRAMA', marginSide, currentY);
       
       currentY += 10;
       // Investment vs Returns
@@ -1919,10 +1954,10 @@ function AppContent() {
       currentY = (doc as any).lastAutoTable?.finalY || (currentY + 60);
       currentY += 15;
 
-      // 4. PARTICIPAÇÃO E ENGAJAMENTO (RULES)
+      // 5. PARTICIPAÇÃO E ENGAJAMENTO (RULES)
       doc.setFontSize(12);
       doc.setTextColor(...rgbTheme);
-      doc.text('4. DISTRIBUIÇÃO POR REGRA E SEGMENTO', marginSide, currentY);
+      doc.text('5. DISTRIBUIÇÃO POR REGRA E SEGMENTO', marginSide, currentY);
       
       const totalP = purchases.length || 1;
       const partRatio = (participantPurchases.length / totalP) * 100;
@@ -1976,13 +2011,13 @@ function AppContent() {
          }
       });
 
-      // 5. RANKING RFM & DIAGNÓSTICO IA
+      // 6. RANKING RFM & DIAGNÓSTICO IA
       doc.addPage();
       addHeaderFooter(doc);
       currentY = 40;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
-      doc.text('5. RANKINGS E SEGMENTAÇÃO DE CLIENTES', marginSide, currentY);
+      doc.text('6. RANKINGS E SEGMENTAÇÃO DE CLIENTES', marginSide, currentY);
       
       currentY += 10;
       if (typeof autoTable === 'function') {
@@ -2037,7 +2072,7 @@ function AppContent() {
       currentY += 5;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
-      doc.text('6. ANÁLISE TEMPORAL E TERMÔMETRO SEMANAL', marginSide, currentY);
+      doc.text('7. ANÁLISE TEMPORAL E TERMÔMETRO SEMANAL', marginSide, currentY);
       
       currentY += 10;
       doc.setFontSize(10);
@@ -2071,50 +2106,78 @@ function AppContent() {
       currentY += 5;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
-      doc.text('7. PARECER TÉCNICO & IA STRATEGIC INSIGHTS', marginSide, currentY);
+      doc.text('8. PARECER TÉCNICO & IA STRATEGIC INSIGHTS', marginSide, currentY);
 
       const cacheKey = `analysis_cache_${selectedCompanyId}`;
       const cached = localStorage.getItem(cacheKey);
       const hasAI = rules.geminiApiKey || process.env.GEMINI_API_KEY;
       let analysisText = hasAI ? "Aguardando processamento de IA... Gere o diagnóstico na aba 'Análise Estratégica' para incluir recomendações personalizadas por IA neste relatório." : "Para diagnósticos automáticos e recomendações de crescimento, configure sua Chave API Gemini nas regras do sistema.";
+      
       if (cached) {
-         try {
-           const parsed = JSON.parse(cached);
-           analysisText = parsed.result;
-         } catch(e) {}
+          try {
+            const parsed = JSON.parse(cached);
+            analysisText = parsed.result;
+          } catch(e) {}
       }
 
-      doc.setFillColor(252, 252, 252);
-      doc.setDrawColor(220, 220, 220);
-      
+      // Clean analysis text - very aggressive cleaning
+      const cleanedAnalysis = analysisText
+        .replace(/[#$%*&_~]/g, '') // Remove these symbols
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+
       doc.setFontSize(9);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(40, 40, 40);
+      doc.setTextColor(60, 60, 60);
       
-      const splitText = doc.splitTextToSize(analysisText, contentWidth - 20);
-      const lineHeight = 5;
-      const textHeight = splitText.length * lineHeight;
-      const boxPadding = 10;
-      const estimatedBoxHeight = textHeight + 30; // 30 for header and margins
+      const paragraphs = cleanedAnalysis.split('\n');
+      currentY += 15;
 
-      // Check if we need a new page for the whole block or start here
-      if (currentY + estimatedBoxHeight > pageHeight - 20) {
-        doc.addPage();
-        addHeaderFooter(doc);
-        currentY = 40;
-      }
-
-      // Draw the box
-      doc.roundedRect(marginSide, currentY + 5, contentWidth, estimatedBoxHeight, 3, 3, 'FD');
-      
-      // Icon-like header for AI
-      doc.setFillColor(...rgbTheme);
-      doc.circle(marginSide + 10, currentY + 15, 3, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.text('CONSULTORIA BUYPASS INTELLIGENCE (AI)', marginSide + 16, currentY + 16);
-      
-      doc.setFont('helvetica', 'normal');
-      doc.text(splitText, marginSide + 10, currentY + 25);
+      paragraphs.forEach((para: string) => {
+        const textToSplit = para.trim();
+        if (!textToSplit) return;
+        
+        const lines = doc.splitTextToSize(textToSplit, contentWidth - 10);
+        
+        lines.forEach((line: string) => {
+          if (currentY > pageHeight - 25) {
+            doc.addPage();
+            addHeaderFooter(doc);
+            currentY = 40;
+            
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(7);
+            doc.setTextColor(150);
+            doc.text('(Continuação do Parecer Técnico)', marginSide, 35);
+            doc.setFontSize(9);
+            doc.setTextColor(60, 60, 60);
+          }
+          
+          // Improved Title detection
+          const pureLine = line.replace(/^[#\s.]+/, '').trim();
+          const looksLikeTitle = line.length < 65 && (
+            line.includes('CAPÍTULO') || 
+            line.includes('RECOMENDAÇÃO') || 
+            line.includes('ANÁLISE') ||
+            line.includes('PONTO') ||
+            /^\d+[\.\-\s]/.test(line) ||
+            /^[A-ZÀ-Ú\s.]{8,}$/.test(pureLine)
+          );
+          
+          if (looksLikeTitle) {
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...rgbTheme);
+            doc.text(pureLine, marginSide + 5, currentY);
+          } else {
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(60, 60, 60);
+            doc.text(line, marginSide + 5, currentY);
+          }
+          
+          currentY += 6;
+        });
+        
+        currentY += 4;
+      });
 
       const pageCount = (doc as any).internal.getNumberOfPages();
       for(let i = 1; i <= pageCount; i++) {
@@ -2133,7 +2196,9 @@ function AppContent() {
   const handleUpdateRules = async (newRules: LoyaltyRule) => {
     if (!selectedCompanyId) return;
     try {
-      await setDoc(doc(db, 'configs', selectedCompanyId), newRules);
+      // Remover valores undefined recursivamente para evitar erros no Firestore
+      const cleanRules = JSON.parse(JSON.stringify(newRules));
+      await setDoc(doc(db, 'configs', selectedCompanyId), cleanRules);
     } catch (error) {
       console.error("Error updating rules:", error);
       showToast("Erro ao atualizar configurações.", "error");
@@ -2273,6 +2338,10 @@ function AppContent() {
 
     // BLOCKING LOGIC: Check for plan expiration
     const isPlanExpired = appUser && appUser.planEndDate && new Date(appUser.planEndDate) < new Date();
+    const isPlanExpiringSoon = appUser && appUser.planEndDate && 
+      differenceInDays(new Date(appUser.planEndDate), new Date()) <= 60 && 
+      new Date(appUser.planEndDate) > new Date();
+
     if (isPlanExpired && !isSuperAdmin) {
       return (
         <div className="min-h-screen flex flex-col items-center justify-center bg-black p-6 text-white text-center overflow-hidden relative">
@@ -2487,6 +2556,17 @@ function AppContent() {
               {(!isUserOnly || allowedTabs.includes('rewards')) && (
                 <SidebarButton active={activeTab === 'rewards'} onClick={() => handleTabChange('rewards')} icon={<Trophy size={20} />} label="Premiação" disabled={isOnboarding} />
               )}
+              <SidebarButton 
+                active={activeTab === 'create_promotion'} 
+                onClick={() => handleTabChange('create_promotion')} 
+                icon={appUser?.canCreatePromotions ? <LockOpen size={20} /> : <Lock size={20} />} 
+                label="Criar Promoção" 
+                className={cn(
+                  "transition-all duration-300",
+                  activeTab === 'create_promotion' ? "bg-[#fb8500] text-white shadow-lg shadow-orange-500/20" : "text-gray-500 hover:text-[#fb8500]"
+                )}
+                disabled={isOnboarding} 
+              />
               {(!isUserOnly || allowedTabs.includes('seasonal_dates')) && (
                 <SidebarButton active={activeTab === 'seasonal_dates'} onClick={() => handleTabChange('seasonal_dates')} icon={<Calendar size={20} />} label="Datas Sazonais" disabled={isOnboarding} />
               )}
@@ -2556,6 +2636,39 @@ function AppContent() {
             </button>
           </div>
         </header>
+
+        {/* Warning Banner for Expiring Plan */}
+        <AnimatePresence>
+          {isPlanExpiringSoon && !isSuperAdmin && (
+            <motion.div 
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              className="bg-amber-500 text-white overflow-hidden"
+            >
+              <div className="px-8 py-3 flex flex-col md:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center shrink-0">
+                    <ShieldAlert size={20} className="text-white" />
+                  </div>
+                  <div>
+                    <h5 className="text-xs font-black uppercase tracking-tighter leading-none italic">Atenção: Renovação Necessária</h5>
+                    <p className="text-[10px] font-bold opacity-90 uppercase tracking-widest mt-1">
+                      Sua vigência de contrato {appUser?.planEndDate ? `vence em ${format(parseISO(appUser.planEndDate), 'dd/MM/yyyy')}` : 'está próxima do fim'}. Renove agora para não perder acesso ao programa. Não deixe para última hora!
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={() => handleTabChange('company_profile')}
+                    className="px-6 py-2 bg-white text-amber-600 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-black/10 hover:bg-amber-50 transition-all"
+                  >
+                    Ver Detalhes do Contrato
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Mobile Header with Hamburger */}
         <header className={cn("lg:hidden px-6 py-4 flex items-center justify-between sticky top-0 z-30 bg-black border-b border-white/10")}>
@@ -2689,20 +2802,40 @@ function AppContent() {
               </div>
             )}
             {activeTab === 'notificar' && !isSuperAdmin && <div key="notificar"><NotifyTab customers={customers} rules={rules} companyId={selectedCompanyId} /></div>}
-            {activeTab === 'customers' && !isSuperAdmin && <div key="customers"><CustomersTab customers={customers} purchases={purchases} isAdmin={isAdminUser} rules={rules} companyId={selectedCompanyId} /></div>}
+            {activeTab === 'customers' && !isSuperAdmin && <div key="customers"><CustomersTab customers={customers} purchases={purchases} isAdmin={isAdminUser} rules={rules} companyId={selectedCompanyId} goals={goals} /></div>}
             {activeTab === 'rewarded_customers' && !isSuperAdmin && <div key="rewarded_customers"><RewardedCustomersTab customers={customers} rules={rules} /></div>}
             {activeTab === 'rewards' && !isSuperAdmin && (
               <div key="rewards">
-                <RewardsTab 
-                  rules={rules} 
-                  goals={goals}
-                  customers={customers}
-                  isAdmin={isAdminUser} 
-                  onUpdateRules={handleUpdateRules} 
-                  onboardingMode={onboardingTour === 'rewards'}
-                  onOnboardingFinish={() => setOnboardingTour('finished')}
-                  companyId={selectedCompanyId}
-                />
+                {appUser?.canUseLoyalty === false ? (
+                  <FeatureLockedView 
+                    title="Módulo de Fidelidade Bloqueado" 
+                    description="O sistema de pontos e premiações não está ativo para a sua loja no momento. Fale com seu consultor BuyPass para habilitar este recurso."
+                  />
+                ) : (
+                  <RewardsTab 
+                    rules={rules} 
+                    goals={goals}
+                    customers={customers}
+                    isAdmin={isAdminUser} 
+                    onUpdateRules={handleUpdateRules} 
+                    onboardingMode={onboardingTour === 'rewards'}
+                    onOnboardingFinish={() => setOnboardingTour('finished')}
+                    companyId={selectedCompanyId}
+                  />
+                )}
+              </div>
+            )}
+            {activeTab === 'create_promotion' && !isSuperAdmin && (
+              <div key="create_promotion">
+                {appUser?.canCreatePromotions === false ? (
+                  <FeatureLockedView 
+                    title="Módulo de Promoções Bloqueado" 
+                    description="A ferramenta de criação de promoções e ofertas sazonais não está disponível para o seu plano atual."
+                    isOrange
+                  />
+                ) : (
+                  <PromotionAreaTab />
+                )}
               </div>
             )}
             {activeTab === 'seasonal_dates' && !isSuperAdmin && <div key="seasonal_dates"><SeasonalDatesTab rules={rules} isAdmin={isAdminUser} onTabChange={handleTabChange} onUpdateRules={handleUpdateRules} /></div>}
@@ -2961,7 +3094,7 @@ function AppContent() {
   );
 }
 
-function SidebarButton({ active, onClick, icon, label, isSuperAdmin, disabled }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; isSuperAdmin?: boolean; disabled?: boolean }) {
+function SidebarButton({ active, onClick, icon, label, isSuperAdmin, disabled, className }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; isSuperAdmin?: boolean; disabled?: boolean; className?: string }) {
   return (
     <button 
       onClick={onClick}
@@ -2969,7 +3102,7 @@ function SidebarButton({ active, onClick, icon, label, isSuperAdmin, disabled }:
       className={cn(
         "flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold text-sm w-full text-left",
         active 
-          ? "bg-green-600 text-white shadow-lg shadow-green-600/20" 
+          ? (className || "bg-green-600 text-white shadow-lg shadow-green-600/20")
           : "text-gray-400 hover:text-white hover:bg-white/10",
         disabled && "opacity-20 cursor-not-allowed grayscale"
       )}
@@ -4606,6 +4739,11 @@ function SuperAdminPanel({ onBack, isSuperAdmin, appUser }: { onBack: () => void
                   <p className="text-primary text-[10px] font-black uppercase tracking-widest flex items-center gap-1">
                     <Mail size={12} /> {client.email}
                   </p>
+                  {client.planEndDate && (
+                    <p className="text-amber-500 text-[10px] font-black uppercase tracking-widest flex items-center gap-1 mt-1">
+                      <Clock size={12} /> Expira em: {format(parseISO(client.planEndDate), 'dd/MM/yyyy')}
+                    </p>
+                  )}
                   {client.erpKey && (
                     <div className="flex items-center gap-2 mt-1">
                       <span className="text-[8px] bg-white/10 text-white/60 px-2 py-0.5 rounded border border-white/5 uppercase font-bold">ERP: {client.erpKey}</span>
@@ -4693,10 +4831,12 @@ function SuperAdminMessagesTab({ clients }: { clients: AppUser[] }) {
         title,
         message,
         customerId: 'admin_broadcast', // Special ID
+        companyId: targetStoreId === 'all' ? 'all' : targetStoreId, // Ensure companyId is present
         targetType: targetStoreId === 'all' ? 'global' : 'store',
         targetStoreId: targetStoreId === 'all' ? 'all' : targetStoreId,
         type: 'info',
         read: false,
+        date: new Date().toISOString(), // Unified with date
         createdAt: new Date().toISOString()
       });
       
@@ -4774,6 +4914,7 @@ function SuperAdminReportsTab({ clients, appUser }: { clients: AppUser[], appUse
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [reportData, setReportData] = useState<any[] | null>(null);
+  const { showToast } = useToast();
 
   const generateReport = async (type: 'general' | 'faturamento' | 'clientes' | 'ranking' | 'conversao' | 'tickets' | 'pontos' | 'metas' = 'general', pointsValue?: number) => {
     setLoading(true);
@@ -4942,7 +5083,7 @@ function SuperAdminReportsTab({ clients, appUser }: { clients: AppUser[], appUse
       setReportData(finalData);
     } catch (err) {
       console.error(err);
-      alert('Erro ao gerar relatório: ' + (err instanceof Error ? err.message : String(err)));
+      showToast('Erro ao gerar relatório: ' + (err instanceof Error ? err.message : String(err)), "error");
     } finally {
       setLoading(false);
     }
@@ -5043,7 +5184,7 @@ function SuperAdminReportsTab({ clients, appUser }: { clients: AppUser[], appUse
       doc.save(`relatorio-gerencial-${new Date().toISOString().split('T')[0]}.pdf`);
     } catch (err) {
       console.error('Error exporting PDF:', err);
-      alert('Erro ao exportar PDF');
+      showToast('Erro ao exportar PDF', "error");
     }
   };
 
@@ -5161,6 +5302,7 @@ function SuperAdminReportsTab({ clients, appUser }: { clients: AppUser[], appUse
 }
 
 function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose: () => void }) {
+  const { showToast } = useToast();
   const [formData, setFormData] = useState<Partial<AppUser>>(client || {
     companyName: '',
     campaignName: '',
@@ -5177,7 +5319,9 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
     password: '',
     role: 'admin',
     approved: true,
-    isClient: true
+    isClient: true,
+    canCreatePromotions: true,
+    canUseLoyalty: true
   });
   const [isSaving, setIsSaving] = useState(false);
   const [saveStep, setSaveStep] = useState<'idle' | 'auth' | 'firestore' | 'config' | 'done'>('idle');
@@ -5253,7 +5397,7 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
       }, 1500);
     } catch (err: any) {
       console.error(err);
-      alert("Erro ao salvar cliente: " + err.message);
+      showToast("Erro ao salvar cliente: " + err.message, "error");
       setSaveStep('idle');
     } finally {
       setIsSaving(false);
@@ -5411,6 +5555,37 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
               <input type="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-gray-900 text-sm font-bold outline-none focus:border-primary transition-all" required />
             </div>
 
+            <div className="space-y-4 p-6 bg-gray-50 rounded-3xl border border-gray-100">
+              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Habilitar Acesso</h4>
+              <div className="space-y-3">
+                <label className="flex items-center gap-3 p-3 bg-white border border-gray-100 rounded-2xl cursor-pointer hover:border-primary transition-all">
+                  <input 
+                    type="checkbox" 
+                    checked={formData.canCreatePromotions || false} 
+                    onChange={e => setFormData({ ...formData, canCreatePromotions: e.target.checked })}
+                    className="w-5 h-5 rounded-lg border-gray-100 text-primary focus:ring-primary"
+                  />
+                  <div>
+                    <p className="text-xs font-black text-gray-900 uppercase">Habilitar Criar Promoção</p>
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-tight">Permite criar banners e ofertas personalizadas</p>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 p-3 bg-white border border-gray-100 rounded-2xl cursor-pointer hover:border-primary transition-all">
+                  <input 
+                    type="checkbox" 
+                    checked={formData.canUseLoyalty || false} 
+                    onChange={e => setFormData({ ...formData, canUseLoyalty: e.target.checked })}
+                    className="w-5 h-5 rounded-lg border-gray-100 text-primary focus:ring-primary"
+                  />
+                  <div>
+                    <p className="text-xs font-black text-gray-900 uppercase">Habilitar Premiação (Fidelidade)</p>
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-tight">Permite usar o sistema de pontos e resgates</p>
+                  </div>
+                </label>
+              </div>
+            </div>
+
             {!client && (
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Senha Inicial</label>
@@ -5443,6 +5618,56 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
         </form>
       </motion.div>
     </div>
+  );
+}
+
+function PromotionAreaTab() {
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="p-8 text-center space-y-6">
+      <div className="w-24 h-24 bg-orange-100 text-orange-600 rounded-[2.5rem] flex items-center justify-center mx-auto shadow-inner">
+        <Megaphone size={48} />
+      </div>
+      <div>
+        <h2 className="text-3xl font-black text-gray-900 uppercase tracking-tighter italic">Área de Promoções</h2>
+        <p className="text-gray-500 max-w-md mx-auto mt-2 font-medium">Em breve você poderá criar banners, ofertas sazonais e campanhas de marketing direto para seus clientes aqui.</p>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto mt-12">
+        {[
+          { title: "Banners Inteligentes", desc: "Criação de artes para o WebApp" },
+          { title: "Ofertas Relâmpago", desc: "Campanhas de curto prazo" },
+          { title: "Cupons Digitais", desc: "Gere códigos de desconto" }
+        ].map((item, i) => (
+          <div key={i} className="p-6 bg-gray-50 border border-gray-100 rounded-3xl text-left border-dashed">
+            <div className="w-10 h-10 bg-white rounded-xl mb-4 border border-gray-100 shadow-sm" />
+            <h4 className="font-black text-gray-900 uppercase text-xs tracking-widest">{item.title}</h4>
+            <p className="text-[10px] text-gray-500 mt-1">{item.desc}</p>
+          </div>
+        ))}
+      </div>
+    </motion.div>
+  );
+}
+
+function FeatureLockedView({ title, description, isOrange }: { title: string; description: string; isOrange?: boolean }) {
+  return (
+    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="min-h-[60vh] flex flex-col items-center justify-center p-8 text-center space-y-6">
+      <div className={cn(
+        "w-24 h-24 rounded-[2.5rem] flex items-center justify-center shadow-inner",
+        isOrange ? "bg-orange-100 text-orange-600" : "bg-red-100 text-red-600"
+      )}>
+        <Lock size={48} />
+      </div>
+      <div className="max-w-md space-y-3">
+        <h2 className="text-3xl font-black text-gray-900 uppercase tracking-tighter italic">{title}</h2>
+        <p className="text-gray-500 font-medium leading-relaxed">{description}</p>
+      </div>
+      <div className={cn(
+        "p-4 rounded-2xl border text-[10px] font-black uppercase tracking-widest",
+        isOrange ? "bg-orange-50 border-orange-100 text-orange-700" : "bg-red-50 border-red-100 text-red-700"
+      )}>
+        Entre em contato com o suporte para desbloquear
+      </div>
+    </motion.div>
   );
 }
 
@@ -6469,19 +6694,55 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
   );
 }
 
-function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { customers: Customer[]; purchases: Purchase[]; isAdmin: boolean; rules: LoyaltyRule; companyId: string | null }) {
+function CustomersTab({ customers, purchases, isAdmin, rules, companyId, goals }: { customers: Customer[]; purchases: Purchase[]; isAdmin: boolean; rules: LoyaltyRule; companyId: string | null; goals: Goal[] }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [isImporting, setIsImporting] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [editPhone, setEditPhone] = useState('');
   const [editBirthDate, setEditBirthDate] = useState('');
-  const [editPlanEndDate, setEditPlanEndDate] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
   const [startDate, setStartDate] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
   const { showToast } = useToast();
 
   const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null);
+
+  // New Analysis Metrics for "Clientes Atuais"
+  const customerAnalysis = useMemo(() => {
+    const now = new Date();
+    const currentMonth = format(now, 'yyyy-MM');
+    const prevMonth = format(subMonths(now, 1), 'yyyy-MM');
+    
+    const totalCurrent = customers.filter(c => !c.isDeleted).length;
+    
+    // Customers created in previous month (estimate based on createdAt)
+    const totalPrevMonth = customers.filter(c => 
+      !c.isDeleted && c.createdAt && c.createdAt < format(startOfMonth(now), 'yyyy-MM-dd')
+    ).length;
+    
+    // Customers within specific filtered period
+    const totalInPeriod = customers.filter(c => {
+      if (c.isDeleted) return false;
+      const created = c.createdAt ? parseISO(c.createdAt) : null;
+      if (!created) return false;
+      return isWithinInterval(created, {
+        start: startOfDay(parseISO(startDate)),
+        end: endOfDay(parseISO(endDate))
+      });
+    }).length;
+
+    const currentGoal = goals.find(g => g.month === currentMonth)?.customersCount || 0;
+    
+    const growthPrevMonth = totalPrevMonth > 0 ? ((totalCurrent / totalPrevMonth) - 1) * 100 : 0;
+    
+    return {
+      totalCurrent,
+      totalPrevMonth,
+      totalInPeriod,
+      currentGoal,
+      growthPrevMonth
+    };
+  }, [customers, goals, startDate, endDate]);
 
   const handleUpdateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -6490,8 +6751,7 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
     try {
       await updateDoc(doc(db, 'customers', editingCustomer.id), {
         phone: editPhone,
-        birthDate: editBirthDate,
-        planEndDate: editPlanEndDate
+        birthDate: editBirthDate
       });
       showToast("Dados do cliente atualizados com sucesso!", "success");
       setEditingCustomer(null);
@@ -6669,6 +6929,84 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
         </div>
       </div>
 
+      {/* Clientes Atuais Overview Analysis */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card className="p-5 bg-white border-gray-100 shadow-sm relative overflow-hidden group hover:border-blue-200 transition-all">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-blue-50 rounded-full -mr-12 -mt-12 group-hover:bg-blue-100 transition-colors" />
+          <div className="relative z-10">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="p-1.5 bg-blue-500 rounded-lg text-white">
+                <Users size={16} />
+              </div>
+              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Base de Clientes</h4>
+            </div>
+            <div className="flex items-baseline gap-1">
+              <p className="text-3xl font-black text-gray-900 tracking-tighter">{customerAnalysis.totalCurrent}</p>
+              <span className="text-xs font-bold text-gray-400">ativos</span>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-5 bg-white border-gray-100 shadow-sm relative overflow-hidden group hover:border-primary/30 transition-all">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="p-1.5 bg-primary rounded-lg text-white">
+              <Target size={16} />
+            </div>
+            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Meta vs Real</h4>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <p className="text-3xl font-black text-gray-900 tracking-tighter">{customerAnalysis.totalCurrent}</p>
+            <p className="text-sm font-bold text-gray-400">/ {customerAnalysis.currentGoal || '---'}</p>
+          </div>
+          <div className="mt-4">
+            <div className="flex justify-between text-[8px] font-black uppercase mb-1">
+              <span className="text-gray-400">Progresso</span>
+              <span className="text-primary">{customerAnalysis.currentGoal > 0 ? Math.round((customerAnalysis.totalCurrent / customerAnalysis.currentGoal) * 100) : 0}%</span>
+            </div>
+            <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+              <div 
+                className="bg-primary h-full rounded-full transition-all duration-1000" 
+                style={{ width: `${Math.min((customerAnalysis.totalCurrent / (customerAnalysis.currentGoal || 1)) * 100, 100)}%` }}
+              />
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-5 bg-white border-gray-100 shadow-sm relative overflow-hidden group hover:border-orange-200 transition-all">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="p-1.5 bg-orange-500 rounded-lg text-white">
+              <Calendar size={16} />
+            </div>
+            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">vs Mês Anterior</h4>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <p className="text-3xl font-black text-gray-900 tracking-tighter">{customerAnalysis.totalPrevMonth}</p>
+            <div className={cn(
+              "flex items-center gap-0.5 font-black text-[10px] px-1.5 py-0.5 rounded-full",
+              customerAnalysis.growthPrevMonth >= 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+            )}>
+              {customerAnalysis.growthPrevMonth >= 0 ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+              {Math.abs(customerAnalysis.growthPrevMonth).toFixed(1)}%
+            </div>
+          </div>
+          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter mt-1">Comparação base histórica</p>
+        </Card>
+
+        <Card className="p-5 bg-white border-gray-100 shadow-sm relative overflow-hidden group hover:border-purple-200 transition-all">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="p-1.5 bg-purple-500 rounded-lg text-white">
+              <BarChart3 size={16} />
+            </div>
+            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Novos no Período</h4>
+          </div>
+          <div className="flex items-baseline gap-1">
+            <p className="text-3xl font-black text-gray-900 tracking-tighter">{customerAnalysis.totalInPeriod}</p>
+            <span className="text-xs font-bold text-gray-400">clientes</span>
+          </div>
+          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter mt-1">Captados no filtro selecionado</p>
+        </Card>
+      </div>
+
       {/* Date Filter & Metrics */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         <Card className="lg:col-span-1 p-4 bg-white border-gray-100 shadow-sm flex flex-col justify-center">
@@ -6777,16 +7115,12 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
 
               <div className="flex items-center justify-between pt-4 border-t border-gray-50 mt-4">
                 <p className="text-[8px] text-gray-400 font-bold uppercase">Última: {format(parseISO(customer.lastPurchaseDate || new Date().toISOString()), 'dd/MM/yy')}</p>
-                {customer.planEndDate && (
-                  <p className="text-[8px] text-amber-600 font-bold uppercase">Expira: {format(parseISO(customer.planEndDate), 'dd/MM/yy')}</p>
-                )}
                 <div className="flex gap-2">
                     <button 
                       onClick={() => {
                         setEditingCustomer(customer);
                         setEditPhone(customer.phone);
                         setEditBirthDate(customer.birthDate || '');
-                        setEditPlanEndDate(customer.planEndDate || '');
                       }}
                       className="text-gray-400 hover:text-primary transition-colors flex items-center gap-1 text-[10px] uppercase font-black"
                     >
@@ -6860,16 +7194,6 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
                     onChange={(e) => setEditBirthDate(e.target.value)}
                     className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-gray-900 font-bold outline-none focus:ring-2 focus:ring-primary transition-all"
                     required
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-1">Vigência do Plano</label>
-                  <input 
-                    type="date" 
-                    value={editPlanEndDate}
-                    onChange={(e) => setEditPlanEndDate(e.target.value)}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-gray-900 font-bold outline-none focus:ring-2 focus:ring-primary transition-all"
                   />
                 </div>
 
@@ -7027,6 +7351,37 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
     setShowOnboardingFinish(true);
   };
 
+  const handleResetPlanning = async () => {
+    if (!companyId) return;
+    const currentMonth = format(new Date(), 'yyyy-MM');
+    const futureGoals = goals.filter(g => g.month >= currentMonth);
+    
+    if (futureGoals.length === 0) {
+      showToast("Não há metas futuras para refazer.", "info");
+      return;
+    }
+
+    askConfirmation(
+      "Refazer Planejamento",
+      "Isso irá remover todas as metas do mês atual e meses futuros para que você possa redimensionar seu planejamento. Os meses já encerrados (consolidados) serão preservados conforme solicitado. Deseja continuar?",
+      async () => {
+        setIsSaving(true);
+        try {
+          // Delete future goals one by one (Firestore limit for small sets)
+          for (const goal of futureGoals) {
+            await deleteDoc(doc(db, 'goals', goal.id));
+          }
+          showToast("Planejamento futuro reiniciado!", "success");
+        } catch (error) {
+          showToast("Erro ao reiniciar planejamento.", "error");
+        } finally {
+          setIsSaving(false);
+        }
+      },
+      true
+    );
+  };
+
   const actualAvgTicket = useMemo(() => {
     const totalSales = purchases.reduce((acc, p) => acc + p.amount, 0);
     return purchases.length > 0 ? totalSales / purchases.length : 0;
@@ -7039,6 +7394,7 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
   }, [monthlyRevenue, avgTicket]);
 
   const sortedGoals = [...goals].sort((a, b) => a.month.localeCompare(b.month));
+  const { askConfirmation } = useConfirm();
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-6 pb-12">
@@ -7050,40 +7406,47 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
         <Target className="text-primary" size={28} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="p-6 bg-white border-gray-100 shadow-sm">
-          <div className="flex items-center gap-2 mb-6">
-            <h3 className="font-bold text-gray-900">Definir Meta de Faturamento</h3>
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <Card className="lg:col-span-2 p-8 bg-white border-primary/20 shadow-xl relative overflow-hidden ring-1 ring-primary/10">
+          <div className="absolute top-0 right-0 w-48 h-48 bg-primary/5 rounded-full -mr-24 -mt-24" />
+          <div className="flex items-center gap-3 mb-8 relative z-10">
+            <div className="p-2 bg-primary rounded-xl text-white shadow-lg shadow-primary/20">
+              <Target size={24} />
+            </div>
+            <div>
+              <h3 className="font-black text-gray-900 uppercase tracking-tighter text-xl">Planejamento de Performance</h3>
+              <p className="text-[10px] text-primary font-black uppercase tracking-widest">Defina suas metas para o crescimento do SaaS</p>
+            </div>
           </div>
-          <form onSubmit={handleSaveGoal} className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
+          <form onSubmit={handleSaveGoal} className="space-y-8 relative z-10">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div className="space-y-2">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Mês de Referência</label>
                 <input 
                   type="month" 
                   value={month}
                   onChange={(e) => setMonth(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-gray-900 font-bold outline-none focus:border-primary transition-all shadow-inner"
+                  className="w-full bg-white border border-gray-100 rounded-2xl px-6 py-5 text-gray-900 font-bold outline-none focus:border-primary transition-all shadow-sm text-lg"
                   required
                 />
               </div>
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Dias Úteis</label>
                 <input 
                   type="number" 
                   value={workingDays}
                   onChange={(e) => setWorkingDays(e.target.value)}
                   placeholder="22"
-                  className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-gray-900 font-bold outline-none focus:border-primary transition-all shadow-inner"
+                  className="w-full bg-white border border-gray-100 rounded-2xl px-6 py-5 text-gray-900 font-bold outline-none focus:border-primary transition-all shadow-sm text-lg"
                   required
                 />
               </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div className="space-y-2">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Meta de Faturamento (R$)</label>
                 <div className="relative">
-                  <DollarSign className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                  <DollarSign className="absolute left-6 top-1/2 -translate-y-1/2 text-primary" size={24} />
                   <input 
                     type="number" 
                     value={value}
@@ -7091,23 +7454,23 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
                     placeholder="0.00"
                     step="0.01"
                     className={cn(
-                      "w-full bg-gray-50 border rounded-2xl pl-14 pr-6 py-4 text-gray-900 font-black text-xl outline-none transition-all shadow-inner",
+                      "w-full bg-white border rounded-3xl pl-16 pr-6 py-4 text-gray-900 font-black text-lg outline-none transition-all shadow-sm",
                       onboardingStep === 'onboarding' && !value ? "border-amber-400 animate-pulse" : "border-gray-100 focus:border-primary"
                     )}
                     required
                   />
                 </div>
               </div>
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Meta de Clientes</label>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Meta de Clientes (Novos)</label>
                 <div className="relative">
-                  <Users className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                  <Users className="absolute left-6 top-1/2 -translate-y-1/2 text-primary" size={24} />
                   <input 
                     type="number" 
                     value={customersCount}
                     onChange={(e) => setCustomersCount(e.target.value)}
-                    placeholder="0"
-                    className="w-full bg-gray-50 border border-gray-100 rounded-2xl pl-14 pr-6 py-4 text-gray-900 font-black text-xl outline-none focus:border-primary transition-all shadow-inner"
+                    placeholder="Ex: 100"
+                    className="w-full bg-white border border-gray-100 rounded-3xl pl-16 pr-6 py-4 text-gray-900 font-black text-lg outline-none focus:border-primary transition-all shadow-sm"
                   />
                 </div>
               </div>
@@ -7116,14 +7479,20 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
               type="submit" 
               disabled={isSaving || (onboardingStep === 'onboarding' && !value)} 
               className={cn(
-                "w-full py-4 rounded-2xl font-black uppercase tracking-widest transition-all",
-                (onboardingStep === 'onboarding' && !value) ? "opacity-30 cursor-not-allowed bg-gray-400" : "shadow-lg shadow-primary/20 shadow-primary/20"
+                "w-full py-6 rounded-2xl font-black uppercase tracking-widest transition-all text-sm",
+                (onboardingStep === 'onboarding' && !value) ? "opacity-30 cursor-not-allowed bg-gray-400" : "shadow-xl shadow-primary/30"
               )}
             >
-              {isSaving ? 'Gravando...' : (onboardingStep === 'onboarding' ? `Salvar Meta (${goals.length}/12)` : 'Salvar Meta Mensal')}
+              {isSaving ? 'Gravando...' : (onboardingStep === 'onboarding' ? `Confirmar mês (${goals.length}/12)` : 'Alimentar Histórico de Metas')}
             </Button>
+            <p className="text-[10px] text-gray-400 font-bold text-center uppercase tracking-widest italic flex items-center justify-center gap-2">
+              <ShieldCheck size={12} />
+              Todos os indicadores do sistema serão baseados nos dados acima
+            </p>
           </form>
         </Card>
+
+        <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-1 gap-6">
 
         <Card className="p-6 bg-white border-gray-100 shadow-sm">
           <div className="flex items-center gap-2 mb-6">
@@ -7163,7 +7532,7 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
                 <p className="text-[10px] font-black text-primary uppercase tracking-widest">Transações média de referencia</p>
                 <TrendingUp className="text-primary" size={16} />
               </div>
-              <p className="text-3xl font-black text-gray-900 italic tracking-tighter">
+              <p className="text-2xl font-black text-gray-900 italic tracking-tighter">
                 {activeClientsNeeded} <span className="text-xs font-bold text-gray-400 uppercase not-italic">Transações</span>
               </p>
               <p className="text-[10px] text-gray-400 font-medium mt-1 italic">Baseado no faturamento dividido pelo ticket médio.</p>
@@ -7204,7 +7573,7 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
                 <TrendingUp size={16} className="text-blue-600" />
               </div>
               <div className="flex items-baseline gap-2">
-                <p className="text-3xl font-black text-gray-900 tracking-tighter">
+                <p className="text-2xl font-black text-gray-900 tracking-tighter">
                   {((actualAvgTicket) / (rules.avgTicketGoal || 1) * 100).toFixed(1)}%
                 </p>
                 <span className="text-[10px] font-bold text-gray-400 uppercase">da Meta</span>
@@ -7224,6 +7593,7 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
           </div>
         </Card>
       </div>
+    </div>
 
       <AnimatePresence>
         {showOnboardingFinish && (
@@ -7266,8 +7636,12 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
             return (
               <Card key={goal.id} className={cn(
                 "p-5 border-gray-100 shadow-sm relative overflow-hidden group transition-all",
-                isPast ? "bg-gray-100/50 grayscale-[0.5] opacity-70" : "bg-white"
+                isPast ? "bg-gray-100/30 grayscale-[0.5] opacity-60" : "bg-white hover:border-primary/30"
               )}>
+                {isPast && (
+                  <div className="absolute inset-0 z-20 bg-gray-50/10 pointer-events-none" />
+                )}
+                
                 <div className={cn(
                   "absolute top-0 left-0 h-1 w-full",
                   isPast ? "bg-gray-300" : "bg-primary/20"
@@ -7281,19 +7655,22 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
                   <div>
                     <h4 className="font-black text-gray-900 uppercase tracking-tighter text-lg flex items-center">
                       {format(parseISO(goal.month + '-01'), 'MMMM yyyy', { locale: ptBR })}
-                      {isPast && <span className="ml-2 text-[8px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded uppercase font-black tracking-normal">Encerrado</span>}
-                      <button 
-                        onClick={() => {
-                          setMonth(goal.month);
-                          setValue(goal.value.toString());
-                          setWorkingDays(goal.workingDays?.toString() || '22');
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
-                        className="ml-2 p-1 text-primary hover:bg-primary/10 rounded transition-colors group-hover:scale-110"
-                        title="Editar Meta"
-                      >
-                        <Settings size={14} />
-                      </button>
+                      {isPast && <span className="ml-2 text-[8px] bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded uppercase font-black tracking-normal">Consolidado</span>}
+                      {!isPast && (
+                        <button 
+                          onClick={() => {
+                            setMonth(goal.month);
+                            setValue(goal.value.toString());
+                            setWorkingDays(goal.workingDays?.toString() || '22');
+                            setCustomersCount(goal.customersCount?.toString() || '');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className="ml-2 p-1 text-primary hover:bg-primary/10 rounded transition-colors group-hover:scale-110"
+                          title="Editar Meta"
+                        >
+                          <Settings size={14} />
+                        </button>
+                      )}
                     </h4>
                     <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{goal.workingDays} dias úteis</p>
                   </div>
@@ -7308,17 +7685,39 @@ function GoalsTab({ goals, purchases, onUpdateRules, rules, isAdmin, companyId, 
                 <div className="space-y-3">
                   <div className="flex justify-between items-end">
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">Vendas Reais</p>
-                    <p className="text-xl font-black text-gray-900 tracking-tighter italic">R$ {formatCurrency(realSales)}</p>
+                    <p className={cn("text-xl font-black tracking-tighter italic", isPast ? "text-gray-500" : "text-gray-900")}>
+                      R$ {formatCurrency(realSales)}
+                    </p>
                   </div>
-                  <div className="pt-3 border-t border-gray-50 flex justify-between">
-                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">Meta Diária</span>
-                    <span className="text-[10px] text-gray-900 font-black">R$ {formatCurrency(goal.value / goal.workingDays)}</span>
+                  
+                  <div className="grid grid-cols-2 gap-2 pt-3 border-t border-gray-50">
+                    <div>
+                      <span className="block text-[8px] text-gray-400 font-bold uppercase tracking-tighter">Meta Clientes</span>
+                      <span className="text-[11px] text-gray-900 font-black">{goal.customersCount || '---'} novos</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="block text-[8px] text-gray-400 font-bold uppercase tracking-tighter">Meta Diária</span>
+                      <span className="text-[11px] text-gray-900 font-black">R$ {formatCurrency(goal.value / (goal.workingDays || 1))}</span>
+                    </div>
                   </div>
                 </div>
               </Card>
             );
           })}
         </div>
+
+        {goals.length > 0 && (
+          <div className="mt-8 flex justify-center">
+            <Button 
+              onClick={handleResetPlanning}
+              variant="outline" 
+              className="py-6 px-12 border-2 border-red-100 text-red-500 hover:bg-red-50 hover:border-red-200 rounded-3xl font-black uppercase tracking-widest text-xs gap-3 transition-all group"
+            >
+              <RotateCcw size={18} className="group-hover:rotate-180 transition-transform duration-500" />
+              Refazer Planejamento Geral
+            </Button>
+          </div>
+        )}
       </div>
     </motion.div>
   );
@@ -7329,6 +7728,7 @@ function NotifyTab({ customers, rules, companyId }: { customers: Customer[]; rul
   const [sending, setSending] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [customMessage, setCustomMessage] = useState('');
+  const { showToast } = useToast();
 
   const filteredCustomers = useMemo(() => {
     const now = new Date();
@@ -7392,7 +7792,7 @@ function NotifyTab({ customers, rules, companyId }: { customers: Customer[]; rul
   const handleSendBulk = async () => {
     if (!companyId || selectedIds.size === 0) return;
     if (!customMessage.trim()) {
-      alert("Por favor, escreva uma mensagem para enviar.");
+      showToast("Por favor, escreva uma mensagem para enviar.", "error");
       return;
     }
 
@@ -7403,26 +7803,27 @@ function NotifyTab({ customers, rules, companyId }: { customers: Customer[]; rul
       
       selectedIds.forEach(id => {
         const notifRef = doc(collection(db, 'notifications'));
-        batch.set(notifRef, {
-          customerId: id,
-          companyId,
-          targetType: 'personal',
-          targetStoreId: companyId,
-          title: `Mensagem da ${rules.companyProfile?.companyName || 'Loja'} para você`,
-          message: customMessage,
-          type: 'manual',
-          date: now,
-          read: false
-        });
+          batch.set(notifRef, {
+            customerId: id,
+            companyId,
+            targetType: 'personal',
+            targetStoreId: companyId,
+            title: `Mensagem da ${rules.companyProfile?.companyName || 'Loja'} para você`,
+            message: customMessage,
+            type: 'manual',
+            date: now,
+            createdAt: now,
+            read: false
+          });
       });
 
       await batch.commit();
-      alert(`${selectedIds.size} notificações enviadas com sucesso!`);
+      showToast(`${selectedIds.size} notificações enviadas com sucesso!`, "success");
       setCustomMessage('');
       setSelectedIds(new Set());
     } catch (error) {
       console.error("Error sending notifications:", error);
-      alert("Erro ao enviar notificações.");
+      showToast("Falha ao enviar notificações. Tente novamente.", "error");
     } finally {
       setSending(false);
     }
@@ -7619,6 +8020,31 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
       return period === 'all';
     });
   }, [purchases, period, startDate, endDate]);
+
+  // New Analysis Metrics for "Clientes Atuais"
+  const customerAnalysis = useMemo(() => {
+    const now = new Date();
+    const currentMonth = format(now, 'yyyy-MM');
+    const totalCurrent = customers.filter(c => !c.isDeleted).length;
+    const totalPrevMonth = customers.filter(c => 
+      !c.isDeleted && c.createdAt && c.createdAt < format(startOfMonth(now), 'yyyy-MM-dd')
+    ).length;
+    
+    // Period filter for DashboardTab
+    const dashboardStart = startDate ? startOfDay(parseISO(startDate)) : startOfMonth(now);
+    const dashboardEnd = endDate ? endOfDay(parseISO(endDate)) : endOfDay(now);
+    
+    const totalInPeriod = customers.filter(c => {
+      if (c.isDeleted || !c.createdAt) return false;
+      const created = parseISO(c.createdAt);
+      return isWithinInterval(created, { start: dashboardStart, end: dashboardEnd });
+    }).length;
+
+    const currentGoal = goals.find(g => g.month === currentMonth)?.customersCount || 0;
+    const growthPrevMonth = totalPrevMonth > 0 ? ((totalCurrent / totalPrevMonth) - 1) * 100 : 0;
+    
+    return { totalCurrent, totalPrevMonth, totalInPeriod, currentGoal, growthPrevMonth };
+  }, [customers, goals, startDate, endDate]);
 
   const stats = useMemo(() => {
     const totalValue = filteredPurchases.reduce((acc, p) => acc + p.amount, 0);
@@ -8134,6 +8560,66 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Clientes Atuais Overview Analysis (Dashboard) */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card className="p-5 bg-white border-gray-100 shadow-sm relative overflow-hidden group hover:border-green-200 transition-all border-l-4 border-l-primary">
+          <div className="relative z-10">
+            <div className="flex items-center gap-2 mb-3">
+              <Users size={16} className="text-primary" />
+              <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Base de Clientes</h4>
+            </div>
+            <div className="flex items-baseline gap-1">
+              <p className="text-3xl font-black text-gray-900 tracking-tighter">{customerAnalysis.totalCurrent}</p>
+              <span className="text-xs font-bold text-gray-400">ativos</span>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-5 bg-white border-gray-100 shadow-sm relative overflow-hidden group hover:border-green-200 transition-all border-l-4 border-l-primary">
+          <div className="flex items-center gap-2 mb-3">
+            <Target size={16} className="text-primary" />
+            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Meta de Clientes</h4>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <p className="text-3xl font-black text-gray-900 tracking-tighter">{customerAnalysis.totalCurrent}</p>
+            <p className="text-sm font-bold text-gray-400">/ {customerAnalysis.currentGoal || '---'}</p>
+          </div>
+          {customerAnalysis.currentGoal > 0 && (
+            <div className="mt-3 w-full bg-gray-100 h-1.5 rounded-full overflow-hidden">
+               <div className="bg-primary h-full transition-all" style={{ width: `${Math.min((customerAnalysis.totalCurrent / customerAnalysis.currentGoal) * 100, 100)}%` }} />
+            </div>
+          )}
+        </Card>
+
+        <Card className="p-5 bg-white border-gray-100 shadow-sm relative overflow-hidden group hover:border-green-200 transition-all border-l-4 border-l-primary">
+          <div className="flex items-center gap-2 mb-3">
+            <Calendar size={16} className="text-primary" />
+            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">vs Mês Anterior</h4>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <p className="text-3xl font-black text-gray-900 tracking-tighter">{customerAnalysis.totalPrevMonth}</p>
+            <div className={cn(
+              "flex items-center gap-0.5 font-black text-[10px] px-1.5 py-0.5 rounded-full",
+              customerAnalysis.growthPrevMonth >= 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+            )}>
+              {customerAnalysis.growthPrevMonth >= 0 ? '+' : ''}{customerAnalysis.growthPrevMonth.toFixed(1)}%
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-5 bg-white border-gray-100 shadow-sm relative overflow-hidden group hover:border-green-200 transition-all border-l-4 border-l-primary">
+          <div className="flex items-center gap-2 mb-3">
+            <TrendingUp size={16} className="text-primary" />
+            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Crescimento</h4>
+          </div>
+          <div className="flex items-baseline gap-1">
+            <p className="text-3xl font-black text-gray-900 tracking-tighter">{customerAnalysis.totalInPeriod}</p>
+            <span className="text-xs font-bold text-gray-400">novos</span>
+          </div>
+          <p className="text-[8px] font-bold text-gray-500 uppercase mt-1">Ganhos no período selecionado</p>
+        </Card>
+      </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard 
@@ -9877,14 +10363,24 @@ function RewardsTab({ rules, goals, customers, isAdmin, onUpdateRules, onboardin
 
 function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rules: LoyaltyRule; isAdmin: boolean; onTabChange: (tab: any) => void; onUpdateRules: (rules: LoyaltyRule) => Promise<void> }) {
   const [dates, setDates] = useState<SeasonalDate[]>(rules.seasonalDates || []);
+
+  useEffect(() => {
+    if (rules.seasonalDates) {
+      setDates(rules.seasonalDates);
+    }
+  }, [rules.seasonalDates]);
   const [isSaving, setIsSaving] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showCampaignModal, setShowCampaignModal] = useState<SeasonalDate | null>(null);
   const [newDate, setNewDate] = useState<Partial<SeasonalDate>>({ type: 'custom', state: '', city: '' });
   const [stateFilter, setStateFilter] = useState('');
   const [cityFilter, setCityFilter] = useState('');
+  const [monthFilter, setMonthFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
   const [activeTab, setActiveTab] = useState<'dates' | 'campaigns'>('dates');
+
+  const { showToast } = useToast();
+  const { askConfirmation } = useConfirm();
 
   const BRAZIL_STATES = [
     { uf: 'AC', name: 'Acre' }, { uf: 'AL', name: 'Alagoas' }, { uf: 'AP', name: 'Amapá' },
@@ -9929,18 +10425,22 @@ function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rule
     return dates.filter(d => {
       const matchState = !stateFilter || d.state === stateFilter || d.type === 'national';
       const matchCity = !cityFilter || d.city === cityFilter || d.type !== 'municipal';
-      return matchState && matchCity;
+      const matchMonth = !monthFilter || (d.date && d.date.includes(`-${monthFilter}-`));
+      const matchType = typeFilter === 'all' || d.type === typeFilter;
+      return matchState && matchCity && matchMonth && matchType;
     }).sort((a, b) => a.date.localeCompare(b.date));
-  }, [dates, stateFilter, cityFilter]);
+  }, [dates, stateFilter, cityFilter, monthFilter, typeFilter]);
 
   const availableHolidays = useMemo(() => {
     return HOLIDAY_LIBRARY.filter(h => {
       const matchState = !stateFilter || h.state === stateFilter || h.type === 'national';
       const matchCity = !cityFilter || h.city === cityFilter || h.type !== 'municipal';
+      const matchMonth = !monthFilter || (h.date && h.date.includes(`-${monthFilter}-`));
+      const matchType = typeFilter === 'all' || h.type === typeFilter;
       const alreadyAdded = dates.some(d => d.name === h.name && d.date === h.date);
-      return matchState && matchCity && !alreadyAdded;
+      return matchState && matchCity && matchMonth && matchType && !alreadyAdded;
     });
-  }, [stateFilter, cityFilter, dates]);
+  }, [stateFilter, cityFilter, monthFilter, typeFilter, dates]);
 
   const handleSave = async (updatedDates: SeasonalDate[]) => {
     if (!isAdmin) return;
@@ -9949,10 +10449,10 @@ function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rule
       const updatedRules = { ...rules, seasonalDates: updatedDates };
       await onUpdateRules(updatedRules);
       setDates(updatedDates);
-      showToast("Configurações salvas!", "success");
+      showToast("Datas sazonais atualizadas!", "success");
     } catch (error) {
       console.error(error);
-      showToast("Erro ao salvar.", "error");
+      showToast("Erro ao salvar datas.", "error");
     } finally {
       setIsSaving(false);
     }
@@ -9976,234 +10476,334 @@ function SeasonalDatesTab({ rules, isAdmin, onTabChange, onUpdateRules }: { rule
   };
 
   const removeDate = (id: string) => {
-    const updated = dates.filter(d => d.id !== id);
-    handleSave(updated);
+    askConfirmation("Remover Data", "Deseja remover esta data sazonal do seu planejamento?", () => {
+      const updated = dates.filter(d => d.id !== id);
+      handleSave(updated);
+    });
   };
 
-  const groupedDates = useMemo(() => {
-    const groups: { [key: string]: SeasonalDate[] } = {
-      'Nacionais': filteredDates.filter(d => d.type === 'national'),
-      'Estaduais': filteredDates.filter(d => d.type === 'state'),
-      'Municipais': filteredDates.filter(d => d.type === 'municipal'),
-      'Personalizadas': filteredDates.filter(d => d.type === 'custom'),
-    };
-    return groups;
-  }, [filteredDates]);
+  const MONTHS = [
+    { value: '01', label: 'Janeiro' }, { value: '02', label: 'Fevereiro' }, { value: '03', label: 'Março' },
+    { value: '04', label: 'Abril' }, { value: '05', label: 'Maio' }, { value: '06', label: 'Junho' },
+    { value: '07', label: 'Julho' }, { value: '08', label: 'Agosto' }, { value: '09', label: 'Setembro' },
+    { value: '10', label: 'Outubro' }, { value: '11', label: 'Novembro' }, { value: '12', label: 'Dezembro' }
+  ];
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-6 pb-24 lg:pb-8">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Calendar className="text-gray-900" size={28} />
-          <h2 className="text-2xl font-bold text-gray-900 tracking-tight italic">Datas Sazonais</h2>
-        </div>
-        
-        <div className="flex bg-gray-100 p-1 rounded-xl">
-          <button 
-            onClick={() => setActiveTab('dates')}
-            className={cn("px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all", activeTab === 'dates' ? "bg-white text-primary shadow-sm" : "text-gray-500")}
-          >
-            Datas
-          </button>
-          <button 
-            onClick={() => setActiveTab('campaigns')}
-            className={cn("px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all", activeTab === 'campaigns' ? "bg-white text-primary shadow-sm" : "text-gray-500")}
-          >
-            Campanhas
-          </button>
+          <div className="p-2 bg-gray-900 rounded-xl text-white shadow-lg">
+            <Calendar size={24} />
+          </div>
+          <div>
+            <h2 className="text-2xl font-black text-gray-900 tracking-tighter uppercase italic">Datas Sazonais</h2>
+            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest italic">Planejamento de campanhas e inteligência comercial</p>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="md:col-span-1 p-6 bg-white border-gray-100 shadow-sm space-y-6">
-          <h3 className="font-bold text-gray-900 text-sm uppercase tracking-widest border-b border-gray-100 pb-2">Filtros Geográficos</h3>
-          
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Estado (UF)</label>
-              <select 
-                value={stateFilter}
-                onChange={e => {
-                  setStateFilter(e.target.value);
-                  setCityFilter(''); // Reset city when state changes
-                }}
-                className="w-full bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="">Brasil (Todos)</option>
-                {BRAZIL_STATES.map(s => <option key={s.uf} value={s.uf}>{s.name} ({s.uf})</option>)}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Município</label>
-              <select 
-                value={cityFilter}
-                onChange={e => setCityFilter(e.target.value)}
-                disabled={!stateFilter}
-                className="w-full bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
-              >
-                <option value="">Todas as Cidades</option>
-                {(CITIES_BY_STATE[stateFilter] || []).map(city => (
-                  <option key={city} value={city}>{city}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="pt-4 border-t border-gray-100">
-            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 italic">Biblioteca de Feriados</h4>
-            <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-              {HOLIDAY_LIBRARY.filter(h => {
-                if (h.type === 'national') return true;
-                if (h.type === 'state' && (!stateFilter || h.state === stateFilter)) return true;
-                if (h.type === 'municipal' && (!stateFilter || h.state === stateFilter) && (!cityFilter || h.city === cityFilter)) return true;
-                return false;
-              }).map((h, i) => (
-                <button
-                  key={i}
-                  disabled={dates.some(d => d.name === h.name)}
-                  onClick={() => addDate(h)}
-                  className="w-full text-left p-2 rounded-lg bg-gray-50 border border-gray-100 hover:border-primary/50 transition-all flex items-center justify-between group disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  <div className="overflow-hidden">
-                    <p className="text-[10px] font-bold text-gray-900 truncate">{h.name}</p>
-                    <p className="text-[8px] text-gray-500">{format(parseISO(h.date!), 'dd/MM')}</p>
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          <div className="lg:col-span-1 space-y-4">
+            <Card className="p-6 bg-white border-gray-100 shadow-xl space-y-6 sticky top-24">
+              <div>
+                <h3 className="font-black text-gray-900 text-xs uppercase tracking-widest flex items-center gap-2 mb-4">
+                  <Filter size={14} className="text-primary" />
+                  Smart Filters
+                </h3>
+                
+                <div className="space-y-5">
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Mês da Data</label>
+                    <select 
+                      value={monthFilter}
+                      onChange={e => setMonthFilter(e.target.value)}
+                      className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs font-bold outline-none focus:ring-2 focus:ring-primary transition-all"
+                    >
+                      <option value="">Todos os meses</option>
+                      {MONTHS.map(m => (
+                        <option key={m.value} value={m.value}>{m.label}</option>
+                      ))}
+                    </select>
                   </div>
-                  <PlusCircle size={14} className="text-gray-300 group-hover:text-primary shrink-0" />
-                </button>
-              ))}
-            </div>
-          </div>
-        </Card>
 
-        <div className="md:col-span-3 space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {Object.entries(groupedDates).map(([group, items]: [string, SeasonalDate[]]) => (
-              <Card key={group} className="p-4 bg-white border-gray-100 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-xs font-black text-gray-900 uppercase tracking-[0.2em] italic flex items-center gap-2">
-                    {group}
-                    <span className="text-[9px] bg-gray-100 px-1.5 py-0.5 rounded-full text-gray-400 font-bold not-italic">{items.length}</span>
-                  </h3>
-                </div>
-                <div className="space-y-2">
-                  {items.map((d: SeasonalDate) => (
-                    <div key={d.id} className="flex items-center justify-between p-3 bg-gray-50/50 border border-gray-100 rounded-2xl hover:border-primary/30 transition-all">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-primary text-white flex flex-col items-center justify-center shadow-lg shadow-primary/20">
-                          <span className="text-[8px] font-black uppercase leading-none opacity-80">{format(parseISO(d.date), 'MMM', { locale: ptBR })}</span>
-                          <span className="text-sm font-black leading-none">{format(parseISO(d.date), 'dd')}</span>
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="text-xs font-black text-gray-900 uppercase italic tracking-tighter">{d.name}</p>
-                          </div>
-                          <div className="flex items-center gap-1.5 mt-1">
-                            <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">
-                              {d.type === 'national' ? 'Brasil' : (d.city ? `${d.city}-${d.state}` : d.state)}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button 
-                          onClick={() => setShowCampaignModal(d)}
-                          className="p-2 text-primary hover:bg-primary/10 rounded-xl transition-all"
-                          title="Criar Campanha"
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Tipo de Evento</label>
+                    <div className="flex flex-col gap-1.5">
+                      {['all', 'national', 'state', 'municipal', 'custom'].map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => setTypeFilter(t)}
+                          className={cn(
+                            "flex items-center gap-2 px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all border text-left",
+                            typeFilter === t ? "bg-primary/5 border-primary/20 text-primary" : "bg-transparent border-transparent text-gray-400 hover:bg-gray-50"
+                          )}
                         >
-                          <Megaphone size={16} />
+                          <div className={cn("w-2 h-2 rounded-full", 
+                            t === 'all' ? "bg-gray-400" :
+                            t === 'national' ? "bg-green-500" :
+                            t === 'state' ? "bg-blue-500" :
+                            t === 'municipal' ? "bg-orange-500" : "bg-purple-500"
+                          )} />
+                          {t === 'all' ? 'Ver Tudo' : 
+                           t === 'national' ? 'Nacionais' : 
+                           t === 'state' ? 'Estaduais' : 
+                           t === 'municipal' ? 'Municipais' : 'Personalizadas'}
                         </button>
-                        {isAdmin && (
-                          <button 
-                            onClick={() => removeDate(d.id)}
-                            className="p-2 text-red-400 hover:bg-red-50 rounded-xl transition-all"
-                          >
-                            <Trash2 size={16} />
-                          </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pt-4 border-t border-gray-50">
+                    <div className="space-y-2">
+                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Localidade (UF)</label>
+                      <select 
+                        value={stateFilter}
+                        onChange={e => {
+                          setStateFilter(e.target.value);
+                          setCityFilter('');
+                        }}
+                        className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs font-bold outline-none focus:ring-2 focus:ring-primary"
+                      >
+                        <option value="">Brasil (Todos)</option>
+                        {BRAZIL_STATES.map(s => (
+                          <option key={s.uf} value={s.uf}>{s.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {stateFilter && CITIES_BY_STATE[stateFilter] && (
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Cidade</label>
+                        <select 
+                          value={cityFilter}
+                          onChange={e => setCityFilter(e.target.value)}
+                          className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs font-bold outline-none focus:ring-2 focus:ring-primary"
+                        >
+                          <option value="">Todas as Cidades</option>
+                          {CITIES_BY_STATE[stateFilter].map(c => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <Button 
+                onClick={() => setShowAddModal(true)}
+                className="w-full py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-primary/20"
+              >
+                <PlusCircle size={18} />
+                <span>Criar Data Especial</span>
+              </Button>
+            </Card>
+          </div>
+
+          <div className="lg:col-span-3 space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredDates.length > 0 ? (
+                filteredDates.map((date) => (
+                  <Card key={date.id} className={cn(
+                    "p-5 border shadow-sm relative overflow-hidden group transition-all hover:shadow-lg",
+                    date.hasCampaign ? "bg-emerald-50/50 border-emerald-200 ring-1 ring-emerald-100" : "bg-white border-gray-100"
+                  )}>
+                    <div className={cn(
+                      "absolute top-0 left-0 w-1.5 h-full",
+                      date.type === 'national' ? "bg-green-500" :
+                      date.type === 'state' ? "bg-blue-500" :
+                      date.type === 'municipal' ? "bg-orange-500" : "bg-purple-500"
+                    )} />
+                    <div className="flex flex-col gap-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className={cn(
+                            "w-14 h-14 rounded-2xl flex flex-col items-center justify-center border transition-all",
+                            date.hasCampaign ? "bg-primary text-white border-primary shadow-md" : "bg-gray-50 border-gray-100"
+                          )}>
+                            <span className={cn("text-[10px] font-black uppercase", date.hasCampaign ? "text-white/80" : "text-gray-400")}>
+                              {format(parseISO(date.date), 'MMM', { locale: ptBR })}
+                            </span>
+                            <span className="text-xl font-black leading-none">{format(parseISO(date.date), 'dd')}</span>
+                          </div>
+                          <div>
+                            <h4 className="font-black text-gray-900 uppercase tracking-tighter text-sm">{date.name}</h4>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={cn(
+                                "text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest",
+                                date.type === 'national' ? "bg-green-100 text-green-700" :
+                                date.type === 'state' ? "bg-blue-100 text-blue-700" :
+                                date.type === 'municipal' ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700"
+                              )}>
+                                {date.type === 'national' ? 'Nacional' : 
+                                 date.type === 'state' ? `Estadual (${date.state})` : 
+                                 date.type === 'municipal' ? `Municipal (${date.city})` : 'Personalizada'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => removeDate(date.id)}
+                          className="p-2 text-gray-400 hover:text-red-500 transition-colors bg-gray-100 hover:bg-red-50 rounded-lg shadow-sm"
+                          title="Remover Data"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <Button
+                          onClick={() => setShowCampaignModal(date)}
+                          className={cn(
+                            "flex-1 py-2.5 rounded-xl text-[10px] uppercase font-black tracking-widest flex items-center justify-center gap-2 transition-all shadow-md",
+                            date.hasCampaign 
+                              ? "bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-500/20" 
+                              : "bg-primary hover:bg-primary/90 text-white shadow-primary/20"
+                          )}
+                        >
+                          {date.hasCampaign ? <CheckCircle size={14} /> : <Megaphone size={14} />}
+                          <span>{date.hasCampaign ? "Campanha Realizada" : "Criar Campanha"}</span>
+                        </Button>
+                        {date.hasCampaign && (
+                          <div className="p-2 bg-emerald-100 text-emerald-600 rounded-xl">
+                            <CheckCircle size={16} />
+                          </div>
                         )}
                       </div>
                     </div>
-                  ))}
-                  {items.length === 0 && (
-                    <div className="text-center py-8 opacity-40">
-                      <Calendar className="mx-auto mb-2" size={24} />
-                      <p className="text-[10px] font-bold uppercase">Vazio</p>
-                    </div>
-                  )}
+                  </Card>
+                ))
+              ) : (
+                <div className="col-span-full py-20 flex flex-col items-center justify-center text-center space-y-4 bg-gray-50/50 rounded-3xl border-2 border-dashed border-gray-200">
+                  <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center text-gray-400">
+                    <Calendar size={32} />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-gray-900 uppercase tracking-tighter">Nenhuma data selecionada</h3>
+                    <p className="text-xs text-gray-400 font-medium italic">Selecione feriados na biblioteca ou crie datas personalizadas abaixo</p>
+                  </div>
                 </div>
-              </Card>
-            ))}
-          </div>
-
-          {isAdmin && (
-            <div className="flex justify-center">
-              <button 
-                onClick={() => setShowAddModal(true)}
-                className="flex items-center gap-2 px-8 py-3 bg-gray-900 text-white rounded-2xl hover:bg-black transition-all text-[10px] font-black uppercase tracking-[0.2em] shadow-xl shadow-black/10"
-              >
-                <PlusCircle size={18} />
-                Nova Data Personalizada
-              </button>
+              )}
             </div>
-          )}
-        </div>
-      </div>
 
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white border border-gray-100 rounded-3xl p-8 w-full max-w-md shadow-2xl relative">
-            <button onClick={() => setShowAddModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors">
-              <X size={24} />
-            </button>
-            <h3 className="text-xl font-black text-gray-900 mb-8 uppercase tracking-tighter italic">Nova Data Personalizada</h3>
-            <div className="space-y-6">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Nome da Data</label>
-                <input 
-                  type="text"
-                  value={newDate.name || ''}
-                  onChange={e => setNewDate(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder="Ex: Aniversário da Loja"
-                  className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-5 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-primary font-bold"
-                />
+            {availableHolidays.length > 0 && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <BookOpen size={18} className="text-gray-400" />
+                  <h3 className="font-black text-gray-900 uppercase tracking-tighter text-lg bg-gray-100 px-4 py-1.5 rounded-full inline-block">Biblioteca de Feriados</h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {availableHolidays.map((holiday, idx) => (
+                    <Card key={idx} className="p-4 bg-white border border-gray-100 shadow-sm flex items-center justify-between group hover:border-green-200 transition-all">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-green-50 rounded-xl flex flex-col items-center justify-center text-green-600 font-black text-xs">
+                          <span>{holiday.date && format(parseISO(holiday.date), 'dd')}</span>
+                          <span className="text-[8px] uppercase">{holiday.date && format(parseISO(holiday.date), 'MMM', { locale: ptBR })}</span>
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-gray-900 leading-tight">{holiday.name}</p>
+                          <p className="text-[8px] text-gray-400 font-black uppercase tracking-widest">{holiday.type}</p>
+                        </div>
+                      </div>
+                      <Button 
+                        size="sm" 
+                        variant="ghost" 
+                        onClick={() => addDate(holiday)}
+                        className="text-green-600 hover:bg-green-50 rounded-lg p-1.5"
+                      >
+                        <Plus size={16} />
+                      </Button>
+                    </Card>
+                  ))}
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Data</label>
+            )}
+          </div>
+        </div>
+
+      <AnimatePresence>
+        {showAddModal && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl space-y-6 relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full -mr-16 -mt-16" />
+              <button 
+                onClick={() => setShowAddModal(false)}
+                className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors p-2 hover:bg-gray-100 rounded-full"
+              >
+                <X size={20} />
+              </button>
+              
+              <div className="relative z-10">
+                <h3 className="text-xl font-black text-gray-900 uppercase tracking-tighter italic">Criar Data Personalizada</h3>
+                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">Crie eventos exclusivos para sua base</p>
+              </div>
+              
+              <div className="space-y-4 relative z-10">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Nome do Evento</label>
                   <input 
-                    type="date"
-                    value={newDate.date || ''}
-                    onChange={e => setNewDate(prev => ({ ...prev, date: e.target.value }))}
-                    className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-5 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-primary font-bold"
+                    type="text" 
+                    value={newDate.name || ''}
+                    onChange={e => setNewDate({ ...newDate, name: e.target.value })}
+                    placeholder="Ex: Liquidação de Inverno"
+                    className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 font-bold text-gray-900 outline-none focus:ring-2 focus:ring-primary h-14"
                   />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Tipo</label>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Data do Evento</label>
+                  <input 
+                    type="date" 
+                    value={newDate.date || ''}
+                    onChange={e => setNewDate({ ...newDate, date: e.target.value })}
+                    className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 font-bold text-gray-900 outline-none focus:ring-2 focus:ring-primary h-14"
+                  />
+                </div>
+                  <div className="p-4 bg-primary/5 rounded-2xl flex items-start gap-3">
+                  <Info size={16} className="text-primary shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-primary/80 font-medium italic">Configure a abrangência da data para que os filtros automáticos funcionem corretamente.</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Abrangência / Tipo</label>
                   <select 
-                    value={newDate.type}
-                    onChange={e => setNewDate(prev => ({ ...prev, type: e.target.value as any }))}
-                    className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-5 py-3 text-gray-900 outline-none focus:ring-2 focus:ring-primary font-bold appearance-none bg-no-repeat bg-[right_1rem_center]"
+                    value={newDate.type || 'custom'}
+                    onChange={e => setNewDate({ ...newDate, type: e.target.value as any })}
+                    className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 font-bold text-gray-900 outline-none focus:ring-2 focus:ring-primary h-14"
                   >
-                    <option value="custom">Personalizada</option>
-                    <option value="state">Estadual</option>
-                    <option value="municipal">Municipal</option>
-                    <option value="national">Nacional</option>
+                    <option value="custom">Personalizada (Sua Loja)</option>
+                    <option value="national">Nacional (Brasil)</option>
+                    <option value="state">Estadual (UF)</option>
+                    <option value="municipal">Municipal (Cidade)</option>
                   </select>
                 </div>
               </div>
-              <Button onClick={() => addDate()} className="w-full py-4 text-xs font-black uppercase tracking-[0.2em] shadow-xl shadow-primary/20">Adicionar à Minha Lista</Button>
-            </div>
-          </motion.div>
-        </div>
-      )}
 
-      {showCampaignModal && (
-        <CampaignCreationModal 
-          targetDate={showCampaignModal} 
-          onClose={() => setShowCampaignModal(null)} 
-          rules={rules} 
-          onUpdateRules={onUpdateRules}
-        />
-      )}
+              <div className="flex gap-4 pt-2 relative z-10">
+                <Button variant="outline" className="flex-1 py-4 font-black uppercase tracking-widest text-xs" onClick={() => setShowAddModal(false)}>Cancelar</Button>
+                <Button 
+                  className="flex-1 py-4 font-black uppercase tracking-widest text-xs shadow-lg shadow-primary/20" 
+                  onClick={() => addDate()}
+                  disabled={!newDate.name || !newDate.date}
+                >
+                  Confirmar
+                </Button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showCampaignModal && (
+          <CampaignCreationModal 
+            targetDate={showCampaignModal} 
+            onClose={() => setShowCampaignModal(null)}
+            rules={rules}
+            onUpdateRules={onUpdateRules}
+          />
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
@@ -10228,9 +10828,29 @@ function CampaignCreationModal({ targetDate, onClose, rules, onUpdateRules }: { 
       );
       await onUpdateRules({ ...rules, seasonalDates: updatedDates });
       onClose();
-      alert("Campanha agendada com sucesso via WebApp!");
+      showToast("Campanha agendada com sucesso via WebApp!", "success");
     } catch (error) {
       console.error(error);
+      showToast("Falha ao agendar campanha. Verifique sua conexão.", "error");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    setIsSending(true);
+    try {
+      const updatedDates = (rules.seasonalDates || []).map(d => 
+        d.id === targetDate.id ? { ...d, hasCampaign: false, campaignData: undefined } : d
+      );
+      // Clean undefined for setDoc safety (already done in handleUpdateRules but just in case)
+      const cleanRules = JSON.parse(JSON.stringify({ ...rules, seasonalDates: updatedDates }));
+      await onUpdateRules(cleanRules);
+      onClose();
+      showToast("Campanha removida com sucesso! A data voltou ao estado original.", "success");
+    } catch (error) {
+      console.error(error);
+      showToast("Erro ao remover campanha.", "error");
     } finally {
       setIsSending(false);
     }
@@ -10249,7 +10869,19 @@ function CampaignCreationModal({ targetDate, onClose, rules, onUpdateRules }: { 
           </div>
           <div>
             <h3 className="text-xl font-black text-gray-900 uppercase tracking-tighter italic">Nova Campanha Sazonal</h3>
-            <p className="text-[10px] font-bold text-primary uppercase tracking-widest">{targetDate.name} • {format(parseISO(targetDate.date), 'dd/MM')}</p>
+            <div className="flex items-center gap-2 mt-1">
+              <p className="text-[10px] font-bold text-primary uppercase tracking-widest">{targetDate.name} • {format(parseISO(targetDate.date), 'dd/MM')}</p>
+              <span className={cn(
+                "text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest",
+                targetDate.type === 'national' ? "bg-green-100 text-green-700" :
+                targetDate.type === 'state' ? "bg-blue-100 text-blue-700" :
+                targetDate.type === 'municipal' ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700"
+              )}>
+                {targetDate.type === 'national' ? 'Nacional' : 
+                 targetDate.type === 'state' ? `Estadual (${targetDate.state})` : 
+                 targetDate.type === 'municipal' ? `Municipal (${targetDate.city})` : 'Personalizada'}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -10310,12 +10942,22 @@ function CampaignCreationModal({ targetDate, onClose, rules, onUpdateRules }: { 
              </div>
           </div>
 
+          {targetDate.hasCampaign && (
+            <button
+              onClick={handleRemove}
+              disabled={isSending}
+              className="w-full py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest text-red-500 bg-red-50 border border-red-100 hover:bg-red-100 transition-all flex items-center justify-center gap-2"
+            >
+              <Trash2 size={14} /> Excluir Campanha Agendada
+            </button>
+          )}
+          
           <Button 
             onClick={handleCreate} 
             disabled={isSending}
             className="w-full py-5 text-sm font-black uppercase tracking-[0.2em] shadow-xl shadow-primary/20 mt-4"
           >
-            {isSending ? 'Agendando...' : 'FINALIZAR E AGENDAR'}
+            {isSending ? (targetDate.hasCampaign ? 'Atualizando...' : 'Agendando...') : (targetDate.hasCampaign ? 'ATUALIZAR CAMPANHA' : 'FINALIZAR E AGENDAR')}
           </Button>
         </div>
       </motion.div>
@@ -10553,6 +11195,7 @@ function LTVTab({ purchases, customers, rules, onUpdateRules, isAdmin }: { purch
 }
 
 function SettingsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; isAdmin: boolean; onUpdateRules: (rules: LoyaltyRule) => Promise<void> }) {
+  const { showToast } = useToast();
   const [localRules, setLocalRules] = useState<LoyaltyRule>(rules);
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -10570,7 +11213,7 @@ function SettingsTab({ rules, isAdmin, onUpdateRules }: { rules: LoyaltyRule; is
     } catch (error: any) {
       if (error.code === 'auth/popup-closed-by-user') return;
       console.error(error);
-      alert("Erro ao reautenticar. Por favor, entre com sua conta Google de administrador.");
+      showToast("Erro ao reautenticar. Por favor, entre com sua conta Google de administrador.", "error");
     }
   };
 
@@ -10835,6 +11478,7 @@ function ContractCancelledScreen() {
 }
 
 function ResetSystemTab({ companyId, isAdmin }: { companyId: string | null; isAdmin: boolean }) {
+  const { showToast } = useToast();
   const [isResetting, setIsResetting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [password, setPassword] = useState('');
@@ -10908,7 +11552,7 @@ function ResetSystemTab({ companyId, isAdmin }: { companyId: string | null; isAd
       localStorage.clear();
       sessionStorage.clear();
 
-      alert("Sistema totalmente zerado com sucesso! Redirecionando para as configurações iniciais...");
+      showToast("Sistema totalmente zerado com sucesso! Redirecionando...", "success");
       
       // Force clean reload
       window.location.replace(window.location.origin + '?reset_complete=true');
@@ -11243,7 +11887,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 800000) { // Limit to ~800KB to stay safe within 1MB Firestore limit
-        alert("A imagem é muito grande. Por favor, escolha uma imagem menor que 800KB.");
+        showToast("A imagem é muito grande. Por favor, escolha uma imagem menor que 800KB.", "error");
         return;
       }
       const reader = new FileReader();
@@ -11563,6 +12207,27 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
                 onChange={(val) => setProfile({ ...profile, contactPhone: val || '' })}
                 className="phone-input-custom"
               />
+            </div>
+            <div className="space-y-4">
+              <label className="text-xs font-bold text-amber-600 uppercase tracking-widest flex items-center gap-2">
+                <ShieldCheck size={14} /> Vigência do Contrato (Somente Leitura)
+              </label>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Data de Início</label>
+                  <div className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-400 font-bold text-xs">
+                    {appUser?.planStartDate ? format(parseISO(appUser.planStartDate), 'dd/MM/yyyy') : 'Não definido'}
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Data de Término</label>
+                  <div className="w-full bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-amber-900 font-black italic text-xs">
+                    {appUser?.planEndDate ? format(parseISO(appUser.planEndDate), 'dd/MM/yyyy') : 'Não definido'}
+                  </div>
+                </div>
+              </div>
+              <p className="text-[10px] text-amber-600 font-bold uppercase mt-1">Entre em contato com o suporte para renovar ou alterar seu plano.</p>
             </div>
             <div className="space-y-2">
               <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">Tipo de Assinatura</label>
@@ -11988,9 +12653,10 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
     const nonParticipants = customers.filter(c => !((c.points || 0) > 0 || (c.cashbackBalance || 0) > 0));
     
     const calculateLtvForSet = (set: Customer[]) => {
-      const setPurchases = purchases.filter(p => set.some(c => c.id === p.customerId));
+      if (!set || set.length === 0) return 0;
+      const setPurchases = (purchases || []).filter(p => set.some(c => c.id === p.customerId));
       const totalRev = setPurchases.reduce((acc, p) => acc + p.amount, 0);
-      return set.length > 0 ? totalRev / set.length : 0;
+      return totalRev / set.length;
     };
 
     const participantLtv = calculateLtvForSet(campaignParticipants);
@@ -11998,9 +12664,9 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
     const ltvImpact = nonParticipantLtv > 0 ? ((participantLtv / nonParticipantLtv) - 1) * 100 : 0;
 
     // LTV Projections: Standard formula LTV = ARPU / Churn
-    const monthlyArpu = customers.length > 0 ? (totalSales / customers.length) : 0;
-    const monthlyChurn = (churnRate / 100) / 2; // Rough monthly churn from 60-day rate
-    const projectedLtv = monthlyChurn > 0 ? monthlyArpu / monthlyChurn : monthlyArpu * 12;
+    const monthlyArpu = (customers || []).length > 0 ? (totalSales / customers.length) : 0;
+    const monthlyChurn = Math.max(0.01, (churnRate / 100) / 2); // Avoid division by zero
+    const projectedLtv = monthlyArpu / monthlyChurn;
 
     const ltvProjections = [12, 24, 36, 60].map(months => ({
       months,
@@ -12162,18 +12828,46 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(50);
     
-    const splitText = doc.splitTextToSize(analysis, pageWidth - (margin * 2));
+    const cleanedAnalysis = analysis.replace(/[#$%*&_~]/g, '').replace(/\s{2,}/g, ' ').trim();
+    const paragraphs = cleanedAnalysis.split('\n');
     let cursorY = 45;
     
-    splitText.forEach((line: string) => {
-      if (cursorY > pageHeight - 30) {
-        addFooter(doc, doc.getNumberOfPages());
-        doc.addPage();
-        addHeader(doc);
-        cursorY = 45;
-      }
-      doc.text(line, margin, cursorY);
-      cursorY += 7;
+    paragraphs.forEach((para: string) => {
+      if (!para.trim()) return;
+
+      const lines = doc.splitTextToSize(para.trim(), pageWidth - (margin * 2));
+      
+      lines.forEach((line: string) => {
+        if (cursorY > pageHeight - 30) {
+          addFooter(doc, doc.getNumberOfPages());
+          doc.addPage();
+          addHeader(doc);
+          cursorY = 45;
+        }
+        
+        // Detect and style headers in PDF
+        const looksLikeTitle = line.length < 65 && (
+          line.includes('Análise') || 
+          line.includes('Estratégia') || 
+          line.includes('Recomendação') ||
+          /^\d+\.\s+/.test(line) ||
+          /^[A-ZÀ-Ú\s]{8,}$/.test(line)
+        );
+        
+        if (looksLikeTitle) {
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(0, 100, 0); // Dark green for titles
+        } else {
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(50, 50, 50);
+        }
+        
+        doc.text(line, margin, cursorY);
+        cursorY += 7;
+      });
+
+      // Add space between paragraphs
+      cursorY += 5;
     });
 
     addFooter(doc, doc.getNumberOfPages());
@@ -12264,11 +12958,50 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
           <motion.div 
             initial={{ opacity: 0, y: 20 }} 
             animate={{ opacity: 1, y: 0 }} 
-            className="mt-8 p-8 bg-gray-50 rounded-2xl border border-gray-100"
+            className="mt-8 p-8 bg-white rounded-[2rem] border border-gray-100 shadow-2xl relative overflow-hidden"
           >
-            <div className="prose prose-green max-w-none">
-              <div className="whitespace-pre-wrap text-gray-700 leading-relaxed font-medium">
-                {analysis}
+            {/* Artistic background element to avoid "gray page" look */}
+            <div className="absolute top-0 right-0 w-64 h-64 bg-green-50 rounded-full blur-3xl -mr-32 -mt-32 opacity-50" />
+            <div className="absolute bottom-0 left-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -ml-32 -mb-32 opacity-50" />
+            
+            <div className="relative z-10">
+              <div className="flex items-center gap-3 mb-8 pb-4 border-b border-gray-50">
+                <div className="w-10 h-10 bg-green-500 rounded-xl flex items-center justify-center shadow-lg shadow-green-500/20">
+                  <Brain size={20} className="text-white" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-black text-gray-900 uppercase tracking-tighter">Diagnóstico de Inteligência</h4>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Visão Estratégica by BuyPass AI</p>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                {analysis.split('\n').filter(p => p.trim()).map((paragraph, idx) => {
+                  // Clean symbols first to detect title correctly
+                  const cleanedText = paragraph
+                    .replace(/[#$%*&_~]/g, '')
+                    .replace(/\s{2,}/g, ' ')
+                    .trim();
+
+                  if (!cleanedText) return null;
+
+                  // Basic title detection for cleaner rendering
+                  const isTitle = paragraph.trim().startsWith('###') || (cleanedText.length < 60 && (cleanedText.includes(':') || /^[A-ZÀ-Ú\s]{8,}$/.test(cleanedText)));
+
+                  if (isTitle) {
+                    return (
+                      <h5 key={idx} className="text-sm font-black text-green-600 uppercase tracking-tight mt-6 mb-2">
+                        {cleanedText.replace(/^#+\s*/, '')}
+                      </h5>
+                    );
+                  }
+
+                  return (
+                    <p key={idx} className="text-sm text-gray-700 leading-relaxed font-medium">
+                      {cleanedText}
+                    </p>
+                  );
+                })}
               </div>
             </div>
           </motion.div>
