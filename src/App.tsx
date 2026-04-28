@@ -137,7 +137,15 @@ import {
   CheckCircle,
   Lock,
   LockOpen,
-  Megaphone
+  Megaphone,
+  Disc,
+  Pointer,
+  CreditCard,
+  Ticket,
+  ArrowRight,
+  RefreshCcw,
+  Zap,
+  BadgeDollarSign
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import 'react-phone-number-input/style.css';
@@ -244,6 +252,53 @@ interface SeasonalDate {
   memo?: string;
   hasCampaign?: boolean;
   campaignData?: any;
+}
+
+type PromotionType = 'raffle' | 'wheel' | 'birthday' | 'scratch';
+
+interface PromotionConfig {
+  id: string;
+  type: PromotionType;
+  name: string;
+  startDate: string;
+  endDate: string;
+  prizes: string[];
+  ranges?: { min: number; max: number; label: string }[];
+  discountRanges?: { label: string; probability: number; color: string }[];
+  scratchPrizes?: string[];
+  isLinkedToLoyalty: boolean;
+  isActive: boolean;
+}
+
+interface LoyaltyRule {
+  campaignName: string;
+  purchasesForPrize?: number;
+  minPurchaseValue?: number;
+  maxDaysBetweenPurchases?: number;
+  pointsPerReal?: number;
+  pointsExpiryDays?: number;
+  welcomeMessage?: string;
+  rewardTiers?: RewardTier[];
+  allowedUserTabs?: string[];
+  themeColor?: string;
+  rewardMode?: 'points' | 'cashback';
+  cashbackConfig?: {
+    percentage: number;
+    minActivationValue: number;
+    minRedeemDays: number;
+    expiryDays: number;
+  };
+  pointsStatus?: { status: 'active' | 'ended'; validityType: 'fixed' | 'indeterminate' };
+  cashbackStatus?: { status: 'active' | 'ended'; validityType: 'fixed' | 'indeterminate' };
+  currentAvgTicket?: number;
+  currentMonthlyRevenue?: number;
+  onboardingComplete?: boolean;
+  companyProfile?: CompanyProfile;
+  seasonalDates?: SeasonalDate[];
+  promotionConfig?: PromotionConfig;
+  avgTicketGoal?: number;
+  monthlyRevenueGoal?: number;
+  type?: 'points' | 'cashback';
 }
 
 interface Notification {
@@ -2834,7 +2889,14 @@ function AppContent() {
                     isOrange
                   />
                 ) : (
-                  <PromotionAreaTab />
+                  <PromotionAreaTab 
+                    rules={rules} 
+                    companyId={selectedCompanyId} 
+                    isAdmin={isAdminUser} 
+                    onUpdateRules={handleUpdateRules}
+                    customers={customers}
+                    purchases={purchases}
+                  />
                 )}
               </div>
             )}
@@ -5621,30 +5683,556 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
   );
 }
 
-function PromotionAreaTab() {
-  return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="p-8 text-center space-y-6">
-      <div className="w-24 h-24 bg-orange-100 text-orange-600 rounded-[2.5rem] flex items-center justify-center mx-auto shadow-inner">
-        <Megaphone size={48} />
-      </div>
-      <div>
-        <h2 className="text-3xl font-black text-gray-900 uppercase tracking-tighter italic">Área de Promoções</h2>
-        <p className="text-gray-500 max-w-md mx-auto mt-2 font-medium">Em breve você poderá criar banners, ofertas sazonais e campanhas de marketing direto para seus clientes aqui.</p>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto mt-12">
-        {[
-          { title: "Banners Inteligentes", desc: "Criação de artes para o WebApp" },
-          { title: "Ofertas Relâmpago", desc: "Campanhas de curto prazo" },
-          { title: "Cupons Digitais", desc: "Gere códigos de desconto" }
-        ].map((item, i) => (
-          <div key={i} className="p-6 bg-gray-50 border border-gray-100 rounded-3xl text-left border-dashed">
-            <div className="w-10 h-10 bg-white rounded-xl mb-4 border border-gray-100 shadow-sm" />
-            <h4 className="font-black text-gray-900 uppercase text-xs tracking-widest">{item.title}</h4>
-            <p className="text-[10px] text-gray-500 mt-1">{item.desc}</p>
+function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers, purchases }: { rules: LoyaltyRule; companyId: string | null; isAdmin: boolean; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; customers: Customer[]; purchases: Purchase[] }) {
+  const [isCreating, setIsCreating] = useState(!rules.promotionConfig?.isActive);
+  const [isMarking, setIsMarking] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [purchaseValue, setPurchaseValue] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  
+  // Interactive States
+  const [wheelSpinning, setWheelSpinning] = useState(false);
+  const [wheelResult, setWheelResult] = useState<string | null>(null);
+  const [scratchDone, setScratchDone] = useState(false);
+  const [scratchResult, setScratchResult] = useState<string | null>(null);
+
+  const [config, setConfig] = useState<Partial<PromotionConfig>>(rules.promotionConfig || {
+    type: 'raffle',
+    isLinkedToLoyalty: true,
+    isActive: false,
+    prizes: [],
+    discountRanges: [
+      { label: '5%', probability: 40, color: '#fb8500' },
+      { label: '10%', probability: 30, color: '#023047' },
+      { label: '15%', probability: 20, color: '#219ebc' },
+      { label: 'BRINDE', probability: 10, color: '#ffb703' }
+    ]
+  });
+
+  const activePromotion = rules.promotionConfig?.isActive ? rules.promotionConfig : null;
+
+  // Calculate stats based on active promotion period
+  const promotionStats = useMemo(() => {
+    if (!activePromotion || !purchases) return { revenue: 0, participants: 0, actions: 0, recent: [] };
+    
+    const promoPurchases = purchases.filter(p => {
+      const pDate = new Date(p.date);
+      const start = new Date(activePromotion.startDate);
+      const end = new Date(activePromotion.endDate);
+      return pDate >= start && pDate <= end;
+    });
+
+    const uniqueParticipants = new Set(promoPurchases.map(p => p.customerId)).size;
+    const revenue = promoPurchases.reduce((acc, p) => acc + p.amount, 0);
+
+    return {
+      revenue,
+      participants: uniqueParticipants,
+      actions: promoPurchases.length,
+      recent: promoPurchases.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 5)
+    };
+  }, [activePromotion, purchases]);
+
+  const handleMarkPurchase = async () => {
+    if (!selectedCustomer || !purchaseValue || !companyId) return;
+    setIsProcessing(true);
+    try {
+      const val = parseFloat(purchaseValue);
+      const now = new Date().toISOString();
+
+      // 1. Process Loyalty Benefit if linked
+      let pointsEarned = 0;
+      let cashbackEarned = 0;
+      
+      if (activePromotion?.isLinkedToLoyalty) {
+        if (rules.rewardMode === 'cashback') {
+          const minVal = rules.cashbackConfig?.minActivationValue || 0;
+          if (val >= minVal) {
+            cashbackEarned = val * ((rules.cashbackConfig?.percentage || 0) / 100);
+          }
+        } else {
+          if (val >= (rules.minPurchaseValue || 0)) {
+            pointsEarned = Math.floor(val * (rules.pointsPerReal || 1));
+          }
+        }
+      }
+
+      // 2. Add Purchase Record (Feeds all SaaS stats)
+      await addDoc(collection(db, 'purchases'), {
+        companyId,
+        customerId: selectedCustomer.id,
+        customerName: selectedCustomer.name,
+        amount: val,
+        date: now,
+        pointsEarned,
+        cashbackEarned,
+        promotionId: activePromotion?.id || 'manual'
+      });
+
+      // 3. Update Customer Balance
+      const customerRef = doc(db, 'customers', selectedCustomer.id);
+      await updateDoc(customerRef, {
+        points: (selectedCustomer.points || 0) + pointsEarned,
+        cashbackBalance: (selectedCustomer.cashbackBalance || 0) + cashbackEarned,
+        lastPurchaseDate: now,
+        totalSpent: (selectedCustomer.totalSpent || 0) + val,
+        totalPurchases: (selectedCustomer.totalPurchases || 0) + 1
+      });
+
+      showToast(`Venda de R$ ${val.toFixed(2)} registrada e crédito atribuído!`, "success");
+      
+      // Reset interactive states for the new session
+      if (activePromotion?.type === 'wheel') setWheelResult(null);
+      if (activePromotion?.type === 'scratch') {
+         setScratchDone(false);
+         setScratchResult(null);
+      }
+      
+      setIsMarking(false);
+      setPurchaseValue('');
+      setSelectedCustomer(null);
+    } catch (error) {
+      console.error(error);
+      showToast("Erro ao processar venda.", "error");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleDrawRaffle = async () => {
+    if (!promotionStats.actions) {
+      showToast("Nenhum cupom gerado nesta campanha ainda.", "warning");
+      return;
+    }
+    
+    setIsProcessing(true);
+    // Simulate draw effect
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    const participants = promotionStats.recent.map(p => p.customerName);
+    const winner = participants[Math.floor(Math.random() * participants.length)];
+    
+    showToast(`SORTEIO REALIZADO! O ganhador é: ${winner}`, "success");
+    setIsProcessing(false);
+  };
+
+  const spinWheel = () => {
+    if (wheelSpinning) return;
+    setWheelSpinning(true);
+    setTimeout(() => {
+      const items = activePromotion?.discountRanges || [];
+      const result = items[Math.floor(Math.random() * items.length)].label;
+      setWheelResult(result);
+      setWheelSpinning(false);
+    }, 3000);
+  };
+
+  const handleStart = async () => {
+    if (!config.name || !config.type) {
+      showToast("Preencha os dados básicos da campanha.", "error");
+      return;
+    }
+    const newConfig = { ...config, id: crypto.randomUUID(), isActive: true } as PromotionConfig;
+    await onUpdateRules({ ...rules, promotionConfig: newConfig });
+    setIsCreating(false);
+    showToast("Promoção iniciada com sucesso!", "success");
+  };
+
+  const handleEnd = async () => {
+    if (confirm("Deseja realmente encerrar esta promoção? Isso irá gerar os resultados finais.")) {
+      await onUpdateRules({ ...rules, promotionConfig: { ...rules.promotionConfig!, isActive: false } });
+      setIsCreating(true);
+      showToast("Promoção encerrada.", "info");
+    }
+  };
+
+  if (!activePromotion || isCreating) {
+    return (
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 max-w-5xl mx-auto p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-3xl font-black text-gray-900 tracking-tighter uppercase italic">Configurar Nova Promoção</h2>
+            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">Defina as regras e o estilo da sua campanha</p>
           </div>
-        ))}
+          {rules.promotionConfig?.isActive && (
+            <Button onClick={() => setIsCreating(false)} variant="outline" className="rounded-xl font-bold uppercase text-[10px] tracking-widest">
+              Voltar ao Painel Ativo
+            </Button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <Card className="md:col-span-1 p-6 space-y-6 bg-white border-gray-100 shadow-xl">
+            <div className="space-y-4">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Tipo de Promoção</label>
+              <div className="grid grid-cols-1 gap-3">
+                {[
+                  { id: 'raffle', label: 'Cupons para Sorteio', icon: <Ticket /> },
+                  { id: 'wheel', label: 'Roleta de Descontos', icon: <Disc /> },
+                  { id: 'birthday', label: 'Desconto Niver', icon: <Cake /> },
+                  { id: 'scratch', label: 'Raspou? Ganhou!', icon: <Sparkles /> }
+                ].map(type => (
+                  <button
+                    key={type.id}
+                    onClick={() => setConfig({ ...config, type: type.id as PromotionType })}
+                    className={cn(
+                      "flex items-center gap-3 p-4 rounded-2xl border-2 transition-all text-left",
+                      config.type === type.id ? "border-orange-500 bg-orange-50" : "border-gray-50 hover:border-gray-200"
+                    )}
+                  >
+                    <div className={cn("p-2 rounded-xl", config.type === type.id ? "bg-orange-500 text-white" : "bg-gray-100 text-gray-400")}>
+                      {type.icon}
+                    </div>
+                    <span className={cn("font-black uppercase text-[10px] tracking-widest", config.type === type.id ? "text-orange-700" : "text-gray-500")}>
+                      {type.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </Card>
+
+          <Card className="md:col-span-2 p-8 space-y-8 bg-white border-gray-100 shadow-xl">
+             <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                   <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Nome da Campanha</label>
+                      <input 
+                        value={config.name || ''} 
+                        onChange={e => setConfig({ ...config, name: e.target.value })}
+                        placeholder="Ex: Mega Sorteio BuyPass" 
+                        className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-sm font-bold text-gray-900 outline-none focus:ring-2 focus:ring-orange-500" 
+                      />
+                   </div>
+                   <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Período de Atividade</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input 
+                          type="date" 
+                          value={config.startDate || ''}
+                          onChange={e => setConfig({ ...config, startDate: e.target.value })}
+                          className="bg-gray-50 border border-gray-100 rounded-2xl px-4 py-4 text-xs font-bold" 
+                        />
+                        <input 
+                          type="date" 
+                          value={config.endDate || ''}
+                          onChange={e => setConfig({ ...config, endDate: e.target.value })}
+                          className="bg-gray-50 border border-gray-100 rounded-2xl px-4 py-4 text-xs font-bold" 
+                        />
+                      </div>
+                   </div>
+                </div>
+
+                <div className="p-6 bg-orange-50 rounded-[2.5rem] border border-orange-100 space-y-6">
+                   <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                         <div className="p-2 bg-orange-500 text-white rounded-xl">
+                            <Zap size={16} />
+                         </div>
+                         <div>
+                            <h4 className="text-sm font-black text-orange-900 uppercase italic">Integração com Fidelidade</h4>
+                            <p className="text-[9px] text-orange-600 font-bold uppercase tracking-wider">Acumule pontos enquanto promove</p>
+                         </div>
+                      </div>
+                      <button 
+                        onClick={() => setConfig({ ...config, isLinkedToLoyalty: !config.isLinkedToLoyalty })}
+                        className={cn(
+                          "w-12 h-6 rounded-full transition-all relative",
+                          config.isLinkedToLoyalty ? "bg-orange-500" : "bg-gray-300"
+                        )}
+                      >
+                        <div className={cn("absolute top-1 w-4 h-4 rounded-full bg-white transition-all shadow-sm", config.isLinkedToLoyalty ? "left-7" : "left-1")} />
+                      </button>
+                   </div>
+                   <div className="p-4 bg-white/60 backdrop-blur-sm rounded-2xl border border-orange-100 flex items-center gap-4">
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-orange-100 rounded-xl text-orange-700">
+                         {rules.type === 'points' ? <Star size={14} /> : <BadgeDollarSign size={14} />}
+                         <span className="text-[10px] font-black uppercase">{rules.type === 'points' ? 'Pontos' : 'Cashback'} em vigor</span>
+                      </div>
+                      <p className="text-[9px] text-orange-800 font-bold uppercase leading-tight">
+                         {config.isLinkedToLoyalty 
+                           ? "As compras gerarão recompensa no programa principal de fidelidade da sua loja."
+                           : "A campanha funcionará de forma isolada, apenas para o prêmio da promoção."}
+                      </p>
+                   </div>
+                </div>
+
+                <Button 
+                  onClick={handleStart}
+                  className="w-full bg-[#fb8500] hover:bg-[#ffb703] py-6 rounded-[2.5rem] text-sm font-black uppercase tracking-widest shadow-xl shadow-orange-500/20 text-white transition-all transform hover:-translate-y-1"
+                >
+                  Confirmar e Lançar Promoção
+                </Button>
+             </div>
+          </Card>
+        </div>
+      </motion.div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 p-4">
+      <div className="flex items-center justify-between bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm">
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 bg-orange-500 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-orange-500/20">
+            {activePromotion.type === 'raffle' ? <Ticket size={28} /> : activePromotion.type === 'wheel' ? <Disc size={28} /> : activePromotion.type === 'birthday' ? <Cake size={28} /> : <Sparkles size={28} />}
+          </div>
+          <div>
+            <h2 className="text-2xl font-black text-gray-900 tracking-tighter uppercase italic">{activePromotion.name}</h2>
+            <div className="flex gap-2 mt-1">
+               <span className="text-[8px] font-black px-2 py-0.5 bg-green-100 text-green-700 rounded uppercase tracking-widest ring-1 ring-green-200">
+                 {activePromotion.type === 'raffle' ? 'Cupons Sorteio' : activePromotion.type === 'wheel' ? 'Roleta Premiada' : activePromotion.type === 'birthday' ? 'Aniversário' : 'Raspa & Ganha'}
+               </span>
+               {activePromotion.isLinkedToLoyalty && (
+                 <span className="text-[8px] font-black px-2 py-0.5 bg-blue-100 text-blue-700 rounded uppercase tracking-widest">Fidelidade + Promoção</span>
+               )}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+           <Button onClick={() => setIsMarking(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl px-6 py-3 font-black text-[10px] uppercase tracking-widest gap-2">
+             <Plus size={16} /> Lançar Venda
+           </Button>
+           <Button onClick={() => setIsCreating(true)} variant="outline" className="rounded-2xl font-black uppercase text-[10px] tracking-widest border-gray-200">
+             Configurações
+           </Button>
+           <Button onClick={handleEnd} variant="destructive" className="rounded-2xl font-black uppercase text-[10px] tracking-widest opacity-80 hover:opacity-100">
+             Encerrar
+           </Button>
+        </div>
       </div>
-    </motion.div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
+           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {[
+                 { label: 'Total Faturamento', val: formatCurrency(promotionStats.revenue), color: 'text-gray-900' },
+                 { label: 'Participantes', val: `${promotionStats.participants} Clientes`, color: 'text-orange-600' },
+                 { label: 'Ações Realizadas', val: promotionStats.actions.toString(), color: 'text-gray-900' }
+              ].map((stat, i) => (
+                <Card key={i} className="p-6 bg-white border border-gray-100 rounded-[2rem] shadow-sm">
+                   <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">{stat.label}</p>
+                   <p className={cn("text-xl font-black italic", stat.color)}>{stat.val}</p>
+                </Card>
+              ))}
+           </div>
+
+           <Card className="bg-white border border-gray-100 p-8 rounded-[3rem] shadow-xl min-h-[400px]">
+              <div className="flex items-center justify-between mb-8">
+                 <h3 className="text-xl font-black uppercase italic tracking-tighter text-gray-900 italic">Participação Recente</h3>
+                 <div className="flex gap-2">
+                    <button className="p-2 text-gray-400 hover:text-gray-900 transition-colors"><Search size={20} /></button>
+                 </div>
+              </div>
+              
+              <div className="space-y-4">
+                 {promotionStats.recent.map((p, i) => (
+                    <div key={i} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 group hover:border-orange-200 transition-all">
+                       <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 bg-white rounded-xl border border-gray-100 flex items-center justify-center font-black text-orange-500">{p.customerName.charAt(0)}</div>
+                          <div>
+                             <p className="text-xs font-black text-gray-900 uppercase">{p.customerName}</p>
+                             <p className="text-[8px] text-gray-400 font-bold uppercase">{new Date(p.date).toLocaleString()} • Compra de {formatCurrency(p.amount)}</p>
+                          </div>
+                       </div>
+                       <div className="flex items-center gap-2">
+                          <span className="text-[8px] font-black px-2 py-1 bg-orange-100 text-orange-700 rounded-lg uppercase tracking-widest">+1 {activePromotion.type === 'raffle' ? 'Cupom' : 'Ação'}</span>
+                          <ChevronRight size={14} className="text-gray-300 group-hover:text-orange-500 transition-all" />
+                       </div>
+                    </div>
+                 ))}
+                 <button className="w-full py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest border-2 border-dashed border-gray-100 rounded-2xl hover:border-gray-200 transition-all">Ver Histórico Completo</button>
+              </div>
+           </Card>
+        </div>
+
+        <div className="lg:col-span-1">
+           <Card className="bg-[#023047] h-full p-8 text-white space-y-8 rounded-[3rem] shadow-2xl relative overflow-hidden flex flex-col justify-between">
+              <div className="absolute top-0 right-0 w-48 h-48 bg-orange-500/10 blur-[80px] rounded-full -mr-24 -mt-24" />
+              
+              <div className="relative z-10 space-y-6 text-center">
+                 <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full border border-white/10 mb-4">
+                    <Pointer size={12} className="text-orange-500" />
+                    <span className="text-[8px] font-black uppercase tracking-widest text-orange-500">Interatividade ao Vivo</span>
+                 </div>
+
+                 {activePromotion.type === 'wheel' && (
+                   <div className="space-y-8 py-8">
+                      <div className={cn(
+                        "w-64 h-64 rounded-full border-8 border-orange-500/20 bg-white/5 mx-auto relative flex items-center justify-center transition-all duration-[3000ms] ease-out",
+                        wheelSpinning && "rotate-[1080deg]"
+                      )}>
+                         <div className="absolute inset-0 flex items-center justify-center">
+                            <Disc size={180} className="text-white/10" />
+                         </div>
+                         <div className="absolute top-0 -mt-6 w-8 h-10 bg-orange-500 rounded-b-xl z-20 shadow-lg flex items-center justify-center">
+                            <ChevronDown size={20} className="text-white" />
+                         </div>
+                         {wheelResult && !wheelSpinning && (
+                           <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="absolute inset-0 flex items-center justify-center">
+                              <div className="p-4 bg-orange-500 text-white rounded-full font-black text-2xl shadow-2xl ring-4 ring-orange-500/30">
+                                 {wheelResult}
+                              </div>
+                           </motion.div>
+                         )}
+                         {/* Fatias da roleta (simbolizadas) */}
+                         <div className="absolute inset-2 rounded-full border border-white/10 flex items-center justify-center">
+                             <div className="w-full h-[2px] bg-white/10 absolute rotate-45" />
+                             <div className="w-full h-[2px] bg-white/10 absolute rotate-90" />
+                             <div className="w-full h-[2px] bg-white/10 absolute rotate-[135deg]" />
+                             <div className="w-full h-[2px] bg-white/10 absolute rotate-0" />
+                         </div>
+                      </div>
+                      <div className="space-y-4">
+                         <Button 
+                           onClick={spinWheel} 
+                           disabled={wheelSpinning}
+                           className="w-full bg-orange-500 hover:bg-orange-600 h-16 rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-xl shadow-orange-500/20"
+                         >
+                           {wheelSpinning ? 'Girando...' : 'GIRAR ROLETA'}
+                         </Button>
+                         <p className="text-[9px] text-white/50 font-bold uppercase tracking-widest">Identifique o cliente primeiro para habilitar</p>
+                      </div>
+                   </div>
+                 )}
+
+                 {activePromotion.type === 'scratch' && (
+                   <div className="space-y-6 py-8">
+                      <div className="aspect-[4/3] bg-white/5 rounded-3xl border-4 border-dashed border-white/10 flex items-center justify-center relative overflow-hidden group cursor-pointer">
+                         {!scratchDone ? (
+                           <div className="absolute inset-0 bg-gray-500 flex items-center justify-center p-8 text-center" onMouseMove={() => setScratchDone(true)}>
+                              <p className="text-sm font-black text-white uppercase italic leading-tight">RASPE AQUI COM O MOUSE PARA GANHAR!</p>
+                           </div>
+                         ) : (
+                           <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="text-center space-y-2">
+                              <Sparkles className="text-orange-500 mx-auto mb-2" size={32} />
+                              <p className="text-[10px] text-white/60 font-black uppercase">VOCÊ GANHOU:</p>
+                              <p className="text-4xl font-black italic text-orange-500">15%</p>
+                              <p className="text-[8px] text-white/40 font-bold uppercase">VALIDADO COM SUCESSO</p>
+                           </motion.div>
+                         )}
+                      </div>
+                   </div>
+                 )}
+
+                 {activePromotion.type === 'raffle' && (
+                   <div className="space-y-8 py-8">
+                      <div className="p-8 bg-white/10 rounded-[3rem] border border-white/10 space-y-4 shadow-inner">
+                         <div className="w-20 h-20 bg-orange-500 text-white rounded-[2rem] mx-auto flex items-center justify-center shadow-lg">
+                            <Ticket size={40} />
+                         </div>
+                         <div>
+                            <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Cupons Participantes</p>
+                            <p className="text-4xl font-black italic">{promotionStats.actions}</p>
+                         </div>
+                      </div>
+                      <Button className="w-full bg-white text-[#023047] h-16 rounded-[2rem] font-black uppercase tracking-widest text-xs hover:bg-orange-50 transition-all flex items-center justify-center gap-3">
+                         <RefreshCcw size={18} /> Realizar Sorteio
+                      </Button>
+                      <p className="text-[9px] text-white/40 font-bold uppercase tracking-widest italic leading-relaxed">
+                         O sorteio gera um ganhador aleatório entre todos os cupons registrados até agora.
+                      </p>
+                   </div>
+                 )}
+              </div>
+
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/10 flex items-center gap-3 relative z-10">
+                 <div className="p-2 bg-green-500/20 text-green-500 rounded-lg">
+                    <Activity size={14} />
+                 </div>
+                 <div className="text-left">
+                    <p className="text-[9px] font-black text-white uppercase tracking-tight">Status do Servidor Sorteios</p>
+                    <p className="text-[8px] text-white/50 font-bold uppercase">Operando Normalmente • 100% On-line</p>
+                 </div>
+              </div>
+           </Card>
+        </div>
+      </div>
+
+      {/* Modal de Lançamento de Venda */}
+      <AnimatePresence>
+        {isMarking && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-gray-950/80 backdrop-blur-md">
+            <motion.div 
+               initial={{ scale: 0.9, opacity: 0 }} 
+               animate={{ scale: 1, opacity: 1 }} 
+               exit={{ scale: 0.9, opacity: 0 }}
+               className="bg-white rounded-[3rem] p-8 w-full max-w-lg shadow-2xl relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 blur-3xl -mr-16 -mt-16" />
+              
+              <div className="flex items-center justify-between mb-8">
+                 <div className="flex items-center gap-3">
+                    <div className="p-2 bg-emerald-100 text-emerald-600 rounded-xl">
+                       <CreditCard size={20} />
+                    </div>
+                    <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tighter italic">Lançar Venda na Promoção</h3>
+                 </div>
+                 <button onClick={() => setIsMarking(false)} className="p-2 text-gray-400 hover:text-gray-900 transition-colors"><X size={20} /></button>
+              </div>
+
+              <div className="space-y-6">
+                 <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Vincular Cliente</label>
+                    <select 
+                      className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-sm font-bold text-gray-900 outline-none focus:ring-2 focus:ring-emerald-500 h-16 appearance-none"
+                      onChange={e => setSelectedCustomer(customers.find(c => c.id === e.target.value) || null)}
+                    >
+                       <option value="">Selecione um cliente...</option>
+                       {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>)}
+                    </select>
+                 </div>
+
+                 {selectedCustomer && (
+                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-center justify-between">
+                       <div>
+                          <p className="text-[9px] font-black text-emerald-700 uppercase">Cliente Cadastrado</p>
+                          <p className="text-xs font-black text-gray-900 uppercase">{selectedCustomer.name}</p>
+                       </div>
+                       <div className="text-right">
+                          <p className="text-[9px] font-black text-emerald-700 uppercase">Saldo Atual</p>
+                          <p className="text-xs font-black text-gray-900">{rules.type === 'points' ? `${selectedCustomer.points} Pontos` : `R$ ${selectedCustomer.balance?.toFixed(2)}`}</p>
+                       </div>
+                    </motion.div>
+                 )}
+
+                 <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Valor da Compra (R$)</label>
+                    <input 
+                      type="number" 
+                      value={purchaseValue}
+                      onChange={e => setPurchaseValue(e.target.value)}
+                      placeholder="0,00" 
+                      className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-2xl font-black text-gray-900 outline-none focus:ring-2 focus:ring-emerald-500 h-20 text-center"
+                    />
+                 </div>
+
+                 <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-2">
+                    <div className="flex justify-between items-center">
+                       <p className="text-[10px] font-black text-gray-400 uppercase">Integrações Ativas</p>
+                       <div className="flex gap-2">
+                          {activePromotion.isLinkedToLoyalty && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" title="Fidelidade Ativa" />}
+                          <span className="w-2 h-2 rounded-full bg-orange-500 animate-bounce" title="Promoção Ativa" />
+                       </div>
+                    </div>
+                    <p className="text-[9px] text-gray-500 font-bold leading-relaxed uppercase">
+                       Ao confirmar, os dados alimentarão o LTV e estatísticas gerais. {activePromotion.isLinkedToLoyalty && "O cliente também acumulará recompensas."}
+                    </p>
+                 </div>
+
+                 <Button 
+                   onClick={handleMarkPurchase}
+                   disabled={isProcessing || !selectedCustomer || !purchaseValue}
+                   className="w-full bg-emerald-600 hover:bg-emerald-700 py-6 rounded-[2rem] text-sm font-black uppercase tracking-widest shadow-xl shadow-emerald-500/20 text-white transition-all"
+                 >
+                   {isProcessing ? 'Processando...' : 'Confirmar e Gerar Benefício'}
+                 </Button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
