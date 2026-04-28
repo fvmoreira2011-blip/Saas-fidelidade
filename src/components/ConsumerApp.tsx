@@ -31,7 +31,7 @@ import {
   browserSessionPersistence
 } from 'firebase/auth';
 import PhoneInput from 'react-phone-number-input';
-import { differenceInDays, parseISO } from 'date-fns';
+import { differenceInDays, parseISO, format } from 'date-fns';
 import { 
   Trophy, 
   Search, 
@@ -50,7 +50,8 @@ import {
   AlertTriangle,
   Eye,
   EyeOff,
-  User as UserIcon
+  User as UserIcon,
+  ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -1404,6 +1405,40 @@ export default function ConsumerApp() {
                      <span className="text-[8px] text-gray-300 font-black uppercase tracking-widest">Incompatível</span>
                    )}
                  </div>
+
+                 {customerRecords.some((r: any) => r.planEndDate) && (
+                   <div className="bg-white rounded-[2rem] p-6 border border-gray-100 shadow-sm space-y-4">
+                     <div className="flex items-center gap-2 ml-1">
+                       <ShieldCheck size={14} className="text-amber-500" />
+                       <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Planos e Vigências</h4>
+                     </div>
+                     
+                     <div className="space-y-3">
+                       {customerRecords.filter((r: any) => r.planEndDate).map((record: any) => {
+                         const store = (stores as any)[record.companyId];
+                         return (
+                           <div key={record.id} className="p-4 bg-amber-50/50 rounded-2xl border border-amber-100/50 flex items-center justify-between group">
+                             <div className="flex items-center gap-4">
+                                <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-amber-600 shadow-sm shrink-0">
+                                  <ShieldCheck size={20} />
+                                </div>
+                                <div>
+                                  <p className="text-xs font-black text-gray-900 uppercase tracking-tight italic">{store?.companyProfile?.companyName || 'Loja'}</p>
+                                  <p className="text-[8px] text-amber-600 font-bold uppercase mt-0.5 tracking-tighter">Vigência do Contrato</p>
+                                </div>
+                             </div>
+                             <div className="text-right">
+                               <p className="text-xs font-black text-amber-900 tracking-tighter">
+                                 {format(parseISO(record.planEndDate), 'dd/MM/yyyy')}
+                               </p>
+                               <p className="text-[8px] text-amber-600/50 font-bold uppercase tracking-tighter">Somente Leitura</p>
+                             </div>
+                           </div>
+                         );
+                       })}
+                     </div>
+                   </div>
+                 )}
 
                  <button 
                     onClick={handleLogout}

@@ -189,6 +189,7 @@ interface Customer {
   authUid?: string;
   age?: number;
   birthDate?: string;
+  planEndDate?: string;
   lastPurchaseDate: string;
   createdAt: string;
   updatedAt?: string;
@@ -2074,7 +2075,8 @@ function AppContent() {
 
       const cacheKey = `analysis_cache_${selectedCompanyId}`;
       const cached = localStorage.getItem(cacheKey);
-      let analysisText = rules.geminiApiKey ? "Aguardando processamento de IA... Gere o diagnóstico na aba 'Análise Estratégica' para incluir recomendações personalizadas por IA neste relatório." : "Para diagnósticos automáticos e recomendações de crescimento, configure sua Chave API Gemini nas regras do sistema.";
+      const hasAI = rules.geminiApiKey || process.env.GEMINI_API_KEY;
+      let analysisText = hasAI ? "Aguardando processamento de IA... Gere o diagnóstico na aba 'Análise Estratégica' para incluir recomendações personalizadas por IA neste relatório." : "Para diagnósticos automáticos e recomendações de crescimento, configure sua Chave API Gemini nas regras do sistema.";
       if (cached) {
          try {
            const parsed = JSON.parse(cached);
@@ -2084,11 +2086,26 @@ function AppContent() {
 
       doc.setFillColor(252, 252, 252);
       doc.setDrawColor(220, 220, 220);
-      doc.roundedRect(marginSide, currentY + 5, contentWidth, Math.max(50, pageHeight - currentY - 25), 3, 3, 'FD');
       
       doc.setFontSize(9);
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(40, 40, 40);
+      
+      const splitText = doc.splitTextToSize(analysisText, contentWidth - 20);
+      const lineHeight = 5;
+      const textHeight = splitText.length * lineHeight;
+      const boxPadding = 10;
+      const estimatedBoxHeight = textHeight + 30; // 30 for header and margins
+
+      // Check if we need a new page for the whole block or start here
+      if (currentY + estimatedBoxHeight > pageHeight - 20) {
+        doc.addPage();
+        addHeaderFooter(doc);
+        currentY = 40;
+      }
+
+      // Draw the box
+      doc.roundedRect(marginSide, currentY + 5, contentWidth, estimatedBoxHeight, 3, 3, 'FD');
       
       // Icon-like header for AI
       doc.setFillColor(...rgbTheme);
@@ -2097,7 +2114,6 @@ function AppContent() {
       doc.text('CONSULTORIA BUYPASS INTELLIGENCE (AI)', marginSide + 16, currentY + 16);
       
       doc.setFont('helvetica', 'normal');
-      const splitText = doc.splitTextToSize(analysisText, contentWidth - 20);
       doc.text(splitText, marginSide + 10, currentY + 25);
 
       const pageCount = (doc as any).internal.getNumberOfPages();
@@ -6459,6 +6475,7 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [editPhone, setEditPhone] = useState('');
   const [editBirthDate, setEditBirthDate] = useState('');
+  const [editPlanEndDate, setEditPlanEndDate] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
   const [startDate, setStartDate] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
@@ -6473,7 +6490,8 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
     try {
       await updateDoc(doc(db, 'customers', editingCustomer.id), {
         phone: editPhone,
-        birthDate: editBirthDate
+        birthDate: editBirthDate,
+        planEndDate: editPlanEndDate
       });
       showToast("Dados do cliente atualizados com sucesso!", "success");
       setEditingCustomer(null);
@@ -6759,12 +6777,16 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
 
               <div className="flex items-center justify-between pt-4 border-t border-gray-50 mt-4">
                 <p className="text-[8px] text-gray-400 font-bold uppercase">Última: {format(parseISO(customer.lastPurchaseDate || new Date().toISOString()), 'dd/MM/yy')}</p>
+                {customer.planEndDate && (
+                  <p className="text-[8px] text-amber-600 font-bold uppercase">Expira: {format(parseISO(customer.planEndDate), 'dd/MM/yy')}</p>
+                )}
                 <div className="flex gap-2">
                     <button 
                       onClick={() => {
                         setEditingCustomer(customer);
                         setEditPhone(customer.phone);
                         setEditBirthDate(customer.birthDate || '');
+                        setEditPlanEndDate(customer.planEndDate || '');
                       }}
                       className="text-gray-400 hover:text-primary transition-colors flex items-center gap-1 text-[10px] uppercase font-black"
                     >
@@ -6838,6 +6860,16 @@ function CustomersTab({ customers, purchases, isAdmin, rules, companyId }: { cus
                     onChange={(e) => setEditBirthDate(e.target.value)}
                     className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-gray-900 font-bold outline-none focus:ring-2 focus:ring-primary transition-all"
                     required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-1">Vigência do Plano</label>
+                  <input 
+                    type="date" 
+                    value={editPlanEndDate}
+                    onChange={(e) => setEditPlanEndDate(e.target.value)}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-gray-900 font-bold outline-none focus:ring-2 focus:ring-primary transition-all"
                   />
                 </div>
 
@@ -12018,7 +12050,7 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
   }, [purchases, customers, goals, rules, dateRange]);
 
   const handleGenerateAnalysis = async () => {
-    if (!rules.geminiApiKey) {
+    if (!rules.geminiApiKey && !process.env.GEMINI_API_KEY) {
       showToast("Por favor, configure sua API Key do Gemini na aba 'Seu Perfil'.", "warning");
       return;
     }
@@ -12056,9 +12088,14 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
       const prompt = rules.aiPrompt || 'Analise os dados estratégicos do negócio considerando todos os clientes (participantes e não participantes do programa).';
       const context = `Aqui estão os dados do meu negócio para análise: ${JSON.stringify(dataToAnalyze)}`;
 
-      const ai = new GoogleGenAI({ apiKey: rules.geminiApiKey });
+      const apiKey = rules.geminiApiKey || process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error("API Key do Gemini não configurada.");
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3-flash-preview",
         contents: `${prompt}\n\n${context}`
       });
       
@@ -12184,7 +12221,7 @@ function StrategicAnalysisTab({ purchases, customers, rules, goals, companyId }:
         <MetricCard 
           title="Clientes Ativos" 
           value={`${metrics.activeCustomers}`}
-          subtitle={`Meta: ${Math.ceil(metrics.configuredActiveClients)}`}
+          subtitle={`Referência: ${Math.ceil(metrics.configuredActiveClients)}`}
           icon={Users}
           className="bg-white border-gray-100 shadow-sm"
         />
