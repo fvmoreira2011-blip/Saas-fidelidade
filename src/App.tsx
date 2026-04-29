@@ -79,6 +79,7 @@ import {
   QrCode,
   MessageSquare,
   ChevronRight,
+  ChevronDown,
   BarChart3,
   Edit,
   Trash2,
@@ -110,6 +111,8 @@ import {
   HelpCircle,
   Sparkles,
   Cake,
+  Ticket,
+  Disc,
   Mail,
   MessageCircle,
   RotateCcw,
@@ -138,14 +141,13 @@ import {
   Lock,
   LockOpen,
   Megaphone,
-  Disc,
   Pointer,
   CreditCard,
-  Ticket,
   ArrowRight,
   RefreshCcw,
   Zap,
-  BadgeDollarSign
+  BadgeDollarSign,
+  MousePointer2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import 'react-phone-number-input/style.css';
@@ -216,6 +218,9 @@ interface Purchase {
   date: string;
   pointsEarned: number;
   cashbackEarned?: number;
+  promotionId?: string;
+  actionsEarned?: number;
+  companyId?: string;
 }
 
 interface Redemption {
@@ -257,48 +262,46 @@ interface SeasonalDate {
 type PromotionType = 'raffle' | 'wheel' | 'birthday' | 'scratch';
 
 interface PromotionConfig {
-  id: string;
+  id: string; // Unique ID for each campaign run
   type: PromotionType;
   name: string;
   startDate: string;
   endDate: string;
   prizes: string[];
-  ranges?: { min: number; max: number; label: string }[];
-  discountRanges?: { label: string; probability: number; color: string }[];
-  scratchPrizes?: string[];
+  // Raffle specific
+  minPurchaseValue?: number;
+  isCumulative?: boolean;
+  rafflePrize?: string;
+  drawDate?: string;
+  drawTime?: string;
+  isDrawn?: boolean; // Track if drawing happened
+  winner?: string;
+  // Wheel specific
+  minPurchaseForWheel?: number;
+  wheelSegments?: { label: string; probability: number; color: string }[];
+  // Birthday specific
+  birthdayDiscountPercent?: number;
+  // Scratch specific
+  minPurchaseForScratch?: number;
+  scratchPrizes?: { label: string; probability: number; color: string }[];
+  // Meta
   isLinkedToLoyalty: boolean;
   isActive: boolean;
 }
 
-interface LoyaltyRule {
+interface PromotionHistory {
+  id: string;
+  companyId: string;
   campaignName: string;
-  purchasesForPrize?: number;
-  minPurchaseValue?: number;
-  maxDaysBetweenPurchases?: number;
-  pointsPerReal?: number;
-  pointsExpiryDays?: number;
-  welcomeMessage?: string;
-  rewardTiers?: RewardTier[];
-  allowedUserTabs?: string[];
-  themeColor?: string;
-  rewardMode?: 'points' | 'cashback';
-  cashbackConfig?: {
-    percentage: number;
-    minActivationValue: number;
-    minRedeemDays: number;
-    expiryDays: number;
-  };
-  pointsStatus?: { status: 'active' | 'ended'; validityType: 'fixed' | 'indeterminate' };
-  cashbackStatus?: { status: 'active' | 'ended'; validityType: 'fixed' | 'indeterminate' };
-  currentAvgTicket?: number;
-  currentMonthlyRevenue?: number;
-  onboardingComplete?: boolean;
-  companyProfile?: CompanyProfile;
-  seasonalDates?: SeasonalDate[];
-  promotionConfig?: PromotionConfig;
-  avgTicketGoal?: number;
-  monthlyRevenueGoal?: number;
-  type?: 'points' | 'cashback';
+  type: PromotionType;
+  startDate: string;
+  endDate: string;
+  winner?: string;
+  prize?: string;
+  totalRevenue: number;
+  totalParticipants: number;
+  totalActions: number;
+  endedAt: string;
 }
 
 interface Notification {
@@ -339,6 +342,7 @@ interface LoyaltyRule {
   maxDaysBetweenPurchases: number;
   pointsPerReal: number;
   pointsExpiryDays: number;
+  pointValue?: number;
   welcomeMessage: string;
   rewardTiers?: RewardTier[];
   allowedUserTabs?: string[];
@@ -367,6 +371,9 @@ interface LoyaltyRule {
   onboardingComplete?: boolean;
   erpKey?: string;
   avgTicketGoal?: number;
+  monthlyRevenueGoal?: number;
+  promotionConfig?: PromotionConfig;
+  type?: 'points' | 'cashback';
 }
 
 interface AppUser {
@@ -2422,6 +2429,7 @@ function AppContent() {
       );
     }
 
+    const activePromotion = rules.promotionConfig?.isActive ? rules.promotionConfig : null;
     const currentLogo = isSuperAdmin ? (appUser?.photoURL || `https://ui-avatars.com/api/?name=${appUser?.displayName || user.email}&background=random`) : (appUser?.logoURL || rules.companyProfile?.photoURL || APP_LOGO);
     const currentCompanyName = isSuperAdmin ? (appUser?.displayName || 'Administrador') : (appUser?.companyName || rules.companyProfile?.companyName || rules.campaignName || 'PROGRAMA DE FIDELIDADE');
     const currentThemeColor = appUser?.themeColor || rules.themeColor || '#000000';
@@ -2614,11 +2622,11 @@ function AppContent() {
               <SidebarButton 
                 active={activeTab === 'create_promotion'} 
                 onClick={() => handleTabChange('create_promotion')} 
-                icon={appUser?.canCreatePromotions ? <LockOpen size={20} /> : <Lock size={20} />} 
+                icon={<Gift size={20} />} 
                 label="Criar Promoção" 
                 className={cn(
                   "transition-all duration-300",
-                  activeTab === 'create_promotion' ? "bg-[#fb8500] text-white shadow-lg shadow-orange-500/20" : "text-gray-500 hover:text-[#fb8500]"
+                  activeTab === 'create_promotion' ? "bg-[#fb8500] text-white shadow-lg shadow-orange-500/20" : "text-gray-500 hover:text-orange-500"
                 )}
                 disabled={isOnboarding} 
               />
@@ -2775,6 +2783,13 @@ function AppContent() {
                     <SidebarButton active={activeTab === 'notificar'} onClick={() => { handleTabChange('notificar'); setIsMobileMenuOpen(false); }} icon={<Bell size={20} />} label="Notificar" />
                     <SidebarButton active={activeTab === 'rewarded_customers'} onClick={() => { handleTabChange('rewarded_customers'); setIsMobileMenuOpen(false); }} icon={<Award size={20} />} label="Premiados" />
                     <SidebarButton active={activeTab === 'rewards'} onClick={() => { handleTabChange('rewards'); setIsMobileMenuOpen(false); }} icon={<Trophy size={20} />} label="Premiação" />
+                    <SidebarButton 
+                      active={activeTab === 'create_promotion'} 
+                      onClick={() => { handleTabChange('create_promotion'); setIsMobileMenuOpen(false); }} 
+                      icon={<Gift size={20} />} 
+                      label="Criar Promoção" 
+                      className={activeTab === 'create_promotion' ? "bg-[#fb8500] text-white shadow-lg shadow-orange-500/20" : ""}
+                    />
                     <SidebarButton active={activeTab === 'seasonal_dates'} onClick={() => { handleTabChange('seasonal_dates'); setIsMobileMenuOpen(false); }} icon={<Calendar size={20} />} label="Datas Sazonais" />
                     <SidebarButton active={activeTab === 'ltv'} onClick={() => { handleTabChange('ltv'); setIsMobileMenuOpen(false); }} icon={<TrendingUp size={20} />} label="LTV" />
                     <SidebarButton active={activeTab === 'promotion'} onClick={() => { handleTabChange('promotion'); setIsMobileMenuOpen(false); }} icon={<MessageSquare size={20} />} label="Envio WhatsApp" />
@@ -2882,22 +2897,14 @@ function AppContent() {
             )}
             {activeTab === 'create_promotion' && !isSuperAdmin && (
               <div key="create_promotion">
-                {appUser?.canCreatePromotions === false ? (
-                  <FeatureLockedView 
-                    title="Módulo de Promoções Bloqueado" 
-                    description="A ferramenta de criação de promoções e ofertas sazonais não está disponível para o seu plano atual."
-                    isOrange
-                  />
-                ) : (
-                  <PromotionAreaTab 
-                    rules={rules} 
-                    companyId={selectedCompanyId} 
-                    isAdmin={isAdminUser} 
-                    onUpdateRules={handleUpdateRules}
-                    customers={customers}
-                    purchases={purchases}
-                  />
-                )}
+                <PromotionAreaTab 
+                  rules={rules} 
+                  companyId={selectedCompanyId} 
+                  isAdmin={isAdminUser || !!appUser?.canCreatePromotions} 
+                  onUpdateRules={handleUpdateRules}
+                  customers={customers}
+                  purchases={purchases}
+                />
               </div>
             )}
             {activeTab === 'seasonal_dates' && !isSuperAdmin && <div key="seasonal_dates"><SeasonalDatesTab rules={rules} isAdmin={isAdminUser} onTabChange={handleTabChange} onUpdateRules={handleUpdateRules} /></div>}
@@ -5684,10 +5691,19 @@ function ClientFormModal({ client, onClose }: { client: AppUser | null; onClose:
 }
 
 function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers, purchases }: { rules: LoyaltyRule; companyId: string | null; isAdmin: boolean; onUpdateRules: (rules: LoyaltyRule) => Promise<void>; customers: Customer[]; purchases: Purchase[] }) {
-  const [isCreating, setIsCreating] = useState(!rules.promotionConfig?.isActive);
+  const activePromotion = rules.promotionConfig?.isActive ? rules.promotionConfig : null;
+  const [activeSubTab, setActiveSubTab] = useState<'dashboard' | 'history'>(activePromotion ? 'dashboard' : 'dashboard');
+  const [isConfiguring, setIsConfiguring] = useState(!activePromotion);
+  const [history, setHistory] = useState<PromotionHistory[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  
   const [isMarking, setIsMarking] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [purchaseValue, setPurchaseValue] = useState('');
+  const [lookupPhone, setLookupPhone] = useState<string | undefined>();
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newBirthDate, setNewBirthDate] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   
   // Interactive States
@@ -5695,43 +5711,76 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
   const [wheelResult, setWheelResult] = useState<string | null>(null);
   const [scratchDone, setScratchDone] = useState(false);
   const [scratchResult, setScratchResult] = useState<string | null>(null);
+  const [raffleShuffling, setRaffleShuffling] = useState(false);
+  const [raffleWinner, setRaffleWinner] = useState<string | null>(null);
 
-  const [config, setConfig] = useState<Partial<PromotionConfig>>(rules.promotionConfig || {
-    type: 'raffle',
-    isLinkedToLoyalty: true,
-    isActive: false,
-    prizes: [],
-    discountRanges: [
-      { label: '5%', probability: 40, color: '#fb8500' },
-      { label: '10%', probability: 30, color: '#023047' },
-      { label: '15%', probability: 20, color: '#219ebc' },
-      { label: 'BRINDE', probability: 10, color: '#ffb703' }
-    ]
+  const [config, setConfig] = useState<Partial<PromotionConfig>>(() => {
+    if (rules.promotionConfig && rules.promotionConfig.isActive) {
+      return rules.promotionConfig;
+    }
+    return {
+      type: 'raffle',
+      isLinkedToLoyalty: true,
+      isActive: false,
+      prizes: [],
+      minPurchaseValue: 10,
+      isCumulative: true,
+      wheelSegments: [
+        { label: '5%', probability: 40, color: '#fb8500' },
+        { label: '10%', probability: 30, color: '#023047' },
+        { label: '15%', probability: 20, color: '#219ebc' },
+        { label: 'BRINDE', probability: 10, color: '#ffb703' }
+      ],
+      scratchPrizes: [
+        { label: '5%', probability: 40, color: '#fb8500' },
+        { label: '10%', probability: 30, color: '#023047' },
+        { label: '20%', probability: 20, color: '#219ebc' },
+        { label: 'GRÁTIS', probability: 10, color: '#ffb703' }
+      ]
+    };
   });
 
-  const activePromotion = rules.promotionConfig?.isActive ? rules.promotionConfig : null;
-
-  // Calculate stats based on active promotion period
+  // Calculate stats based on active promotion campaign ID
   const promotionStats = useMemo(() => {
     if (!activePromotion || !purchases) return { revenue: 0, participants: 0, actions: 0, recent: [] };
     
-    const promoPurchases = purchases.filter(p => {
-      const pDate = new Date(p.date);
-      const start = new Date(activePromotion.startDate);
-      const end = new Date(activePromotion.endDate);
-      return pDate >= start && pDate <= end;
-    });
+    const promoPurchases = purchases.filter(p => p.promotionId === activePromotion.id);
 
     const uniqueParticipants = new Set(promoPurchases.map(p => p.customerId)).size;
     const revenue = promoPurchases.reduce((acc, p) => acc + p.amount, 0);
+    const actions = promoPurchases.reduce((acc, p) => acc + (p.actionsEarned || 0), 0);
+    const numPurchases = promoPurchases.length;
+    const avgTicket = numPurchases > 0 ? revenue / numPurchases : 0;
 
     return {
       revenue,
       participants: uniqueParticipants,
-      actions: promoPurchases.length,
+      actions,
+      avgTicket,
       recent: promoPurchases.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 5)
     };
   }, [activePromotion, purchases]);
+
+  useEffect(() => {
+    if (activeSubTab === 'history' && companyId) {
+      loadHistory();
+    }
+  }, [activeSubTab, companyId]);
+
+  const loadHistory = async () => {
+    if (!companyId) return;
+    setIsLoadingHistory(true);
+    try {
+      const q = query(collection(db, 'promotion_history'), where('companyId', '==', companyId));
+      const snap = await getDocs(q);
+      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as PromotionHistory));
+      setHistory(data.sort((a, b) => new Date(b.endedAt).getTime() - new Date(a.endedAt).getTime()));
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
 
   const handleMarkPurchase = async () => {
     if (!selectedCustomer || !purchaseValue || !companyId) return;
@@ -5739,6 +5788,27 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
     try {
       const val = parseFloat(purchaseValue);
       const now = new Date().toISOString();
+
+      // 0. Calculate Promotion Actions (e.g. Coupons)
+      let actionsEarned = 0;
+      if (activePromotion) {
+        if (activePromotion.type === 'raffle') {
+          const minVal = activePromotion.minPurchaseValue || 1;
+          if (val >= minVal) {
+            if (activePromotion.isCumulative) {
+              actionsEarned = Math.floor(val / minVal);
+            } else {
+              actionsEarned = 1;
+            }
+          }
+        } else if (activePromotion.type === 'wheel' || activePromotion.type === 'scratch') {
+          const minVal = (activePromotion.type === 'wheel' ? activePromotion.minPurchaseForWheel : activePromotion.minPurchaseForScratch) || 1;
+          if (val >= minVal) actionsEarned = 1;
+        } else if (activePromotion.type === 'birthday') {
+          // Birthday check happens manually or based on customer data
+          actionsEarned = 1; 
+        }
+      }
 
       // 1. Process Loyalty Benefit if linked
       let pointsEarned = 0;
@@ -5758,6 +5828,8 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       }
 
       // 2. Add Purchase Record (Feeds all SaaS stats)
+      // Create multiple entries for cumulative coupons if needed to simplify draws, 
+      // or record actionsEarned in a single doc. We'll add them as a field.
       await addDoc(collection(db, 'purchases'), {
         companyId,
         customerId: selectedCustomer.id,
@@ -5766,20 +5838,23 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
         date: now,
         pointsEarned,
         cashbackEarned,
-        promotionId: activePromotion?.id || 'manual'
+        promotionId: activePromotion?.id || 'manual',
+        actionsEarned // New field for stats
       });
 
       // 3. Update Customer Balance
-      const customerRef = doc(db, 'customers', selectedCustomer.id);
+      // Get latest customer data from parent list to avoid stale state
+      const currentCust = customers.find(c => c.id === selectedCustomer.id) || selectedCustomer;
+      const customerRef = doc(db, 'customers', currentCust.id);
       await updateDoc(customerRef, {
-        points: (selectedCustomer.points || 0) + pointsEarned,
-        cashbackBalance: (selectedCustomer.cashbackBalance || 0) + cashbackEarned,
+        points: (currentCust.points || 0) + pointsEarned,
+        cashbackBalance: (currentCust.cashbackBalance || 0) + cashbackEarned,
         lastPurchaseDate: now,
-        totalSpent: (selectedCustomer.totalSpent || 0) + val,
-        totalPurchases: (selectedCustomer.totalPurchases || 0) + 1
+        totalSpent: (currentCust.totalSpent || 0) + val,
+        totalPurchases: (currentCust.totalPurchases || 0) + 1
       });
 
-      showToast(`Venda de R$ ${val.toFixed(2)} registrada e crédito atribuído!`, "success");
+      showToast(`Venda de R$ ${val.toFixed(2)} registrada! ${actionsEarned > 0 ? `(${actionsEarned} ${activePromotion?.type === 'raffle' ? 'Cupons' : 'Giro/Raspadinha'} gerados)` : ''}`, "success");
       
       // Reset interactive states for the new session
       if (activePromotion?.type === 'wheel') setWheelResult(null);
@@ -5799,32 +5874,82 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
     }
   };
 
+  const { askConfirmation } = useConfirm();
+
   const handleDrawRaffle = async () => {
-    if (!promotionStats.actions) {
+    if (!promotionStats.actions || !companyId || !activePromotion) {
       showToast("Nenhum cupom gerado nesta campanha ainda.", "warning");
       return;
     }
+
+    // Check if draw time has passed
+    const now = new Date();
+    const drawDateTime = activePromotion.drawDate ? new Date(`${activePromotion.drawDate}T${activePromotion.drawTime || '00:00'}`) : null;
+    if (drawDateTime && now < drawDateTime) {
+       showToast(`O sorteio só será liberado em ${drawDateTime.toLocaleString()}`, "warning");
+       return;
+    }
     
-    setIsProcessing(true);
-    // Simulate draw effect
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    const participants = promotionStats.recent.map(p => p.customerName);
-    const winner = participants[Math.floor(Math.random() * participants.length)];
-    
-    showToast(`SORTEIO REALIZADO! O ganhador é: ${winner}`, "success");
-    setIsProcessing(false);
+    askConfirmation(
+      "Confirmar Sorteio",
+      `Deseja realizar o sorteio do prêmio "${activePromotion.rafflePrize}" agora?`,
+      async () => {
+        setIsProcessing(true);
+        setRaffleShuffling(true);
+        setRaffleWinner(null);
+
+        // Shuffle effect for 3 seconds
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        // Get all participants for this campaign
+        const allPromoPurchases = purchases.filter(p => p.promotionId === activePromotion?.id);
+        const pool: string[] = [];
+        allPromoPurchases.forEach(p => {
+          // Add multiple entries if cumulative
+          const count = p.actionsEarned || 1;
+          for(let i = 0; i < count; i++) {
+            pool.push(p.customerName || 'Cliente Anônimo');
+          }
+        });
+
+        if (pool.length === 0) {
+          setRaffleShuffling(false);
+          setIsProcessing(false);
+          return;
+        }
+
+        const winner = pool[Math.floor(Math.random() * pool.length)];
+        
+        // Update local state and remote config to persist winner
+        setRaffleWinner(winner);
+        await onUpdateRules({
+          ...rules,
+          promotionConfig: {
+            ...rules.promotionConfig!,
+            winner: winner,
+            isDrawn: true
+          }
+        });
+
+        setRaffleShuffling(false);
+        setIsProcessing(false);
+        showToast(`SORTEIO REALIZADO! O ganhador é: ${winner}`, "success");
+      }
+    );
   };
 
   const spinWheel = () => {
     if (wheelSpinning) return;
     setWheelSpinning(true);
-    setTimeout(() => {
-      const items = activePromotion?.discountRanges || [];
-      const result = items[Math.floor(Math.random() * items.length)].label;
-      setWheelResult(result);
-      setWheelSpinning(false);
-    }, 3000);
+    setWheelResult(null);
+  };
+
+  const stopWheel = () => {
+    if (!wheelSpinning) return;
+    const items = activePromotion?.wheelSegments || [];
+    const result = items[Math.floor(Math.random() * items.length)]?.label || 'Tente Novamente';
+    setWheelResult(result);
+    setWheelSpinning(false);
   };
 
   const handleStart = async () => {
@@ -5832,21 +5957,157 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       showToast("Preencha os dados básicos da campanha.", "error");
       return;
     }
-    const newConfig = { ...config, id: crypto.randomUUID(), isActive: true } as PromotionConfig;
-    await onUpdateRules({ ...rules, promotionConfig: newConfig });
-    setIsCreating(false);
-    showToast("Promoção iniciada com sucesso!", "success");
-  };
-
-  const handleEnd = async () => {
-    if (confirm("Deseja realmente encerrar esta promoção? Isso irá gerar os resultados finais.")) {
-      await onUpdateRules({ ...rules, promotionConfig: { ...rules.promotionConfig!, isActive: false } });
-      setIsCreating(true);
-      showToast("Promoção encerrada.", "info");
+    setIsProcessing(true);
+    try {
+      const newConfig = { 
+        ...config, 
+        id: crypto.randomUUID(), 
+        isActive: true,
+        startDate: config.startDate || new Date().toISOString().split('T')[0],
+        endDate: config.endDate || new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0]
+      } as PromotionConfig;
+      await onUpdateRules({ ...rules, promotionConfig: newConfig });
+      setIsConfiguring(false);
+      showToast("Promoção iniciada com sucesso!", "success");
+    } catch (error) {
+      console.error(error);
+      showToast("Erro ao iniciar promoção.", "error");
+    } finally {
+      setIsProcessing(false);
     }
   };
 
-  if (!activePromotion || isCreating) {
+  const handleEnd = async () => {
+    askConfirmation(
+      "Encerrar Promoção",
+      "Deseja realmente encerrar esta promoção de forma manual? Ela sairá do ar e irá para o histórico.",
+      async () => {
+        setIsProcessing(true);
+        try {
+          if (activePromotion && companyId) {
+            // Save to history
+            await addDoc(collection(db, 'promotion_history'), {
+              companyId,
+              campaignName: activePromotion.name,
+              type: activePromotion.type,
+              startDate: activePromotion.startDate,
+              endDate: activePromotion.endDate,
+              winner: raffleWinner || activePromotion.winner || '',
+              prize: activePromotion.rafflePrize || (activePromotion.type === 'wheel' ? 'Prêmios da Roleta' : 'Raspadinha'),
+              totalRevenue: promotionStats.revenue,
+              totalParticipants: promotionStats.participants,
+              totalActions: promotionStats.actions,
+              endedAt: new Date().toISOString()
+            });
+          }
+          
+          await onUpdateRules({ 
+            ...rules, 
+            promotionConfig: { 
+              ...rules.promotionConfig!, 
+              isActive: false,
+              winner: raffleWinner || ''
+            } 
+          });
+          
+          setRaffleWinner(null);
+          setWheelResult(null);
+          setScratchDone(false);
+          setConfig({
+            name: '',
+            type: 'raffle',
+            startDate: '',
+            endDate: '',
+            rafflePrize: '',
+            drawDate: '',
+            drawTime: '',
+            isLinkedToLoyalty: true,
+            isActive: false,
+            prizes: [],
+            minPurchaseValue: 10,
+            isCumulative: true,
+            wheelSegments: [
+              { label: '5%', probability: 40, color: '#fb8500' },
+              { label: '10%', probability: 30, color: '#023047' },
+              { label: '15%', probability: 20, color: '#219ebc' },
+              { label: 'BRINDE', probability: 10, color: '#ffb703' }
+            ],
+            scratchPrizes: [
+              { label: '5%', probability: 40, color: '#fb8500' },
+              { label: '10%', probability: 30, color: '#023047' },
+              { label: '20%', probability: 20, color: '#219ebc' },
+              { label: 'GRÁTIS', probability: 10, color: '#ffb703' }
+            ]
+          });
+          setIsConfiguring(true); 
+          showToast("Promoção encerrada e arquivada.", "info");
+        } catch (error) {
+          console.error(error);
+          showToast("Erro ao encerrar promoção.", "error");
+        } finally {
+          setIsProcessing(false);
+        }
+      },
+      true
+    );
+  };
+
+  if (activeSubTab === 'history') {
+    return (
+      <div className="space-y-6 max-w-5xl mx-auto p-4">
+        <div className="flex items-center justify-between">
+           <div>
+             <h2 className="text-3xl font-black text-gray-900 tracking-tighter uppercase italic">Histórico de Campanhas</h2>
+             <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">Veja os resultados de promoções passadas</p>
+           </div>
+           <Button onClick={() => setActiveSubTab('dashboard')} variant="outline" className="rounded-xl font-bold uppercase text-[10px] tracking-widest">
+             Voltar ao Painel
+           </Button>
+        </div>
+
+        {isLoadingHistory ? (
+           <div className="p-12 text-center text-gray-400 font-black uppercase text-xs tracking-widest">Carregando Histórico...</div>
+        ) : history.length === 0 ? (
+           <div className="p-12 text-center text-gray-300 border-2 border-dashed border-gray-100 rounded-[3rem] font-black uppercase text-xs tracking-widest">Nenhuma campanha anterior encontrada</div>
+        ) : (
+           <div className="grid grid-cols-1 gap-4">
+              {history.map(h => (
+                 <Card key={h.id} className="p-6 bg-white border border-gray-100 rounded-[2rem] shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
+                    <div className="flex items-center gap-4">
+                       <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center text-gray-400">
+                          {h.type === 'raffle' ? <Ticket /> : h.type === 'wheel' ? <Disc /> : h.type === 'birthday' ? <Cake /> : <Sparkles />}
+                       </div>
+                       <div>
+                          <p className="text-xs font-black text-gray-900 uppercase">{h.campaignName}</p>
+                          <p className="text-[9px] text-gray-400 font-bold uppercase tracking-wider">{new Date(h.startDate).toLocaleDateString()} a {new Date(h.endDate).toLocaleDateString()}</p>
+                       </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-8">
+                       <div className="text-center">
+                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Faturamento</p>
+                          <p className="text-xs font-black text-gray-900">{formatCurrency(h.totalRevenue)}</p>
+                       </div>
+                       <div className="text-center">
+                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Ganhador</p>
+                          <p className="text-xs font-black text-orange-500 uppercase">{h.winner || 'N/A'}</p>
+                       </div>
+                       <div className="text-center">
+                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Ações</p>
+                          <p className="text-xs font-black text-gray-900">{h.totalActions}</p>
+                       </div>
+                    </div>
+                    <div className="text-right">
+                       <span className="text-[8px] font-black px-3 py-1 bg-gray-100 text-gray-500 rounded-full uppercase">ENCERRADA</span>
+                    </div>
+                 </Card>
+              ))}
+           </div>
+        )}
+      </div>
+    );
+  }
+
+  if ((isConfiguring || !activePromotion) && activeSubTab !== 'history') {
     return (
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 max-w-5xl mx-auto p-4">
         <div className="flex items-center justify-between">
@@ -5854,8 +6115,8 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
             <h2 className="text-3xl font-black text-gray-900 tracking-tighter uppercase italic">Configurar Nova Promoção</h2>
             <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">Defina as regras e o estilo da sua campanha</p>
           </div>
-          {rules.promotionConfig?.isActive && (
-            <Button onClick={() => setIsCreating(false)} variant="outline" className="rounded-xl font-bold uppercase text-[10px] tracking-widest">
+          {activePromotion && (
+            <Button onClick={() => setIsConfiguring(false)} variant="outline" className="rounded-xl font-bold uppercase text-[10px] tracking-widest">
               Voltar ao Painel Ativo
             </Button>
           )}
@@ -5923,6 +6184,98 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                    </div>
                 </div>
 
+                <div className="p-8 bg-gray-50 rounded-[3rem] border border-gray-100 space-y-6">
+                   <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Regras de Ativação</h4>
+                   
+                   {config.type === 'raffle' && (
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                           <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">A partir de qual Valor? (R$)</label>
+                           <input type="number" value={config.minPurchaseValue || ''} onChange={e => setConfig({...config, minPurchaseValue: parseFloat(e.target.value)})} className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold" />
+                        </div>
+                        <div className="flex items-center gap-4 bg-white p-4 rounded-2xl border border-gray-100">
+                           <button onClick={() => setConfig({...config, isCumulative: !config.isCumulative})} className={cn("w-10 h-5 rounded-full relative transition-colors", config.isCumulative ? "bg-orange-500" : "bg-gray-300")}>
+                              <div className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all", config.isCumulative ? "left-5.5" : "left-0.5")} />
+                           </button>
+                           <span className="text-[9px] font-black uppercase text-gray-600">Acumulativo? (R$10=1, R$30=3)</span>
+                        </div>
+                        <div className="md:col-span-2 space-y-1.5 pt-2">
+                           <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Prêmio e Data do Sorteio</label>
+                           <div className="grid grid-cols-3 gap-2">
+                              <input placeholder="Prêmio" value={config.rafflePrize || ''} onChange={e => setConfig({...config, rafflePrize: e.target.value})} className="col-span-1 bg-white border border-gray-100 rounded-xl px-4 py-3 text-xs" />
+                              <input type="date" value={config.drawDate || ''} onChange={e => setConfig({...config, drawDate: e.target.value})} className="bg-white border border-gray-100 rounded-xl px-4 py-3 text-xs" />
+                              <input type="time" value={config.drawTime || ''} onChange={e => setConfig({...config, drawTime: e.target.value})} className="bg-white border border-gray-100 rounded-xl px-4 py-3 text-xs" />
+                           </div>
+                        </div>
+                     </div>
+                   )}
+
+                   {config.type === 'wheel' && (
+                     <div className="space-y-4">
+                        <div className="space-y-1.5">
+                           <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Valor Mínimo para Giro (R$)</label>
+                           <input type="number" value={config.minPurchaseForWheel || ''} onChange={e => setConfig({...config, minPurchaseForWheel: parseFloat(e.target.value)})} className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold max-w-[200px]" />
+                        </div>
+                        <div className="space-y-2">
+                           <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Prêmios da Roleta</label>
+                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                              {(config.wheelSegments || []).map((seg, i) => (
+                                <div key={i} className="bg-white p-2 rounded-xl border border-gray-100 flex items-center gap-2">
+                                  <input 
+                                    className="text-xs font-black uppercase w-full bg-gray-50 p-1 rounded" 
+                                    value={seg.label} 
+                                    onChange={e => {
+                                      const newSegs = [...(config.wheelSegments || [])];
+                                      newSegs[i].label = e.target.value;
+                                      setConfig({...config, wheelSegments: newSegs});
+                                    }}
+                                  />
+                                  <button onClick={() => setConfig({...config, wheelSegments: config.wheelSegments?.filter((_, idx) => idx !== i)})} className="text-red-400 p-1"><X size={12} /></button>
+                                </div>
+                              ))}
+                              <button onClick={() => setConfig({...config, wheelSegments: [...(config.wheelSegments || []), { label: 'NOVO', probability: 25, color: '#fb8500' }]})} className="border-2 border-dashed border-gray-200 rounded-xl p-2 flex items-center justify-center text-gray-400 text-[10px] font-black">+ ADICIONAR</button>
+                           </div>
+                        </div>
+                     </div>
+                   )}
+
+                   {config.type === 'birthday' && (
+                      <div className="space-y-1.5">
+                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Desconto de Aniversário (%)</label>
+                         <input type="number" value={config.birthdayDiscountPercent || ''} onChange={e => setConfig({...config, birthdayDiscountPercent: parseInt(e.target.value)})} className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold max-w-[200px]" />
+                      </div>
+                   )}
+
+                   {config.type === 'scratch' && (
+                     <div className="space-y-4">
+                        <div className="space-y-1.5">
+                           <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Valor Mínimo para Raspadinha (R$)</label>
+                           <input type="number" value={config.minPurchaseForScratch || ''} onChange={e => setConfig({...config, minPurchaseForScratch: parseFloat(e.target.value)})} className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold max-w-[200px]" />
+                        </div>
+                        <div className="space-y-2">
+                           <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Prêmios Disponíveis</label>
+                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                              {(config.scratchPrizes || []).map((p, i) => (
+                                <div key={i} className="bg-white p-2 rounded-xl border border-gray-100 flex items-center gap-2">
+                                  <input 
+                                    className="text-xs font-black uppercase w-full bg-gray-50 p-1 rounded" 
+                                    value={p.label} 
+                                    onChange={e => {
+                                      const newPrizes = [...(config.scratchPrizes || [])];
+                                      newPrizes[i].label = e.target.value;
+                                      setConfig({...config, scratchPrizes: newPrizes});
+                                    }}
+                                  />
+                                  <button onClick={() => setConfig({...config, scratchPrizes: config.scratchPrizes?.filter((_, idx) => idx !== i)})} className="text-red-400 p-1"><X size={12} /></button>
+                                </div>
+                              ))}
+                              <button onClick={() => setConfig({...config, scratchPrizes: [...(config.scratchPrizes || []), { label: 'NOVO', probability: 25, color: '#fb8500' }]})} className="border-2 border-dashed border-gray-200 rounded-xl p-2 flex items-center justify-center text-gray-400 text-[10px] font-black">+ ADICIONAR</button>
+                           </div>
+                        </div>
+                     </div>
+                   )}
+                </div>
+
                 <div className="p-6 bg-orange-50 rounded-[2.5rem] border border-orange-100 space-y-6">
                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
@@ -5957,12 +6310,22 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                    </div>
                 </div>
 
-                <Button 
-                  onClick={handleStart}
-                  className="w-full bg-[#fb8500] hover:bg-[#ffb703] py-6 rounded-[2.5rem] text-sm font-black uppercase tracking-widest shadow-xl shadow-orange-500/20 text-white transition-all transform hover:-translate-y-1"
-                >
-                  Confirmar e Lançar Promoção
-                </Button>
+                <div className="flex gap-4">
+                  <Button 
+                    onClick={() => setActiveSubTab('history')}
+                    variant="outline"
+                    className="flex-1 border-gray-200 text-gray-700 hover:bg-gray-50 rounded-2xl font-black uppercase text-[10px] tracking-widest gap-2"
+                  >
+                    <History size={16} /> Histórico
+                  </Button>
+                  <Button 
+                    onClick={handleStart}
+                    disabled={isProcessing}
+                    className="flex-[2] bg-[#fb8500] hover:bg-[#ffb703] py-6 rounded-[2.5rem] text-sm font-black uppercase tracking-widest shadow-xl shadow-orange-500/20 text-white transition-all transform hover:-translate-y-1"
+                  >
+                    {isProcessing ? "Iniciando..." : "Lançar Promoção"}
+                  </Button>
+                </div>
              </div>
           </Card>
         </div>
@@ -5989,25 +6352,26 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-           <Button onClick={() => setIsMarking(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl px-6 py-3 font-black text-[10px] uppercase tracking-widest gap-2">
-             <Plus size={16} /> Lançar Venda
-           </Button>
-           <Button onClick={() => setIsCreating(true)} variant="outline" className="rounded-2xl font-black uppercase text-[10px] tracking-widest border-gray-200">
-             Configurações
-           </Button>
-           <Button onClick={handleEnd} variant="destructive" className="rounded-2xl font-black uppercase text-[10px] tracking-widest opacity-80 hover:opacity-100">
-             Encerrar
-           </Button>
-        </div>
+                <div className="flex items-center gap-3">
+                   <Button onClick={() => setIsMarking(true)} disabled={isProcessing} className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl px-6 py-3 font-black text-[10px] uppercase tracking-widest gap-2">
+                     <Plus size={16} /> Lançar Venda
+                   </Button>
+                   <Button onClick={() => setActiveSubTab('history')} disabled={isProcessing} variant="outline" className="rounded-2xl font-black uppercase text-[10px] tracking-widest border-gray-200">
+                     Histórico
+                   </Button>
+                   <Button onClick={handleEnd} disabled={isProcessing} variant="danger" className="rounded-2xl font-black uppercase text-[10px] tracking-widest opacity-80 hover:opacity-100">
+                     {isProcessing ? "Encerrando..." : "Encerrar Manualmente"}
+                   </Button>
+                </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
-           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {[
                  { label: 'Total Faturamento', val: formatCurrency(promotionStats.revenue), color: 'text-gray-900' },
                  { label: 'Participantes', val: `${promotionStats.participants} Clientes`, color: 'text-orange-600' },
+                 { label: 'Ticket Médio', val: formatCurrency(promotionStats.avgTicket), color: 'text-emerald-600' },
                  { label: 'Ações Realizadas', val: promotionStats.actions.toString(), color: 'text-gray-900' }
               ].map((stat, i) => (
                 <Card key={i} className="p-6 bg-white border border-gray-100 rounded-[2rem] shadow-sm">
@@ -6027,19 +6391,19 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
               
               <div className="space-y-4">
                  {promotionStats.recent.map((p, i) => (
-                    <div key={i} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 group hover:border-orange-200 transition-all">
-                       <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 bg-white rounded-xl border border-gray-100 flex items-center justify-center font-black text-orange-500">{p.customerName.charAt(0)}</div>
-                          <div>
-                             <p className="text-xs font-black text-gray-900 uppercase">{p.customerName}</p>
-                             <p className="text-[8px] text-gray-400 font-bold uppercase">{new Date(p.date).toLocaleString()} • Compra de {formatCurrency(p.amount)}</p>
-                          </div>
-                       </div>
-                       <div className="flex items-center gap-2">
-                          <span className="text-[8px] font-black px-2 py-1 bg-orange-100 text-orange-700 rounded-lg uppercase tracking-widest">+1 {activePromotion.type === 'raffle' ? 'Cupom' : 'Ação'}</span>
-                          <ChevronRight size={14} className="text-gray-300 group-hover:text-orange-500 transition-all" />
-                       </div>
-                    </div>
+                     <div key={i} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 group hover:border-orange-200 transition-all">
+                        <div className="flex items-center gap-4">
+                           <div className="w-10 h-10 bg-white rounded-xl border border-gray-100 flex items-center justify-center font-black text-orange-500">{(p.customerName || '?').charAt(0)}</div>
+                           <div>
+                              <p className="text-xs font-black text-gray-900 uppercase">{p.customerName || 'Cliente sem nome'}</p>
+                              <p className="text-[8px] text-gray-400 font-bold uppercase">{new Date(p.date).toLocaleString()} • Compra de {formatCurrency(p.amount)}</p>
+                           </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                           <span className="text-[8px] font-black px-2 py-1 bg-orange-100 text-orange-700 rounded-lg uppercase tracking-widest">+1 {activePromotion.type === 'raffle' ? 'Cupom' : 'Ação'}</span>
+                        </div>
+                        <ChevronRight size={14} className="text-gray-300 group-hover:text-orange-500 transition-all ml-2" />
+                     </div>
                  ))}
                  <button className="w-full py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest border-2 border-dashed border-gray-100 rounded-2xl hover:border-gray-200 transition-all">Ver Histórico Completo</button>
               </div>
@@ -6058,40 +6422,72 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
 
                  {activePromotion.type === 'wheel' && (
                    <div className="space-y-8 py-8">
-                      <div className={cn(
-                        "w-64 h-64 rounded-full border-8 border-orange-500/20 bg-white/5 mx-auto relative flex items-center justify-center transition-all duration-[3000ms] ease-out",
-                        wheelSpinning && "rotate-[1080deg]"
-                      )}>
-                         <div className="absolute inset-0 flex items-center justify-center">
-                            <Disc size={180} className="text-white/10" />
-                         </div>
-                         <div className="absolute top-0 -mt-6 w-8 h-10 bg-orange-500 rounded-b-xl z-20 shadow-lg flex items-center justify-center">
-                            <ChevronDown size={20} className="text-white" />
-                         </div>
-                         {wheelResult && !wheelSpinning && (
-                           <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="absolute inset-0 flex items-center justify-center">
-                              <div className="p-4 bg-orange-500 text-white rounded-full font-black text-2xl shadow-2xl ring-4 ring-orange-500/30">
-                                 {wheelResult}
-                              </div>
-                           </motion.div>
-                         )}
-                         {/* Fatias da roleta (simbolizadas) */}
-                         <div className="absolute inset-2 rounded-full border border-white/10 flex items-center justify-center">
-                             <div className="w-full h-[2px] bg-white/10 absolute rotate-45" />
-                             <div className="w-full h-[2px] bg-white/10 absolute rotate-90" />
-                             <div className="w-full h-[2px] bg-white/10 absolute rotate-[135deg]" />
-                             <div className="w-full h-[2px] bg-white/10 absolute rotate-0" />
-                         </div>
+                      <div className="relative">
+                        <div className={cn(
+                          "w-64 h-64 rounded-full border-8 border-orange-500/20 bg-white/5 mx-auto relative flex items-center justify-center overflow-hidden transition-all",
+                          wheelSpinning && "animate-spin"
+                        )}
+                        style={{ animationDuration: wheelSpinning ? '0.3s' : '0s' }}
+                        >
+                           <div className="absolute inset-0 flex items-center justify-center">
+                              <Disc size={180} className="text-white/10" />
+                           </div>
+                           
+                           {/* Segments Visualization */}
+                           <div className="absolute inset-0">
+                              {(activePromotion.wheelSegments || []).map((seg, i, arr) => {
+                                const angle = 360 / arr.length;
+                                return (
+                                  <div 
+                                    key={i} 
+                                    className="absolute inset-0 flex items-start justify-center origin-center" 
+                                    style={{ transform: `rotate(${angle * i}deg)` }}
+                                  >
+                                    <div className="pt-4 text-[10px] font-black uppercase text-white/40 rotate-90 translate-y-4">
+                                       {seg.label}
+                                    </div>
+                                    <div className="absolute top-0 bottom-0 left-1/2 w-[1px] bg-white/5" />
+                                  </div>
+                                );
+                              })}
+                           </div>
+
+                           {wheelResult && !wheelSpinning && (
+                             <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="absolute inset-0 flex items-center justify-center z-30">
+                                <div className="relative p-6 bg-orange-500 text-white rounded-[2rem] shadow-2xl ring-4 ring-orange-500/30 flex flex-col items-center">
+                                    <button onClick={() => setWheelResult(null)} className="absolute top-2 right-2 p-1 text-white/50 hover:text-white transition-colors">
+                                       <X size={14} />
+                                    </button>
+                                    <p className="text-[10px] font-black uppercase tracking-widest mb-1 opacity-80">Prêmio Ganho:</p>
+                                    <span className="text-2xl font-black italic">{wheelResult}</span>
+                                 </div>
+                             </motion.div>
+                           )}
+                        </div>
+                        <div className="absolute top-0 left-1/2 -translate-x-1/2 -mt-6 w-8 h-10 bg-orange-500 rounded-b-xl z-20 shadow-lg flex items-center justify-center">
+                           <ChevronDown size={20} className="text-white" />
+                        </div>
                       </div>
+
                       <div className="space-y-4">
-                         <Button 
-                           onClick={spinWheel} 
-                           disabled={wheelSpinning}
-                           className="w-full bg-orange-500 hover:bg-orange-600 h-16 rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-xl shadow-orange-500/20"
-                         >
-                           {wheelSpinning ? 'Girando...' : 'GIRAR ROLETA'}
-                         </Button>
-                         <p className="text-[9px] text-white/50 font-bold uppercase tracking-widest">Identifique o cliente primeiro para habilitar</p>
+                         {!wheelSpinning ? (
+                           <Button 
+                             onClick={spinWheel} 
+                             className="w-full bg-orange-500 hover:bg-orange-600 h-16 rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-xl shadow-orange-500/20"
+                           >
+                             GIRAR ROLETA DA SORTE
+                           </Button>
+                         ) : (
+                           <Button 
+                             onClick={stopWheel} 
+                             className="w-full bg-red-500 hover:bg-red-600 h-16 rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-xl shadow-red-500/20 animate-pulse"
+                           >
+                             PARAR ROLETA AGORA!
+                           </Button>
+                         )}
+                         <p className="text-[9px] text-white/50 font-bold uppercase tracking-widest italic font-black">
+                           Agulha mostrará o prêmio quando parar
+                         </p>
                       </div>
                    </div>
                  )}
@@ -6100,37 +6496,63 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                    <div className="space-y-6 py-8">
                       <div className="aspect-[4/3] bg-white/5 rounded-3xl border-4 border-dashed border-white/10 flex items-center justify-center relative overflow-hidden group cursor-pointer">
                          {!scratchDone ? (
-                           <div className="absolute inset-0 bg-gray-500 flex items-center justify-center p-8 text-center" onMouseMove={() => setScratchDone(true)}>
-                              <p className="text-sm font-black text-white uppercase italic leading-tight">RASPE AQUI COM O MOUSE PARA GANHAR!</p>
-                           </div>
+                            <div className="absolute inset-0 bg-gradient-to-br from-gray-400 to-gray-600 flex flex-col items-center justify-center p-8 text-center" onMouseMove={() => setScratchDone(true)} onTouchMove={() => setScratchDone(true)}>
+                               <MousePointer2 className="text-white mb-2 animate-bounce" size={24} />
+                               <p className="text-sm font-black text-white uppercase italic leading-tight tracking-tighter">RASPE AGORA E VEJA SEU DESCONTO!</p>
+                            </div>
                          ) : (
-                           <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="text-center space-y-2">
-                              <Sparkles className="text-orange-500 mx-auto mb-2" size={32} />
-                              <p className="text-[10px] text-white/60 font-black uppercase">VOCÊ GANHOU:</p>
-                              <p className="text-4xl font-black italic text-orange-500">15%</p>
-                              <p className="text-[8px] text-white/40 font-bold uppercase">VALIDADO COM SUCESSO</p>
-                           </motion.div>
+                            <motion.div initial={{ scale: 0.8, rotate: -5 }} animate={{ scale: 1, rotate: 0 }} className="text-center space-y-2">
+                               <div className="inline-flex p-3 bg-orange-500 rounded-full shadow-lg mb-2">
+                                  <Sparkles className="text-white" size={24} />
+                               </div>
+                               <p className="text-[10px] text-white/60 font-black uppercase tracking-widest">VOCÊ GANHOU:</p>
+                               <p className="text-5xl font-black italic text-orange-500 drop-shadow-lg">
+                                  {(activePromotion.scratchPrizes || [])[Math.floor(Math.random()*(activePromotion.scratchPrizes?.length || 1))]?.label || 'BRINDE!'}
+                               </p>
+                               <p className="text-[9px] text-white/40 font-bold uppercase tracking-[0.2em]">CÓDIGO VALIDADO NO SISTEMA</p>
+                            </motion.div>
                          )}
                       </div>
+                      <p className="text-[9px] text-white/50 font-bold uppercase tracking-widest italic font-black text-center">
+                         Arraste o mouse para descobrir o prêmio
+                      </p>
                    </div>
                  )}
 
                  {activePromotion.type === 'raffle' && (
                    <div className="space-y-8 py-8">
-                      <div className="p-8 bg-white/10 rounded-[3rem] border border-white/10 space-y-4 shadow-inner">
-                         <div className="w-20 h-20 bg-orange-500 text-white rounded-[2rem] mx-auto flex items-center justify-center shadow-lg">
-                            <Ticket size={40} />
-                         </div>
-                         <div>
-                            <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Cupons Participantes</p>
-                            <p className="text-4xl font-black italic">{promotionStats.actions}</p>
+                      <div className="p-8 bg-white/10 rounded-[3rem] border border-white/10 space-y-4 shadow-inner relative overflow-hidden">
+                         {raffleShuffling && (
+                            <div className="absolute inset-0 bg-orange-500 flex flex-col items-center justify-center animate-pulse z-20">
+                               <RefreshCcw size={40} className="animate-spin text-white opacity-50 transition-all" />
+                               <p className="text-xl font-black italic text-white mt-4 uppercase tracking-tighter">Embaralhando...</p>
+                            </div>
+                         )}
+                         <div className="relative z-10">
+                            <div className="w-20 h-20 bg-orange-500 text-white rounded-[2rem] mx-auto flex items-center justify-center shadow-lg">
+                               <Ticket size={40} />
+                            </div>
+                            <div className="mt-4">
+                               <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Cupons Participantes</p>
+                               <p className="text-4xl font-black italic">{promotionStats.actions}</p>
+                            </div>
+                            {raffleWinner && !raffleShuffling && (
+                               <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="mt-4 p-4 bg-orange-500/20 rounded-2xl border border-orange-500/30">
+                                  <p className="text-[9px] font-black uppercase text-orange-300">🏆 Ganhador do Prêmio:</p>
+                                  <p className="text-xl font-black uppercase italic text-white">{raffleWinner}</p>
+                               </motion.div>
+                            )}
                          </div>
                       </div>
-                      <Button className="w-full bg-white text-[#023047] h-16 rounded-[2rem] font-black uppercase tracking-widest text-xs hover:bg-orange-50 transition-all flex items-center justify-center gap-3">
-                         <RefreshCcw size={18} /> Realizar Sorteio
+                      <Button 
+                        onClick={handleDrawRaffle}
+                        disabled={raffleShuffling}
+                        className="w-full bg-white text-[#023047] h-16 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-orange-50 transition-all flex items-center justify-center gap-3 relative z-10"
+                      >
+                         <RefreshCcw size={18} className={raffleShuffling ? "animate-spin" : ""} /> {raffleShuffling ? "Sorteando..." : "Realizar Sorteio"}
                       </Button>
                       <p className="text-[9px] text-white/40 font-bold uppercase tracking-widest italic leading-relaxed">
-                         O sorteio gera um ganhador aleatório entre todos os cupons registrados até agora.
+                         O sistema embaralha e sorteia um ganhador real entre os participantes.
                       </p>
                    </div>
                  )}
@@ -6168,33 +6590,115 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                     </div>
                     <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tighter italic">Lançar Venda na Promoção</h3>
                  </div>
-                 <button onClick={() => setIsMarking(false)} className="p-2 text-gray-400 hover:text-gray-900 transition-colors"><X size={20} /></button>
+                 <button 
+                   onClick={() => { setIsMarking(false); setSelectedCustomer(null); setLookupPhone(undefined); setIsRegistering(false); }} 
+                   className="p-3 text-gray-400 hover:text-gray-900 transition-all hover:bg-gray-100 rounded-full relative z-50"
+                 >
+                    <X size={24} />
+                 </button>
               </div>
 
               <div className="space-y-6">
-                 <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Vincular Cliente</label>
-                    <select 
-                      className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-sm font-bold text-gray-900 outline-none focus:ring-2 focus:ring-emerald-500 h-16 appearance-none"
-                      onChange={e => setSelectedCustomer(customers.find(c => c.id === e.target.value) || null)}
-                    >
-                       <option value="">Selecione um cliente...</option>
-                       {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>)}
-                    </select>
-                 </div>
+                 <div className="space-y-4">
+                    <div className="space-y-1.5">
+                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Localizar Celular</label>
+                       <PhoneInput 
+                         country="BR"
+                         value={lookupPhone}
+                         onChange={val => {
+                           setLookupPhone(val);
+                           if (val) {
+                             const clean = val.replace(/\D/g, '');
+                             const found = customers.find(c => c.phone.replace(/\D/g, '') === clean);
+                             if (found) {
+                               setSelectedCustomer(found);
+                               setIsRegistering(false);
+                             } else {
+                               setSelectedCustomer(null);
+                               setIsRegistering(true);
+                             }
+                           } else {
+                             setSelectedCustomer(null);
+                             setIsRegistering(false);
+                           }
+                         }}
+                         className="phone-lookup h-16 px-6 bg-gray-50 border border-gray-100 rounded-2xl text-sm font-bold w-full"
+                       />
+                    </div>
 
-                 {selectedCustomer && (
-                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-center justify-between">
-                       <div>
-                          <p className="text-[9px] font-black text-emerald-700 uppercase">Cliente Cadastrado</p>
-                          <p className="text-xs font-black text-gray-900 uppercase">{selectedCustomer.name}</p>
-                       </div>
-                       <div className="text-right">
-                          <p className="text-[9px] font-black text-emerald-700 uppercase">Saldo Atual</p>
-                          <p className="text-xs font-black text-gray-900">{rules.type === 'points' ? `${selectedCustomer.points} Pontos` : `R$ ${selectedCustomer.balance?.toFixed(2)}`}</p>
-                       </div>
-                    </motion.div>
-                 )}
+                    {isRegistering && (
+                       <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="p-6 bg-orange-50 rounded-2xl border border-orange-100 space-y-4">
+                          <p className="text-[10px] font-black text-orange-700 uppercase tracking-widest">Novo Cliente Identificado!</p>
+                          <div className="space-y-3">
+                             <input 
+                               placeholder="Nome Completo" 
+                               value={newName}
+                               onChange={e => setNewName(e.target.value)}
+                               className="w-full px-4 py-3 rounded-xl border border-orange-200 text-xs font-bold outline-none focus:ring-2 focus:ring-orange-500"
+                             />
+                             <div className="space-y-1">
+                                <label className="text-[9px] font-black text-orange-400 uppercase ml-1">Data de Nascimento (Opcional)</label>
+                                <input 
+                                  type="date" 
+                                  value={newBirthDate}
+                                  onChange={e => setNewBirthDate(e.target.value)}
+                                  className="w-full px-4 py-3 rounded-xl border border-orange-200 text-xs font-bold outline-none focus:ring-2 focus:ring-orange-500"
+                                />
+                             </div>
+                             <Button 
+                               onClick={async () => {
+                                 if (!newName || !lookupPhone || !companyId) return;
+                                 setIsProcessing(true);
+                                 try {
+                                   const docRef = await addDoc(collection(db, 'customers'), {
+                                     name: newName,
+                                     phone: lookupPhone,
+                                     birthDate: newBirthDate,
+                                     companyId,
+                                     points: 0,
+                                     cashbackBalance: 0,
+                                     totalSpent: 0,
+                                     totalPurchases: 0,
+                                     createdAt: new Date().toISOString()
+                                   });
+                                   const newCust = { id: docRef.id, name: newName, phone: lookupPhone, birthDate: newBirthDate, points: 0, cashbackBalance: 0, totalSpent: 0, totalPurchases: 0, companyId, createdAt: new Date().toISOString() };
+                                   setSelectedCustomer(newCust);
+                                   setIsRegistering(false);
+                                   showToast("Cliente registrado com sucesso!", "success");
+                                 } catch (error) {
+                                   console.error(error);
+                                 } finally {
+                                   setIsProcessing(false);
+                                 }
+                               }}
+                               className="w-full bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-xl font-black uppercase text-[10px] tracking-widest"
+                             >
+                               Cadastrar e Continuar
+                             </Button>
+                          </div>
+                       </motion.div>
+                    )}
+
+                    {selectedCustomer && (
+                       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                             <div className="w-10 h-10 rounded-full bg-emerald-200 flex items-center justify-center text-emerald-700 font-black">
+                                {selectedCustomer.name.charAt(0)}
+                             </div>
+                             <div>
+                                <p className="text-[9px] font-black text-emerald-700 uppercase">Cliente</p>
+                                <p className="text-xs font-black text-gray-900 uppercase">{selectedCustomer.name}</p>
+                             </div>
+                          </div>
+                          <div className="text-right">
+                             <p className="text-[9px] font-black text-emerald-700 uppercase">Saldo</p>
+                             <p className="text-xs font-black text-gray-900">
+                                {rules.rewardMode === 'points' ? `${selectedCustomer.points} Pts` : `R$ ${selectedCustomer.cashbackBalance?.toFixed(2)}`}
+                             </p>
+                          </div>
+                       </motion.div>
+                    )}
+                 </div>
 
                  <div className="space-y-1.5">
                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Valor da Compra (R$)</label>
@@ -6203,29 +6707,29 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                       value={purchaseValue}
                       onChange={e => setPurchaseValue(e.target.value)}
                       placeholder="0,00" 
+                      autoFocus
                       className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 text-2xl font-black text-gray-900 outline-none focus:ring-2 focus:ring-emerald-500 h-20 text-center"
                     />
                  </div>
 
                  <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-2">
                     <div className="flex justify-between items-center">
-                       <p className="text-[10px] font-black text-gray-400 uppercase">Integrações Ativas</p>
+                       <p className="text-[10px] font-black text-gray-400 uppercase">Resumo da Ação</p>
                        <div className="flex gap-2">
-                          {activePromotion.isLinkedToLoyalty && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" title="Fidelidade Ativa" />}
-                          <span className="w-2 h-2 rounded-full bg-orange-500 animate-bounce" title="Promoção Ativa" />
+                          <span className="w-2 h-2 rounded-full bg-orange-500 animate-bounce" />
                        </div>
                     </div>
                     <p className="text-[9px] text-gray-500 font-bold leading-relaxed uppercase">
-                       Ao confirmar, os dados alimentarão o LTV e estatísticas gerais. {activePromotion.isLinkedToLoyalty && "O cliente também acumulará recompensas."}
+                       Ao confirmar, a venda será registrada. {activePromotion.isLinkedToLoyalty ? "O cliente receberá benefícios do programa de fidelidade e participará da promoção ativa." : "A venda contará apenas para as estatísticas da promoção."}
                     </p>
                  </div>
 
                  <Button 
                    onClick={handleMarkPurchase}
                    disabled={isProcessing || !selectedCustomer || !purchaseValue}
-                   className="w-full bg-emerald-600 hover:bg-emerald-700 py-6 rounded-[2rem] text-sm font-black uppercase tracking-widest shadow-xl shadow-emerald-500/20 text-white transition-all"
+                   className="w-full bg-emerald-600 hover:bg-emerald-700 py-6 rounded-[2rem] text-sm font-black uppercase tracking-widest shadow-xl shadow-emerald-500/20 text-white transition-all shadow-lg"
                  >
-                   {isProcessing ? 'Processando...' : 'Confirmar e Gerar Benefício'}
+                   {isProcessing ? 'Processando...' : 'Confirmar Lançamento'}
                  </Button>
               </div>
             </motion.div>

@@ -34,63 +34,30 @@ service cloud.firestore {
     }
 
     // Validation Blueprints
-    function isValidUser(data) {
-      return data.email is string && data.email.size() <= 200 &&
-             data.approved is bool &&
-             data.role in ['admin', 'user', 'superadmin'] &&
-             (data.createdAt is string || !('createdAt' in data));
-    }
-
     function isValidCustomer(data) {
       return data.name is string && data.name.size() <= 200 &&
-             data.phone is string && data.phone.size() <= 200 &&
-             (data.points is number || !('points' in data)) &&
-             (data.companyId is string || !('companyId' in data)) &&
-             (data.lastPurchaseDate is string || !('lastPurchaseDate' in data)) &&
-             (data.createdAt is string || !('createdAt' in data)) &&
-             (data.updatedAt is string || !('updatedAt' in data)) &&
-             (data.isDeleted is bool || !('isDeleted' in data)) &&
-             (data.deletedAt is string || !('deletedAt' in data)) &&
-             (data.photoURL is string || !('photoURL' in data)) &&
-             (data.authUid is string || !('authUid' in data)) &&
-             (data.birthDate is string || !('birthDate' in data)) &&
-             (data.email is string || !('email' in data)) &&
-             (data.totalSpent is number || !('totalSpent' in data)) &&
-             (data.purchasesCount is number || !('purchasesCount' in data)) &&
-             (data.totalPurchases is number || !('totalPurchases' in data)) &&
-             (data.cashbackBalance is number || !('cashbackBalance' in data));
+             (data.companyId is string || !('companyId' in data));
     }
 
     function isValidPurchase(data) {
-      return data.customerId is string &&
-             data.customerName is string &&
-             data.amount is number &&
-             data.date is string &&
-             (data.pointsEarned is number || !('pointsEarned' in data)) &&
-             (data.companyId is string || !('companyId' in data)) &&
-             (data.items is list || !('items' in data)) &&
-             (data.campaignId is string || data.campaignId == null || !('campaignId' in data)) &&
-             (data.bonusPoints is number || !('bonusPoints' in data)) &&
-             (data.cashbackEarned is number || !('cashbackEarned' in data)) &&
-             (data.originalPoints is number || !('originalPoints' in data));
+      return (data.customerId is string || !('customerId' in data)) &&
+             (data.amount is number || !('amount' in data)) &&
+             (data.companyId is string || !('companyId' in data));
     }
 
     function isValidRedemption(data) {
-      return data.customerId is string &&
-             data.prize is string &&
-             data.pointsValue is number &&
-             (data.cost is number || !('cost' in data)) &&
-             data.date is string &&
-             (data.companyId is string || !('companyId' in data)) &&
-             (data.voucherCode is string || !('voucherCode' in data)) &&
-             (data.status is string || !('status' in data));
+      return (data.customerId is string || !('customerId' in data)) &&
+             (data.companyId is string || !('companyId' in data));
     }
 
     function isValidGoal(data) {
-      return data.month is string &&
-             data.value is number &&
-             (data.workingDays is number || !('workingDays' in data)) &&
+      return (data.value is number || !('value' in data)) &&
              (data.companyId is string || !('companyId' in data));
+    }
+
+    function isValidHistory(data) {
+      return data.companyId is string &&
+             data.campaignName is string;
     }
 
     // 1. Connection Test
@@ -109,26 +76,24 @@ service cloud.firestore {
     // 3. Customers Collection
     match /customers/{customerId} {
       allow read: if true;
-      allow create: if isApproved() && incoming().companyId == request.auth.uid && isValidCustomer(incoming());
-      allow update: if (isApproved() && existing().companyId == request.auth.uid && isValidCustomer(incoming())) || 
-                     (isSignedIn() && existing().authUid == request.auth.uid && isValidCustomer(incoming())) ||
-                     isAdmin();
+      allow create: if isApproved() && (incoming().companyId == request.auth.uid || isAdmin());
+      allow update: if isAdmin() || (isApproved() && existing().companyId == request.auth.uid) || (isSignedIn() && existing().authUid == request.auth.uid);
       allow delete: if isAdmin();
     }
 
     // 4. Purchases Collection
     match /purchases/{purchaseId} {
-      allow read: if isApproved() || (isSignedIn() && existing().customerId == request.auth.uid) || isAdmin();
-      allow create: if isApproved() && incoming().companyId == request.auth.uid && isValidPurchase(incoming());
-      allow update: if (isApproved() && existing().companyId == request.auth.uid && isValidPurchase(incoming())) || isAdmin();
+      allow read: if isAdmin() || isApproved() || (isSignedIn() && existing().customerId == request.auth.uid);
+      allow create: if isApproved() && (incoming().companyId == request.auth.uid || isAdmin());
+      allow update: if isAdmin() || (isApproved() && existing().companyId == request.auth.uid);
       allow delete: if isAdmin();
     }
 
     // 5. Redemptions Collection
     match /redemptions/{redemptionId} {
-      allow read: if isApproved() || (isSignedIn() && resource.data.customerId == request.auth.uid) || isAdmin();
-      allow create: if isApproved() && incoming().companyId == request.auth.uid && isValidRedemption(incoming());
-      allow update: if (isApproved() && existing().companyId == request.auth.uid && isValidRedemption(incoming())) || isAdmin();
+      allow read: if isAdmin() || isApproved() || (isSignedIn() && resource.data.customerId == request.auth.uid);
+      allow create: if isApproved() && (incoming().companyId == request.auth.uid || isAdmin());
+      allow update: if isAdmin() || (isApproved() && existing().companyId == request.auth.uid);
       allow delete: if isAdmin();
     }
 
@@ -147,16 +112,24 @@ service cloud.firestore {
     // 7. Notifications Collection
     match /notifications/{notificationId} {
       allow read: if isSignedIn();
-      allow create: if isApproved() && incoming().companyId == request.auth.uid;
+      allow create: if isApproved() && (incoming().companyId == request.auth.uid || isAdmin());
       allow update, delete: if isAdmin() || (isSignedIn() && existing().customerId == request.auth.uid);
     }
 
     // 8. Goals Collection
     match /goals/{goalId} {
-      allow read: if isApproved() || isAdmin();
-      allow create: if isApproved() && incoming().companyId == request.auth.uid && isValidGoal(incoming());
-      allow update: if (isApproved() && existing().companyId == request.auth.uid && isValidGoal(incoming())) || isAdmin();
+      allow read: if isAdmin() || isApproved();
+      allow create: if isApproved() && (incoming().companyId == request.auth.uid || isAdmin());
+      allow update: if isAdmin() || (isApproved() && existing().companyId == request.auth.uid);
       allow delete: if isAdmin();
+    }
+
+    // 9. Promotion History
+    match /promotion_history/{historyId} {
+      allow read: if isApproved() || isAdmin();
+      allow create: if isApproved() && (incoming().companyId == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin();
     }
   }
 }
+
