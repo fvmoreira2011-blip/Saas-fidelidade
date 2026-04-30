@@ -220,6 +220,8 @@ interface Purchase {
   cashbackEarned?: number;
   promotionId?: string;
   actionsEarned?: number;
+  prizeWon?: string;
+  prizeCost?: number;
   companyId?: string;
 }
 
@@ -268,6 +270,8 @@ interface PromotionConfig {
   startDate: string;
   endDate: string;
   prizes: string[];
+  rafflePrizes?: { label: string; value: number }[];
+  totalCost?: number;
   // Raffle specific
   minPurchaseValue?: number;
   isCumulative?: boolean;
@@ -278,12 +282,12 @@ interface PromotionConfig {
   winner?: string;
   // Wheel specific
   minPurchaseForWheel?: number;
-  wheelSegments?: { label: string; probability: number; color: string }[];
+  wheelSegments?: { label: string; probability: number; color: string; cost?: number }[];
+  scratchPrizes?: { label: string; probability: number; color?: string; cost?: number }[];
   // Birthday specific
   birthdayDiscountPercent?: number;
   // Scratch specific
   minPurchaseForScratch?: number;
-  scratchPrizes?: { label: string; probability: number; color: string }[];
   // Meta
   isLinkedToLoyalty: boolean;
   isActive: boolean;
@@ -301,6 +305,8 @@ interface PromotionHistory {
   totalRevenue: number;
   totalParticipants: number;
   totalActions: number;
+  totalCost?: number;
+  roi?: number;
   endedAt: string;
 }
 
@@ -5711,6 +5717,9 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
   const [isRegistering, setIsRegistering] = useState(false);
   const [newName, setNewName] = useState('');
   const [newBirthDate, setNewBirthDate] = useState('');
+  const [wheelRotation, setWheelRotation] = useState(0);
+  const [actionsEarned, setActionsEarned] = useState(0);
+  const [promoUsedThisSession, setPromoUsedThisSession] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   
   // Interactive States
@@ -5720,6 +5729,18 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
   const [scratchResult, setScratchResult] = useState<string | null>(null);
   const [raffleShuffling, setRaffleShuffling] = useState(false);
   const [raffleWinner, setRaffleWinner] = useState<string | null>(null);
+
+  const weightedRandom = <T extends { label: string; probability: number }>(items: T[]): T => {
+    const totalWeight = items.reduce((acc, item) => acc + item.probability, 0);
+    if (totalWeight === 0 && items.length > 0) return items[0];
+    if (items.length === 0) return { label: 'ERRO', probability: 0 } as T;
+    let random = Math.random() * totalWeight;
+    for (const item of items) {
+      if (random < item.probability) return item;
+      random -= item.probability;
+    }
+    return items[0];
+  };
 
   const [config, setConfig] = useState<Partial<PromotionConfig>>({
     name: '',
@@ -5815,15 +5836,23 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       const wb = utils.book_new();
       utils.book_append_sheet(wb, ws, "Relatório");
       
+      const cost = h.totalCost || 0;
+      const roi = cost > 0 ? ((h.totalRevenue - cost) / cost) * 100 : 0;
+
       const summary = [
         [''],
         ['RESUMO DA CAMPANHA'],
+        ['Empresa', rules.companyProfile?.tradingName || 'N/A'],
         ['Campanha', h.campaignName],
+        ['Tipo', h.type.toUpperCase()],
         ['Início', new Date(h.startDate).toLocaleDateString()],
         ['Fim', new Date(h.endDate || h.endedAt).toLocaleDateString()],
         ['Faturamento Total', h.totalRevenue],
+        ['Custo da Campanha', cost],
+        ['ROI da Campanha', `${roi.toFixed(2)}%`],
         ['Total de Ações', h.totalActions],
-        ['Ticket Médio', h.totalRevenue / (h.totalActions || 1)],
+        ['Ticket Médio', h.totalRevenue / (h.totalParticipants || 1)],
+        ['Total de Participantes', h.totalParticipants],
         ['Ganhador', h.winner || 'N/A']
       ];
       
@@ -5857,8 +5886,11 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
               actionsEarned = 1;
             }
           }
-        } else if (activePromotion.type === 'wheel' || activePromotion.type === 'scratch') {
-          const minVal = (activePromotion.type === 'wheel' ? (activePromotion.minPurchaseValue || 1) : (activePromotion.minPurchaseValue || 1));
+        } else if (activePromotion.type === 'wheel') {
+          const minVal = activePromotion.minPurchaseForWheel || 1;
+          if (val >= minVal) actionsEarned = 1;
+        } else if (activePromotion.type === 'scratch') {
+          const minVal = activePromotion.minPurchaseForScratch || 1;
           if (val >= minVal) actionsEarned = 1;
         } else if (activePromotion.type === 'birthday') {
           // 1 per year check
@@ -5914,8 +5946,25 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       }
 
       // 2. Add Purchase Record (Feeds all SaaS stats)
-      // Create multiple entries for cumulative coupons if needed to simplify draws, 
-      // or record actionsEarned in a single doc. We'll add them as a field.
+      setActionsEarned(actionsEarned);
+      
+      // Determine interactive result at purchase time if probability is set
+      let prizeToSave = '';
+      if (actionsEarned > 0 && activePromotion) {
+        if (activePromotion.type === 'wheel' && activePromotion.wheelSegments?.length) {
+          const result = weightedRandom(activePromotion.wheelSegments);
+          setWheelResult(result.label);
+          // Pre-calculate rotation for the wheel result
+          const index = activePromotion.wheelSegments.indexOf(result);
+          const segSize = 360 / activePromotion.wheelSegments.length;
+          const targetRotation = (360 - (index * segSize)) + 3600; // Extra turns
+          setWheelRotation(targetRotation);
+        } else if (activePromotion.type === 'scratch' && activePromotion.scratchPrizes?.length) {
+          const result = weightedRandom(activePromotion.scratchPrizes);
+          setScratchResult(result.label);
+        }
+      }
+
       await addDoc(collection(db, 'purchases'), {
         companyId,
         customerId: selectedCustomer.id,
@@ -5943,6 +5992,8 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       showToast(`Venda de R$ ${val.toFixed(2)} registrada! ${actionsEarned > 0 ? `(${actionsEarned} ${activePromotion?.type === 'raffle' ? 'Cupons' : 'Giro/Raspadinha'} gerados)` : ''}`, "success");
       
       // Reset interactive states for the new session
+      setPromoUsedThisSession(false);
+      setWheelRotation(0);
       if (activePromotion?.type === 'wheel') setWheelResult(null);
       if (activePromotion?.type === 'scratch') {
          setScratchDone(false);
@@ -6025,17 +6076,121 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
   };
 
   const spinWheel = () => {
-    if (wheelSpinning) return;
+    if (wheelSpinning || promoUsedThisSession) return;
     setWheelSpinning(true);
     setWheelResult(null);
+    // Continuous spinning until stop is called
   };
 
-  const stopWheel = () => {
+  const handleScratchComplete = async () => {
+    if (scratchDone || promoUsedThisSession) return;
+    setPromoUsedThisSession(true);
+    setScratchDone(true);
+    
+    if (scratchResult && companyId && activePromotion) {
+      // Find the prize config to get the cost
+      const prizes = activePromotion.scratchPrizes || [];
+      const prizeConfig = prizes.find(p => p.label === scratchResult);
+      
+      let cost = prizeConfig?.cost || 0;
+      if (scratchResult.includes('%')) {
+         const match = scratchResult.match(/(\d+)%/);
+         if (match) {
+            const percent = parseInt(match[1]);
+            const lastPurchase = purchases.filter(p => p.companyId === companyId).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+            if (lastPurchase) {
+               cost = lastPurchase.amount * (percent / 100);
+            }
+         }
+      }
+
+      try {
+        const q = query(
+          collection(db, 'purchases'), 
+          where('companyId', '==', companyId),
+          orderBy('date', 'desc'),
+          limit(1)
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const purchaseDoc = snap.docs[0];
+          await updateDoc(doc(db, 'purchases', purchaseDoc.id), {
+            prizeWon: scratchResult,
+            prizeCost: cost
+          });
+        }
+      } catch (err) {
+        console.error("Error updating scratch prize:", err);
+      }
+    }
+  };
+
+  const stopWheel = async () => {
     if (!wheelSpinning) return;
     const items = activePromotion?.wheelSegments || [];
-    const result = items[Math.floor(Math.random() * items.length)]?.label || 'Tente Novamente';
-    setWheelResult(result);
-    setWheelSpinning(false);
+    if (items.length === 0) return;
+    
+    // Choose winner based on probability
+    const totalProb = items.reduce((acc, s) => acc + s.probability, 0);
+    let rand = Math.random() * totalProb;
+    let winnerIndex = 0;
+    for (let i = 0; i < items.length; i++) {
+        rand -= items[i].probability;
+        if (rand <= 0) {
+            winnerIndex = i;
+            break;
+        }
+    }
+    
+    const segment = items[winnerIndex];
+    const segmentAngle = 360 / items.length;
+    const extraSpins = 5 + Math.floor(Math.random() * 5); // 5 to 10 more full spins
+    const targetAngle = (extraSpins * 360) + (360 - (winnerIndex * segmentAngle)) - (segmentAngle / 2);
+    
+    setWheelRotation(prev => prev + targetAngle);
+    
+    // Smooth stop then set result
+    setTimeout(async () => {
+      setWheelResult(segment.label);
+      setWheelSpinning(false);
+      setPromoUsedThisSession(true);
+      
+      // Calculate prize cost
+      let cost = segment.cost || 0;
+      if (segment.label.includes('%')) {
+         const match = segment.label.match(/(\d+)%/);
+         if (match) {
+            const percent = parseInt(match[1]);
+            // Get the last purchase amount to calculate real discount cost
+            const lastPurchase = purchases.filter(p => p.companyId === companyId).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+            if (lastPurchase) {
+               cost = lastPurchase.amount * (percent / 100);
+            }
+         }
+      }
+
+      // Update the last purchase with the prize
+      if (companyId && activePromotion) {
+        try {
+          const q = query(
+            collection(db, 'purchases'), 
+            where('companyId', '==', companyId),
+            orderBy('date', 'desc'),
+            limit(1)
+          );
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+             const purchaseDoc = snap.docs[0];
+             await updateDoc(doc(db, 'purchases', purchaseDoc.id), {
+                prizeWon: segment.label,
+                prizeCost: cost
+             });
+          }
+        } catch (err) {
+          console.error("Error updating prize:", err);
+        }
+      }
+    }, 4000); 
   };
 
   const handleStart = async () => {
@@ -6071,7 +6226,21 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
         setIsProcessing(true);
         try {
           if (activePromotion && companyId) {
-            // Save to history
+            // Recalculate total cost from purchases if wheel/scratch
+            let cost = activePromotion.totalCost || 0;
+            const promotionPurchases = purchases.filter(p => p.promotionId === activePromotion.id);
+            
+            if (activePromotion.type === 'wheel' || activePromotion.type === 'scratch') {
+               const prizesCost = promotionPurchases.reduce((acc, p) => acc + (p.prizeCost || 0), 0);
+               cost += prizesCost;
+            } else if (activePromotion.type === 'birthday') {
+               const birthdayCosts = promotionPurchases.reduce((acc, p) => acc + (p.cashbackEarned || 0), 0);
+               cost += birthdayCosts;
+            }
+
+            const revenue = promotionStats.revenue;
+            const roi = cost > 0 ? ((revenue - cost) / cost) * 100 : 0;
+
             await addDoc(collection(db, 'promotion_history'), {
               companyId,
               campaignName: activePromotion.name,
@@ -6080,9 +6249,11 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
               endDate: activePromotion.endDate,
               winner: raffleWinner || activePromotion.winner || '',
               prize: activePromotion.rafflePrize || (activePromotion.type === 'wheel' ? 'Prêmios da Roleta' : 'Raspadinha'),
-              totalRevenue: promotionStats.revenue,
+              totalRevenue: revenue,
               totalParticipants: promotionStats.participants,
               totalActions: promotionStats.actions,
+              totalCost: cost,
+              roi: roi,
               endedAt: new Date().toISOString()
             });
           }
@@ -6146,9 +6317,18 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
              <h2 className="text-3xl font-black text-gray-900 tracking-tighter uppercase italic">Histórico de Campanhas</h2>
              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">Veja os resultados de promoções passadas</p>
            </div>
-           <Button onClick={() => setActiveSubTab('dashboard')} variant="outline" className="rounded-xl font-bold uppercase text-[10px] tracking-widest">
-             Voltar ao Painel
-           </Button>
+            <div className="flex gap-2">
+              <Button 
+                onClick={() => { if (history.length > 0) handleDownloadReport(history[0]); }} 
+                variant="outline" 
+                className="rounded-xl font-bold uppercase text-[10px] tracking-widest flex items-center gap-2 border-orange-200 text-orange-600 hover:bg-orange-50"
+              >
+                <Download size={14} /> Relatório Última
+              </Button>
+              <Button onClick={() => setActiveSubTab('dashboard')} variant="outline" className="rounded-xl font-bold uppercase text-[10px] tracking-widest">
+                Voltar ao Painel
+              </Button>
+            </div>
         </div>
 
         {isLoadingHistory ? (
@@ -6164,27 +6344,43 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                           {h.type === 'raffle' ? <Ticket /> : h.type === 'wheel' ? <Disc /> : h.type === 'birthday' ? <Cake /> : <Sparkles />}
                        </div>
                        <div>
-                          <p className="text-xs font-black text-gray-900 uppercase">{h.campaignName}</p>
+                          <p className="text-xs font-black text-gray-900 uppercase leading-tight">{h.campaignName}</p>
+                          <p className="text-[8px] font-black text-orange-500 uppercase tracking-tighter mb-0.5">
+                            {h.type === 'raffle' ? 'Cupons' : h.type === 'wheel' ? 'Roleta' : h.type === 'birthday' ? 'Aniversário' : 'Raspadinha'}
+                          </p>
                           <p className="text-[9px] text-gray-400 font-bold uppercase tracking-wider">{new Date(h.startDate).toLocaleDateString()} a {new Date(h.endDate).toLocaleDateString()}</p>
                        </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-8">
+                    <div className="grid grid-cols-4 gap-6 flex-1 max-w-xl">
                        <div className="text-center">
                           <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Faturamento</p>
                           <p className="text-xs font-black text-gray-900">{formatCurrency(h.totalRevenue)}</p>
                        </div>
                        <div className="text-center">
-                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Ganhador</p>
-                          <p className="text-xs font-black text-orange-500 uppercase">{h.winner || 'N/A'}</p>
+                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Custo</p>
+                          <p className="text-xs font-black text-red-500">{formatCurrency(h.totalCost || 0)}</p>
                        </div>
                        <div className="text-center">
-                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Ações</p>
-                          <p className="text-xs font-black text-gray-900">{h.totalActions}</p>
+                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">ROI</p>
+                          <p className={cn("text-xs font-black", (h.roi || 0) >= 0 ? "text-green-500" : "text-red-500")}>
+                            {(h.roi || 0).toFixed(1)}%
+                          </p>
+                       </div>
+                       <div className="text-center">
+                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Ganhador</p>
+                          <p className="text-xs font-black text-blue-500 uppercase truncate max-w-[80px]">{h.winner || 'N/A'}</p>
                        </div>
                     </div>
-                    <div className="text-right">
-                       <span className="text-[8px] font-black px-3 py-1 bg-gray-100 text-gray-500 rounded-full uppercase">ENCERRADA</span>
-                    </div>
+                     <div className="flex items-center gap-3">
+                        <button 
+                          onClick={() => handleDownloadReport(h)}
+                          className="h-10 px-4 rounded-xl border border-gray-100 bg-white hover:bg-orange-50 text-gray-600 hover:text-orange-600 transition-all flex items-center gap-2 group"
+                        >
+                           <Download size={14} className="group-hover:scale-110 transition-transform" />
+                           <span className="font-black text-[9px] uppercase tracking-widest">Relatório</span>
+                        </button>
+                        <span className="text-[8px] font-black px-3 py-1 bg-gray-100 text-gray-500 rounded-full uppercase italic">ENCERRADA</span>
+                     </div>
                  </Card>
               ))}
            </div>
@@ -6215,7 +6411,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
               <div className="grid grid-cols-1 gap-3">
                 {[
                   { id: 'raffle', label: 'Cupons para Sorteio', icon: <Ticket /> },
-                  { id: 'wheel', label: 'Roleta de Descontos', icon: <Disc /> },
+                  { id: 'wheel', label: 'Roleta da Sorte', icon: <Disc /> },
                   { id: 'birthday', label: 'Desconto Niver', icon: <Cake /> },
                   { id: 'scratch', label: 'Raspou? Ganhou!', icon: <Sparkles /> }
                 ].map(type => (
@@ -6263,7 +6459,14 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                         <input 
                           type="date" 
                           value={config.endDate || ''}
-                          onChange={e => setConfig({ ...config, endDate: e.target.value })}
+                          onChange={e => {
+                            const newDate = e.target.value;
+                            if (config.startDate && newDate < config.startDate) {
+                              showToast("A data final deve ser maior ou igual à inicial", "warning");
+                              return;
+                            }
+                            setConfig({ ...config, endDate: newDate });
+                          }}
                           className="bg-gray-50 border border-gray-100 rounded-2xl px-4 py-4 text-xs font-bold" 
                         />
                       </div>
@@ -6274,23 +6477,107 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Regras de Ativação</h4>
                    
                    {config.type === 'raffle' && (
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
-                           <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">A partir de qual Valor? (R$)</label>
-                           <input type="number" value={config.minPurchaseValue || ''} onChange={e => setConfig({...config, minPurchaseValue: parseFloat(e.target.value)})} className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold" />
+                     <div className="grid grid-cols-1 gap-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                           <div className="space-y-1.5">
+                              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">A partir de qual Valor? (R$)</label>
+                              <input type="number" value={config.minPurchaseValue || ''} onChange={e => setConfig({...config, minPurchaseValue: parseFloat(e.target.value)})} className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold" />
+                           </div>
+                           <div className="flex items-center gap-4 bg-white p-4 rounded-2xl border border-gray-100">
+                              <button onClick={() => setConfig({...config, isCumulative: !config.isCumulative})} className={cn("w-10 h-5 rounded-full relative transition-colors", config.isCumulative ? "bg-orange-500" : "bg-gray-300")}>
+                                 <div className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all", config.isCumulative ? "left-5.5" : "left-0.5")} />
+                              </button>
+                              <span className="text-[9px] font-black uppercase text-gray-600">Acumulativo? (R$10=1, R$30=3)</span>
+                           </div>
                         </div>
-                        <div className="flex items-center gap-4 bg-white p-4 rounded-2xl border border-gray-100">
-                           <button onClick={() => setConfig({...config, isCumulative: !config.isCumulative})} className={cn("w-10 h-5 rounded-full relative transition-colors", config.isCumulative ? "bg-orange-500" : "bg-gray-300")}>
-                              <div className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all", config.isCumulative ? "left-5.5" : "left-0.5")} />
-                           </button>
-                           <span className="text-[9px] font-black uppercase text-gray-600">Acumulativo? (R$10=1, R$30=3)</span>
+
+                        <div className="space-y-3">
+                           <div className="flex items-center justify-between">
+                              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Prêmios da Campanha</label>
+                              <button 
+                                onClick={() => setConfig({...config, rafflePrizes: [...(config.rafflePrizes || []), { label: '', value: 0 }]})}
+                                className="text-orange-500 hover:text-orange-600 flex items-center gap-1 font-black text-[9px] uppercase tracking-tighter"
+                              >
+                                <Plus size={14} /> ADICIONAR PRÊMIO
+                              </button>
+                           </div>
+                           
+                           <div className="space-y-2">
+                              {(config.rafflePrizes || []).map((p, idx) => (
+                                <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-gray-50 p-2 rounded-xl">
+                                   <input 
+                                     placeholder="Prêmio" 
+                                     value={p.label} 
+                                     onChange={e => {
+                                       const newPrizes = [...(config.rafflePrizes || [])];
+                                       newPrizes[idx].label = e.target.value;
+                                       setConfig({...config, rafflePrizes: newPrizes});
+                                     }}
+                                     className="col-span-8 bg-white border border-gray-100 rounded-lg px-3 py-2 text-xs" 
+                                   />
+                                   <input 
+                                     type="number" 
+                                     placeholder="R$" 
+                                     value={p.value || ''} 
+                                     onChange={e => {
+                                       const newPrizes = [...(config.rafflePrizes || [])];
+                                       newPrizes[idx].value = parseFloat(e.target.value) || 0;
+                                       setConfig({...config, rafflePrizes: newPrizes});
+                                     }}
+                                     className="col-span-3 bg-white border border-gray-100 rounded-lg px-3 py-2 text-xs" 
+                                   />
+                                   <button 
+                                     onClick={() => setConfig({...config, rafflePrizes: config.rafflePrizes?.filter((_, i) => i !== idx)})}
+                                     className="col-span-1 text-red-300 hover:text-red-500 flex justify-center"
+                                   >
+                                     <X size={16} />
+                                   </button>
+                                </div>
+                              ))}
+                              
+                              {(!config.rafflePrizes || config.rafflePrizes.length === 0) && (
+                                 <div className="p-4 border-2 border-dashed border-gray-100 rounded-xl flex flex-col items-center justify-center gap-2">
+                                    <div className="grid grid-cols-1 w-full">
+                                       <label className="text-[8px] font-black text-gray-400 uppercase mb-1">Prêmio Único (Simplificado)</label>
+                                       <input 
+                                          placeholder="Ex: Vale Compras R$ 100" 
+                                          value={config.rafflePrize || ''} 
+                                          onChange={e => setConfig({...config, rafflePrize: e.target.value})} 
+                                          className="bg-white border border-gray-100 rounded-xl px-4 py-3 text-xs" 
+                                       />
+                                    </div>
+                                 </div>
+                              )}
+                           </div>
                         </div>
-                        <div className="md:col-span-2 space-y-1.5 pt-2">
-                           <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Prêmio e Data do Sorteio</label>
-                           <div className="grid grid-cols-3 gap-2">
-                              <input placeholder="Prêmio" value={config.rafflePrize || ''} onChange={e => setConfig({...config, rafflePrize: e.target.value})} className="col-span-1 bg-white border border-gray-100 rounded-xl px-4 py-3 text-xs" />
-                              <input type="date" value={config.drawDate || ''} onChange={e => setConfig({...config, drawDate: e.target.value})} className="bg-white border border-gray-100 rounded-xl px-4 py-3 text-xs" />
-                              <input type="time" value={config.drawTime || ''} onChange={e => setConfig({...config, drawTime: e.target.value})} className="bg-white border border-gray-100 rounded-xl px-4 py-3 text-xs" />
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                           <div className="space-y-1.5">
+                              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Data e Hora do Sorteio</label>
+                              <input 
+                                type="datetime-local" 
+                                min={config.endDate ? `${config.endDate}T00:00` : undefined}
+                                value={config.drawDate && config.drawTime ? `${config.drawDate}T${config.drawTime}` : ''} 
+                               onChange={e => {
+                                  const [date, time] = e.target.value.split('T');
+                                  if (config.endDate && date < config.endDate) {
+                                    showToast("Data do sorteio deve ser igual ou após o fim da campanha", "warning");
+                                    return;
+                                  }
+                                  setConfig({...config, drawDate: date, drawTime: time});
+                                }}
+                                className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold" 
+                              />
+                           </div>
+                           <div className="space-y-1.5">
+                              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Custo Total Previsto (R$)</label>
+                              <input 
+                                type="number" 
+                                value={config.totalCost || ''} 
+                                onChange={e => setConfig({...config, totalCost: parseFloat(e.target.value) || 0})}
+                                placeholder="0.00"
+                                className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold text-red-500" 
+                              />
                            </div>
                         </div>
                      </div>
@@ -6302,24 +6589,77 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Valor Mínimo para Giro (R$)</label>
                            <input type="number" value={config.minPurchaseForWheel || ''} onChange={e => setConfig({...config, minPurchaseForWheel: parseFloat(e.target.value)})} className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold max-w-[200px]" />
                         </div>
-                        <div className="space-y-2">
-                           <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Prêmios da Roleta</label>
-                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <div className="space-y-4">
+                           <div className="flex items-center justify-between">
+                              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Opções da Roleta</label>
+                              <Button 
+                                onClick={() => setConfig({...config, wheelSegments: [...(config.wheelSegments || []), { label: '', probability: 10, color: '#fb8500', cost: 0 }]})}
+                                variant="ghost"
+                                size="sm"
+                                className="text-orange-500 hover:text-orange-600 font-black text-[9px] uppercase tracking-widest"
+                              >
+                                <Plus size={14} className="mr-1" /> Adicionar Opção
+                              </Button>
+                           </div>
+                           
+                           <div className="space-y-3">
                               {(config.wheelSegments || []).map((seg, i) => (
-                                <div key={i} className="bg-white p-2 rounded-xl border border-gray-100 flex items-center gap-2">
-                                  <input 
-                                    className="text-xs font-black uppercase w-full bg-gray-50 p-1 rounded" 
-                                    value={seg.label} 
-                                    onChange={e => {
-                                      const newSegs = [...(config.wheelSegments || [])];
-                                      newSegs[i].label = e.target.value;
-                                      setConfig({...config, wheelSegments: newSegs});
-                                    }}
-                                  />
-                                  <button onClick={() => setConfig({...config, wheelSegments: config.wheelSegments?.filter((_, idx) => idx !== i)})} className="text-red-400 p-1"><X size={12} /></button>
+                                <div key={i} className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm space-y-4">
+                                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                                    <div className="md:col-span-6 space-y-1.5">
+                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Nome do Prêmio (Ex: 10% OFF ou Brinde X)</label>
+                                      <input 
+                                        className="text-sm font-bold uppercase w-full bg-gray-50 px-4 py-3 rounded-2xl border border-gray-100 focus:border-orange-500 outline-none transition-all" 
+                                        placeholder="Ex: 10% DE DESCONTO"
+                                        value={seg.label} 
+                                        onChange={e => {
+                                          const newSegs = [...(config.wheelSegments || [])];
+                                          newSegs[i].label = e.target.value;
+                                          setConfig({...config, wheelSegments: newSegs});
+                                        }}
+                                      />
+                                    </div>
+                                    <div className="md:col-span-2 space-y-1.5">
+                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Probab. (%)</label>
+                                      <input 
+                                        type="number"
+                                        className="text-sm font-bold w-full bg-gray-50 px-4 py-3 rounded-2xl border border-gray-100 text-center" 
+                                        value={seg.probability} 
+                                        onChange={e => {
+                                          const newSegs = [...(config.wheelSegments || [])];
+                                          newSegs[i].probability = parseInt(e.target.value) || 0;
+                                          setConfig({...config, wheelSegments: newSegs});
+                                        }}
+                                      />
+                                    </div>
+                                    <div className="md:col-span-3 space-y-1.5">
+                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest flex items-center justify-between">
+                                        Custo Unit. (R$)
+                                        {seg.label.includes('%') && <span className="text-[8px] text-blue-500 lowercase font-medium">Auto-calc %</span>}
+                                      </label>
+                                      <input 
+                                        type="number"
+                                        disabled={seg.label.includes('%')}
+                                        placeholder={seg.label.includes('%') ? 'Calculado' : '0.00'}
+                                        className="text-sm font-bold w-full bg-gray-50 px-4 py-3 rounded-2xl border border-gray-100 text-red-500 disabled:opacity-50" 
+                                        value={seg.cost || ''} 
+                                        onChange={e => {
+                                          const newSegs = [...(config.wheelSegments || [])];
+                                          newSegs[i].cost = parseFloat(e.target.value) || 0;
+                                          setConfig({...config, wheelSegments: newSegs});
+                                        }}
+                                      />
+                                    </div>
+                                    <div className="md:col-span-1 flex justify-end pt-5">
+                                      <button onClick={() => setConfig({...config, wheelSegments: config.wheelSegments?.filter((_, idx) => idx !== i)})} className="text-red-300 hover:text-red-500 p-2 transition-colors"><X size={20} /></button>
+                                    </div>
+                                  </div>
                                 </div>
                               ))}
-                              <button onClick={() => setConfig({...config, wheelSegments: [...(config.wheelSegments || []), { label: 'NOVO', probability: 25, color: '#fb8500' }]})} className="border-2 border-dashed border-gray-200 rounded-xl p-2 flex items-center justify-center text-gray-400 text-[10px] font-black">+ ADICIONAR</button>
+                              
+                              {(!config.wheelSegments || config.wheelSegments.length === 0) && (
+                                <div className="text-center py-10 border-2 border-dashed border-gray-100 rounded-3xl text-gray-400 font-bold uppercase text-[10px] tracking-widest">Nenhuma opção configurada</div>
+                              )}
                            </div>
                         </div>
                      </div>
@@ -6338,24 +6678,77 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Valor Mínimo para Raspadinha (R$)</label>
                            <input type="number" value={config.minPurchaseForScratch || ''} onChange={e => setConfig({...config, minPurchaseForScratch: parseFloat(e.target.value)})} className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold max-w-[200px]" />
                         </div>
-                        <div className="space-y-2">
-                           <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Prêmios Disponíveis</label>
-                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <div className="space-y-4">
+                           <div className="flex items-center justify-between">
+                              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Prêmios da Raspadinha</label>
+                              <Button 
+                                onClick={() => setConfig({...config, scratchPrizes: [...(config.scratchPrizes || []), { label: '', probability: 10, cost: 0 }]})}
+                                variant="ghost"
+                                size="sm"
+                                className="text-orange-500 hover:text-orange-600 font-black text-[9px] uppercase tracking-widest"
+                              >
+                                <Plus size={14} className="mr-1" /> Adicionar Prêmio
+                              </Button>
+                           </div>
+                           
+                           <div className="space-y-3">
                               {(config.scratchPrizes || []).map((p, i) => (
-                                <div key={i} className="bg-white p-2 rounded-xl border border-gray-100 flex items-center gap-2">
-                                  <input 
-                                    className="text-xs font-black uppercase w-full bg-gray-50 p-1 rounded" 
-                                    value={p.label} 
-                                    onChange={e => {
-                                      const newPrizes = [...(config.scratchPrizes || [])];
-                                      newPrizes[i].label = e.target.value;
-                                      setConfig({...config, scratchPrizes: newPrizes});
-                                    }}
-                                  />
-                                  <button onClick={() => setConfig({...config, scratchPrizes: config.scratchPrizes?.filter((_, idx) => idx !== i)})} className="text-red-400 p-1"><X size={12} /></button>
+                                <div key={i} className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm space-y-4">
+                                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                                    <div className="md:col-span-6 space-y-1.5">
+                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Nome do Prêmio (Ex: 10% OFF ou Brinde X)</label>
+                                      <input 
+                                        className="text-sm font-bold uppercase w-full bg-gray-50 px-4 py-3 rounded-2xl border border-gray-100 focus:border-orange-500 outline-none transition-all" 
+                                        placeholder="Ex: BRINDE SURPRESA"
+                                        value={p.label} 
+                                        onChange={e => {
+                                          const newPrizes = [...(config.scratchPrizes || [])];
+                                          newPrizes[i].label = e.target.value;
+                                          setConfig({...config, scratchPrizes: newPrizes});
+                                        }}
+                                      />
+                                    </div>
+                                    <div className="md:col-span-2 space-y-1.5">
+                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Probab. (%)</label>
+                                      <input 
+                                        type="number"
+                                        className="text-sm font-bold w-full bg-gray-50 px-4 py-3 rounded-2xl border border-gray-100 text-center" 
+                                        value={p.probability} 
+                                        onChange={e => {
+                                          const newPrizes = [...(config.scratchPrizes || [])];
+                                          newPrizes[i].probability = parseInt(e.target.value) || 0;
+                                          setConfig({...config, scratchPrizes: newPrizes});
+                                        }}
+                                      />
+                                    </div>
+                                    <div className="md:col-span-3 space-y-1.5">
+                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest flex items-center justify-between">
+                                        Custo Unit. (R$)
+                                        {p.label.includes('%') && <span className="text-[8px] text-blue-500 lowercase font-medium">Auto-calc %</span>}
+                                      </label>
+                                      <input 
+                                        type="number"
+                                        disabled={p.label.includes('%')}
+                                        placeholder={p.label.includes('%') ? 'Calculado' : '0.00'}
+                                        className="text-sm font-bold w-full bg-gray-50 px-4 py-3 rounded-2xl border border-gray-100 text-red-500 disabled:opacity-50" 
+                                        value={p.cost || ''} 
+                                        onChange={e => {
+                                          const newPrizes = [...(config.scratchPrizes || [])];
+                                          newPrizes[i].cost = parseFloat(e.target.value) || 0;
+                                          setConfig({...config, scratchPrizes: newPrizes});
+                                        }}
+                                      />
+                                    </div>
+                                    <div className="md:col-span-1 flex justify-end pt-5">
+                                      <button onClick={() => setConfig({...config, scratchPrizes: config.scratchPrizes?.filter((_, idx) => idx !== i)})} className="text-red-300 hover:text-red-500 p-2 transition-colors"><X size={20} /></button>
+                                    </div>
+                                  </div>
                                 </div>
                               ))}
-                              <button onClick={() => setConfig({...config, scratchPrizes: [...(config.scratchPrizes || []), { label: 'NOVO', probability: 25, color: '#fb8500' }]})} className="border-2 border-dashed border-gray-200 rounded-xl p-2 flex items-center justify-center text-gray-400 text-[10px] font-black">+ ADICIONAR</button>
+                              
+                              {(!config.scratchPrizes || config.scratchPrizes.length === 0) && (
+                                <div className="text-center py-10 border-2 border-dashed border-gray-100 rounded-3xl text-gray-400 font-bold uppercase text-[10px] tracking-widest">Nenhum prêmio configurado</div>
+                              )}
                            </div>
                         </div>
                      </div>
@@ -6487,7 +6880,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                         <div className="flex items-center gap-4">
                            <div className="w-10 h-10 bg-white rounded-xl border border-gray-100 flex items-center justify-center font-black text-orange-500">{(p.customerName || '?').charAt(0)}</div>
                            <div>
-                              <p className="text-xs font-black text-gray-900 uppercase">{p.customerName || 'Cliente sem nome'}</p>
+                              <p className="text-xs font-black text-gray-900 uppercase">{p.customerName || 'Cliente sem nome'}{(p as any).prizeWon ? ' - Ganhou: ' + (p as any).prizeWon : ''}</p>
                               <p className="text-[8px] text-gray-400 font-bold uppercase">{new Date(p.date).toLocaleString()} • Compra de {formatCurrency(p.amount)}</p>
                            </div>
                         </div>
@@ -6536,8 +6929,15 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                                <div className="w-full h-full rounded-full border-8 border-orange-500/20" />
                             </div>
                             <motion.div 
-                              animate={{ rotate: wheelSpinning ? 3600 : 0 }}
-                              transition={{ duration: 8, ease: "circOut" }}
+                              animate={{ rotate: wheelRotation || 0 }}
+                              transition={wheelSpinning ? { 
+                                 duration: 0.2, 
+                                 repeat: Infinity, 
+                                 ease: "linear" 
+                               } : { 
+                                 duration: 4, 
+                                 ease: [0.12, 0, 0, 1] 
+                               }}
                               className="w-full h-full rounded-full relative overflow-hidden bg-[#023047]"
                             >
                                {(activePromotion.wheelSegments || []).map((seg, i, arr) => {
@@ -6582,10 +6982,9 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                       <div className="space-y-4">
                          {!wheelSpinning ? (
                            <Button 
-                             onClick={spinWheel} 
-                             className="w-full bg-orange-500 hover:bg-orange-600 h-16 rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-xl shadow-orange-500/20"
+                             onClick={spinWheel} disabled={promoUsedThisSession || !actionsEarned}                             className={cn("w-full h-16 rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-xl transition-all", promoUsedThisSession || !actionsEarned ? "bg-gray-400 cursor-not-allowed opacity-50" : "bg-orange-500 hover:bg-orange-600 shadow-orange-500/20")}
                            >
-                             GIRAR ROLETA DA SORTE
+                             {promoUsedThisSession ? 'PRÊMIO GANHO' : !actionsEarned ? 'VALOR INSUFICIENTE' : 'GIRAR ROLETA DA SORTE'}
                            </Button>
                          ) : (
                            <Button 
@@ -6606,7 +7005,10 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                    <div className="space-y-6 py-8">
                        <div className="grid grid-cols-3 gap-2 p-4 bg-white/5 rounded-[2rem] border border-white/10 relative overflow-hidden">
                          {!scratchDone ? (
-                            <div className="absolute inset-0 bg-gradient-to-br from-gray-400 to-gray-600 flex flex-col items-center justify-center p-8 text-center" onMouseMove={() => setScratchDone(true)} onTouchMove={() => setScratchDone(true)}>
+                            <div className="absolute inset-0 bg-gradient-to-br from-gray-400 to-gray-600 flex flex-col items-center justify-center p-8 text-center" 
+                              onMouseMove={handleScratchComplete} 
+                              onTouchMove={handleScratchComplete}
+                            >
                                <MousePointer2 className="text-white mb-2 animate-bounce" size={24} />
                                <p className="text-sm font-black text-white uppercase italic leading-tight tracking-tighter">RASPE AGORA E VEJA SEU DESCONTO!</p>
                             </div>
@@ -6617,7 +7019,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                                </div>
                                <p className="text-[10px] text-white/60 font-black uppercase tracking-widest">VOCÊ GANHOU:</p>
                                <p className="text-5xl font-black italic text-orange-500 drop-shadow-lg">
-                                  {(activePromotion.scratchPrizes || [])[Math.floor(Math.random()*(activePromotion.scratchPrizes?.length || 1))]?.label || 'BRINDE!'}
+                                  {scratchResult || 'BRINDE!'}
                                </p>
                                <p className="text-[9px] text-white/40 font-bold uppercase tracking-[0.2em]">CÓDIGO VALIDADO NO SISTEMA</p>
                             </motion.div>
@@ -6755,7 +7157,6 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                              } else {
                                setSelectedCustomer(null);
                                setIsRegistering(true);
-                               setFormData(prev => ({ ...prev, phone: val as string }));
                              }
                            } else {
                              setSelectedCustomer(null);
