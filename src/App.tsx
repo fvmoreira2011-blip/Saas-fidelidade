@@ -5719,6 +5719,8 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
   const [newBirthDate, setNewBirthDate] = useState('');
   const [wheelRotation, setWheelRotation] = useState(0);
   const [actionsEarned, setActionsEarned] = useState(0);
+  const [lastCustomerId, setLastCustomerId] = useState<string | null>(null);
+  const [lastPurchaseId, setLastPurchaseId] = useState<string | null>(null);
   const [promoUsedThisSession, setPromoUsedThisSession] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   
@@ -5756,16 +5758,14 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
     minPurchaseValue: 10,
     isCumulative: true,
     wheelSegments: [
-      { label: '5%', probability: 40, color: '#fb8500' },
+      { label: '5%', probability: 50, color: '#fb8500' },
       { label: '10%', probability: 30, color: '#023047' },
-      { label: '15%', probability: 20, color: '#219ebc' },
-      { label: 'BRINDE', probability: 10, color: '#ffb703' }
+      { label: '15%', probability: 20, color: '#219ebc' }
     ],
     scratchPrizes: [
-      { label: '5%', probability: 40, color: '#fb8500' },
+      { label: '5%', probability: 50, color: '#fb8500' },
       { label: '10%', probability: 30, color: '#023047' },
-      { label: '20%', probability: 20, color: '#219ebc' },
-      { label: 'GRÁTIS', probability: 10, color: '#ffb703' }
+      { label: '20%', probability: 20, color: '#219ebc' }
     ]
   });
 
@@ -5785,7 +5785,18 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
     const uniqueParticipants = new Set(promoPurchases.map(p => p.customerId)).size;
     const revenue = promoPurchases.reduce((acc, p) => acc + p.amount, 0);
     const actions = promoPurchases.reduce((acc, p) => acc + (p.actionsEarned || 0), 0);
-    const totalDiscounts = promoPurchases.reduce((acc, p) => acc + (p.cashbackEarned || 0), 0); // Birthdays usually give discount/cashback
+    const totalDiscounts = promoPurchases.reduce((acc, p) => acc + (p.cashbackEarned || 0), 0);
+    
+    // Calculate Prize Costs
+    const pointsEarned = promoPurchases.reduce((acc, p) => acc + (p.pointsEarned || 0), 0);
+    const winnersCount = activePromotion.type === 'raffle' 
+      ? (activePromotion.isDrawn ? (activePromotion.rafflePrizes?.length || 1) : 0)
+      : promoPurchases.filter(p => p.prizeWon).length;
+
+    const totalPrizeCost = promoPurchases.reduce((acc, p) => acc + (p.prizeCost || 0), 0);
+    const totalInvestment = totalDiscounts + totalPrizeCost + (activePromotion.type === 'raffle' ? (activePromotion.totalCost || 0) : 0);
+    const roi = totalInvestment > 0 ? ((revenue - totalInvestment) / totalInvestment) * 100 : revenue > 0 ? 100 : 0;
+
     const numPurchases = promoPurchases.length;
     const avgTicket = numPurchases > 0 ? revenue / numPurchases : 0;
 
@@ -5793,8 +5804,10 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       revenue,
       participants: uniqueParticipants,
       actions,
+      winnersCount,
       avgTicket,
-      totalDiscounts,
+      totalInvestment,
+      roi,
       recent: promoPurchases.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 5)
     };
   }, [activePromotion, purchases]);
@@ -5866,106 +5879,119 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
   };
 
   const handleMarkPurchase = async () => {
-    if (!selectedCustomer || !purchaseValue || !companyId) return;
+    if (!selectedCustomer || !purchaseValue || !companyId || !activePromotion) return;
     setIsProcessing(true);
+
+    // Reset interactive states for the NEW purchase session immediately
+    setPromoUsedThisSession(false);
+    setWheelRotation(0);
+    setWheelResult(null);
+    setScratchDone(false);
+    setScratchResult(null);
+    setActionsEarned(0);
+
     try {
       const val = parseFloat(purchaseValue);
       const now = new Date().toISOString();
 
-      // 0. Calculate Promotion Actions (e.g. Coupons)
-      let actionsEarned = 0;
+      // 0. Calculate Promotion Actions
+      let actions = 0;
       let birthdayDiscount = 0;
 
-      if (activePromotion) {
-        if (activePromotion.type === 'raffle') {
-          const minVal = activePromotion.minPurchaseValue || 1;
-          if (val >= minVal) {
-            if (activePromotion.isCumulative) {
-              actionsEarned = Math.floor(val / minVal);
-            } else {
-              actionsEarned = 1;
-            }
-          }
-        } else if (activePromotion.type === 'wheel') {
-          const minVal = activePromotion.minPurchaseForWheel || 1;
-          if (val >= minVal) actionsEarned = 1;
-        } else if (activePromotion.type === 'scratch') {
-          const minVal = activePromotion.minPurchaseForScratch || 1;
-          if (val >= minVal) actionsEarned = 1;
-        } else if (activePromotion.type === 'birthday') {
-          // 1 per year check
-          const currentYear = new Date().getFullYear();
-          const alreadyParticipatedThisYear = purchases.some(p => 
-            p.customerId === selectedCustomer.id && 
-            p.promotionId === activePromotion.id && 
-            new Date(p.date).getFullYear() === currentYear
-          );
-
-          if (alreadyParticipatedThisYear) {
-            showToast("Este cliente já utilizou o benefício de aniversário este ano.", "warning");
-            setIsProcessing(false);
-            return;
-          }
-
-          // Month check
-          if (!selectedCustomer.birthDate) {
-             showToast("Data de nascimento não cadastrada para este cliente.", "warning");
-             setIsProcessing(false);
-             return;
-          }
-          const birthMonth = new Date(selectedCustomer.birthDate).getUTCMonth();
-          const currentMonth = new Date().getUTCMonth();
-          if (birthMonth !== currentMonth) {
-             showToast("O benefício de aniversário só é válido no mês de nascimento do cliente.", "warning");
-             setIsProcessing(false);
-             return;
-          }
-
-          actionsEarned = 1;
-          // Birthday discount logic (e.g. 10% or fixed value from config)
-          const discountPct = activePromotion.birthdayDiscountPercent || 10;
-          birthdayDiscount = val * (discountPct / 100);
+      if (activePromotion.type === 'raffle') {
+        const minVal = activePromotion.minPurchaseValue || activePromotion.minPurchaseForWheel || 1;
+        if (val >= minVal) {
+          actions = activePromotion.isCumulative ? Math.floor(val / minVal) : 1;
         }
+      } else if (activePromotion.type === 'wheel') {
+        // Fallback to minPurchaseValue if minPurchaseForWheel is not set
+        const minVal = activePromotion.minPurchaseForWheel || activePromotion.minPurchaseValue || 1;
+        if (val >= minVal) actions = 1;
+      } else if (activePromotion.type === 'scratch') {
+        const minVal = activePromotion.minPurchaseForScratch || activePromotion.minPurchaseValue || 1;
+        if (val >= minVal) actions = 1;
+      } else if (activePromotion.type === 'birthday') {
+        const currentYear = new Date().getFullYear();
+        const alreadyParticipated = purchases.some(p => 
+          p.customerId === selectedCustomer.id && 
+          p.promotionId === activePromotion.id && 
+          new Date(p.date).getFullYear() === currentYear
+        );
+
+        if (alreadyParticipated) {
+          showToast("Este cliente já utilizou o benefício de aniversário este ano.", "warning");
+          setIsProcessing(false);
+          return;
+        }
+
+        if (!selectedCustomer.birthDate) {
+          showToast("Data de nascimento não cadastrada.", "warning");
+          setIsProcessing(false);
+          return;
+        }
+        
+        const birthMonth = new Date(selectedCustomer.birthDate).getUTCMonth();
+        if (birthMonth !== new Date().getUTCMonth()) {
+          showToast("Benefício válido apenas no mês de nascimento.", "warning");
+          setIsProcessing(false);
+          return;
+        }
+
+        actions = 1;
+        birthdayDiscount = val * ((activePromotion.birthdayDiscountPercent || 10) / 100);
       }
 
-      // 1. Process Loyalty Benefit if linked
+      // 1. Loyalty Integration
       let pointsEarned = 0;
       let cashbackEarned = birthdayDiscount;
       
-      if (activePromotion?.isLinkedToLoyalty) {
+      if (activePromotion.isLinkedToLoyalty) {
         if (rules.rewardMode === 'cashback') {
           const minVal = rules.cashbackConfig?.minActivationValue || 0;
-          if (val >= minVal) {
-            cashbackEarned = val * ((rules.cashbackConfig?.percentage || 0) / 100);
-          }
+          if (val >= minVal) cashbackEarned += val * ((rules.cashbackConfig?.percentage || 0) / 100);
         } else {
-          if (val >= (rules.minPurchaseValue || 0)) {
-            pointsEarned = Math.floor(val * (rules.pointsPerReal || 1));
+          if (val >= (rules.minPurchaseValue || 0)) pointsEarned = Math.floor(val * (rules.pointsPerReal || 1));
+        }
+      }
+
+      // 2. Pre-determine interactive results if applicable
+      if (actions > 0) {
+        if (activePromotion.type === 'wheel') {
+          const segments = activePromotion.wheelSegments || [];
+          if (segments.length > 0) {
+            const result = weightedRandom(segments);
+            // Ensure result is set before the user even clicks spin
+            setWheelResult(result.label);
+            // Pre-calculate rotation for this result (cumulative)
+            const index = segments.indexOf(result);
+            const segSize = 360 / segments.length;
+            const targetRotation = (360 * 10) + (360 - (index * segSize + segSize/2));
+            setWheelRotation(prev => (prev || 0) + targetRotation);
+          } else {
+            setWheelResult("Sem prêmio");
+            setWheelRotation(prev => (prev || 0) + (360 * 5));
+          }
+        } else if (activePromotion.type === 'scratch') {
+          const prizes = activePromotion.scratchPrizes || [];
+          if (prizes.length > 0) {
+            const result = weightedRandom(prizes);
+            setScratchResult(result.label);
+          } else {
+            setScratchResult("Tente novamente");
           }
         }
       }
 
-      // 2. Add Purchase Record (Feeds all SaaS stats)
-      setActionsEarned(actionsEarned);
+      // 3. Save Purchase
+      setActionsEarned(actions);
+      setLastCustomerId(selectedCustomer.id);
       
-      // Determine interactive result at purchase time if probability is set
-      let prizeToSave = '';
-      if (actionsEarned > 0 && activePromotion) {
-        if (activePromotion.type === 'wheel' && activePromotion.wheelSegments?.length) {
-          const result = weightedRandom(activePromotion.wheelSegments);
-          setWheelResult(result.label);
-          // Pre-calculate rotation for the wheel result
-          const index = activePromotion.wheelSegments.indexOf(result);
-          const segSize = 360 / activePromotion.wheelSegments.length;
-          const targetRotation = (360 - (index * segSize)) + 3600; // Extra turns
-          setWheelRotation(targetRotation);
-        } else if (activePromotion.type === 'scratch' && activePromotion.scratchPrizes?.length) {
-          const result = weightedRandom(activePromotion.scratchPrizes);
-          setScratchResult(result.label);
-        }
-      }
-
-      await addDoc(collection(db, 'purchases'), {
+      // Reset interaction states for a fresh start
+      setPromoUsedThisSession(false);
+      setScratchDone(false);
+      setWheelSpinning(false);
+      
+      const purchaseRef = await addDoc(collection(db, 'purchases'), {
         companyId,
         customerId: selectedCustomer.id,
         customerName: selectedCustomer.name,
@@ -5973,15 +5999,15 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
         date: now,
         pointsEarned,
         cashbackEarned,
-        promotionId: activePromotion?.id || 'manual',
-        actionsEarned // New field for stats
+        promotionId: activePromotion.id,
+        actionsEarned: actions
       });
 
-      // 3. Update Customer Balance
-      // Get latest customer data from parent list to avoid stale state
+      setLastPurchaseId(purchaseRef.id);
+
+      // 4. Update Customer
       const currentCust = customers.find(c => c.id === selectedCustomer.id) || selectedCustomer;
-      const customerRef = doc(db, 'customers', currentCust.id);
-      await updateDoc(customerRef, {
+      await updateDoc(doc(db, 'customers', currentCust.id), {
         points: (currentCust.points || 0) + pointsEarned,
         cashbackBalance: (currentCust.cashbackBalance || 0) + cashbackEarned,
         lastPurchaseDate: now,
@@ -5989,17 +6015,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
         totalPurchases: (currentCust.totalPurchases || 0) + 1
       });
 
-      showToast(`Venda de R$ ${val.toFixed(2)} registrada! ${actionsEarned > 0 ? `(${actionsEarned} ${activePromotion?.type === 'raffle' ? 'Cupons' : 'Giro/Raspadinha'} gerados)` : ''}`, "success");
-      
-      // Reset interactive states for the new session
-      setPromoUsedThisSession(false);
-      setWheelRotation(0);
-      if (activePromotion?.type === 'wheel') setWheelResult(null);
-      if (activePromotion?.type === 'scratch') {
-         setScratchDone(false);
-         setScratchResult(null);
-      }
-      
+      showToast(`Venda de R$ ${val.toFixed(2)} registrada! ${actions > 0 ? `(${actions} gerados)` : ''}`, "success");
       setIsMarking(false);
       setPurchaseValue('');
       setSelectedCustomer(null);
@@ -6087,7 +6103,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
     setPromoUsedThisSession(true);
     setScratchDone(true);
     
-    if (scratchResult && companyId && activePromotion) {
+    if (scratchResult && lastPurchaseId) {
       // Find the prize config to get the cost
       const prizes = activePromotion.scratchPrizes || [];
       const prizeConfig = prizes.find(p => p.label === scratchResult);
@@ -6097,7 +6113,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
          const match = scratchResult.match(/(\d+)%/);
          if (match) {
             const percent = parseInt(match[1]);
-            const lastPurchase = purchases.filter(p => p.companyId === companyId).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+            const lastPurchase = (purchases || []).find(p => p.id === lastPurchaseId);
             if (lastPurchase) {
                cost = lastPurchase.amount * (percent / 100);
             }
@@ -6105,20 +6121,11 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       }
 
       try {
-        const q = query(
-          collection(db, 'purchases'), 
-          where('companyId', '==', companyId),
-          orderBy('date', 'desc'),
-          limit(1)
-        );
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const purchaseDoc = snap.docs[0];
-          await updateDoc(doc(db, 'purchases', purchaseDoc.id), {
-            prizeWon: scratchResult,
-            prizeCost: cost
-          });
-        }
+        await updateDoc(doc(db, 'purchases', lastPurchaseId), {
+          prizeWon: scratchResult,
+          prizeCost: cost
+        });
+        showToast(`Prêmio "${scratchResult}" registrado!`, "success");
       } catch (err) {
         console.error("Error updating scratch prize:", err);
       }
@@ -6126,66 +6133,37 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
   };
 
   const stopWheel = async () => {
-    if (!wheelSpinning) return;
-    const items = activePromotion?.wheelSegments || [];
-    if (items.length === 0) return;
+    if (!wheelSpinning || !wheelResult) return;
+    setWheelSpinning(false);
+    setPromoUsedThisSession(true);
     
-    // Choose winner based on probability
-    const totalProb = items.reduce((acc, s) => acc + s.probability, 0);
-    let rand = Math.random() * totalProb;
-    let winnerIndex = 0;
-    for (let i = 0; i < items.length; i++) {
-        rand -= items[i].probability;
-        if (rand <= 0) {
-            winnerIndex = i;
-            break;
-        }
-    }
-    
-    const segment = items[winnerIndex];
-    const segmentAngle = 360 / items.length;
-    const extraSpins = 5 + Math.floor(Math.random() * 5); // 5 to 10 more full spins
-    const targetAngle = (extraSpins * 360) + (360 - (winnerIndex * segmentAngle)) - (segmentAngle / 2);
-    
-    setWheelRotation(prev => prev + targetAngle);
-    
-    // Smooth stop then set result
+    // Rotation is already pre-set to the correct stop angle
+    // Just wait for the transition to finish
     setTimeout(async () => {
-      setWheelResult(segment.label);
-      setWheelSpinning(false);
-      setPromoUsedThisSession(true);
+      // Calculate prize cost for history/budget
+      const items = activePromotion?.wheelSegments || [];
+      const segment = items.find(s => s.label === wheelResult);
+      let cost = segment?.cost || 0;
       
-      // Calculate prize cost
-      let cost = segment.cost || 0;
-      if (segment.label.includes('%')) {
-         const match = segment.label.match(/(\d+)%/);
+      if (wheelResult.includes('%')) {
+         const match = wheelResult.match(/(\d+)%/);
          if (match) {
             const percent = parseInt(match[1]);
-            // Get the last purchase amount to calculate real discount cost
-            const lastPurchase = purchases.filter(p => p.companyId === companyId).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
-            if (lastPurchase) {
-               cost = lastPurchase.amount * (percent / 100);
-            }
+            const lastPurchase = (purchases || [])
+              .filter(p => p.companyId === companyId && (lastCustomerId ? p.customerId === lastCustomerId : true))
+              .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+            if (lastPurchase) cost = lastPurchase.amount * (percent / 100);
          }
       }
 
-      // Update the last purchase with the prize
-      if (companyId && activePromotion) {
+      // Update the purchase record with the won prize
+      if (lastPurchaseId && wheelResult) {
         try {
-          const q = query(
-            collection(db, 'purchases'), 
-            where('companyId', '==', companyId),
-            orderBy('date', 'desc'),
-            limit(1)
-          );
-          const snap = await getDocs(q);
-          if (!snap.empty) {
-             const purchaseDoc = snap.docs[0];
-             await updateDoc(doc(db, 'purchases', purchaseDoc.id), {
-                prizeWon: segment.label,
-                prizeCost: cost
-             });
-          }
+          await updateDoc(doc(db, 'purchases', lastPurchaseId), {
+              prizeWon: wheelResult,
+              prizeCost: cost
+          });
+          showToast(`Sorteado: ${wheelResult}`, "success");
         } catch (err) {
           console.error("Error updating prize:", err);
         }
@@ -6570,7 +6548,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                               />
                            </div>
                            <div className="space-y-1.5">
-                              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Custo Total Previsto (R$)</label>
+                              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Custo do Prêmio (R$)</label>
                               <input 
                                 type="number" 
                                 value={config.totalCost || ''} 
@@ -6604,13 +6582,13 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                            
                            <div className="space-y-3">
                               {(config.wheelSegments || []).map((seg, i) => (
-                                <div key={i} className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm space-y-4">
-                                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
-                                    <div className="md:col-span-6 space-y-1.5">
-                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Nome do Prêmio (Ex: 10% OFF ou Brinde X)</label>
+                                <div key={i} className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm space-y-4 hover:border-orange-200 transition-all">
+                                  <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
+                                    <div className="md:col-span-5 space-y-1.5">
+                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Opção (Ex: 10% OFF)</label>
                                       <input 
                                         className="text-sm font-bold uppercase w-full bg-gray-50 px-4 py-3 rounded-2xl border border-gray-100 focus:border-orange-500 outline-none transition-all" 
-                                        placeholder="Ex: 10% DE DESCONTO"
+                                        placeholder="Ex: 5% OFF"
                                         value={seg.label} 
                                         onChange={e => {
                                           const newSegs = [...(config.wheelSegments || [])];
@@ -6620,7 +6598,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                                       />
                                     </div>
                                     <div className="md:col-span-2 space-y-1.5">
-                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Probab. (%)</label>
+                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest text-center block">Prob. (%)</label>
                                       <input 
                                         type="number"
                                         className="text-sm font-bold w-full bg-gray-50 px-4 py-3 rounded-2xl border border-gray-100 text-center" 
@@ -6632,9 +6610,22 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                                         }}
                                       />
                                     </div>
+                                    <div className="md:col-span-1 space-y-1.5">
+                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest text-center block">Cor</label>
+                                      <input 
+                                        type="color" 
+                                        className="w-full h-11 bg-transparent rounded-xl cursor-pointer" 
+                                        value={seg.color} 
+                                        onChange={e => {
+                                          const newSegs = [...(config.wheelSegments || [])];
+                                          newSegs[i].color = e.target.value;
+                                          setConfig({...config, wheelSegments: newSegs});
+                                        }}
+                                      />
+                                    </div>
                                     <div className="md:col-span-3 space-y-1.5">
                                       <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest flex items-center justify-between">
-                                        Custo Unit. (R$)
+                                        Custo (R$)
                                         {seg.label.includes('%') && <span className="text-[8px] text-blue-500 lowercase font-medium">Auto-calc %</span>}
                                       </label>
                                       <input 
@@ -6651,7 +6642,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                                       />
                                     </div>
                                     <div className="md:col-span-1 flex justify-end pt-5">
-                                      <button onClick={() => setConfig({...config, wheelSegments: config.wheelSegments?.filter((_, idx) => idx !== i)})} className="text-red-300 hover:text-red-500 p-2 transition-colors"><X size={20} /></button>
+                                      <button onClick={() => setConfig({...config, wheelSegments: config.wheelSegments?.filter((_, idx) => idx !== i)})} className="text-red-300 hover:text-red-500 p-2 transition-colors transition-all hover:scale-110"><X size={20} /></button>
                                     </div>
                                   </div>
                                 </div>
@@ -6693,10 +6684,10 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                            
                            <div className="space-y-3">
                               {(config.scratchPrizes || []).map((p, i) => (
-                                <div key={i} className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm space-y-4">
-                                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                                <div key={i} className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm space-y-4 hover:border-orange-200 transition-all">
+                                  <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
                                     <div className="md:col-span-6 space-y-1.5">
-                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Nome do Prêmio (Ex: 10% OFF ou Brinde X)</label>
+                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Nome do Prêmio</label>
                                       <input 
                                         className="text-sm font-bold uppercase w-full bg-gray-50 px-4 py-3 rounded-2xl border border-gray-100 focus:border-orange-500 outline-none transition-all" 
                                         placeholder="Ex: BRINDE SURPRESA"
@@ -6709,7 +6700,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                                       />
                                     </div>
                                     <div className="md:col-span-2 space-y-1.5">
-                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Probab. (%)</label>
+                                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest text-center block">Prob. (%)</label>
                                       <input 
                                         type="number"
                                         className="text-sm font-bold w-full bg-gray-50 px-4 py-3 rounded-2xl border border-gray-100 text-center" 
@@ -6723,7 +6714,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                                     </div>
                                     <div className="md:col-span-3 space-y-1.5">
                                       <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest flex items-center justify-between">
-                                        Custo Unit. (R$)
+                                        Custo (R$)
                                         {p.label.includes('%') && <span className="text-[8px] text-blue-500 lowercase font-medium">Auto-calc %</span>}
                                       </label>
                                       <input 
@@ -6740,7 +6731,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                                       />
                                     </div>
                                     <div className="md:col-span-1 flex justify-end pt-5">
-                                      <button onClick={() => setConfig({...config, scratchPrizes: config.scratchPrizes?.filter((_, idx) => idx !== i)})} className="text-red-300 hover:text-red-500 p-2 transition-colors"><X size={20} /></button>
+                                      <button onClick={() => setConfig({...config, scratchPrizes: config.scratchPrizes?.filter((_, idx) => idx !== i)})} className="text-red-300 hover:text-red-500 p-2 transition-colors transition-all hover:scale-110"><X size={20} /></button>
                                     </div>
                                   </div>
                                 </div>
@@ -6846,16 +6837,18 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
-           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+           <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
               {[
-                 { label: 'Total Faturamento', val: formatCurrency(promotionStats.revenue), color: 'text-gray-900' },
-                 { label: 'Participantes', val: `${promotionStats.participants} Clientes`, color: 'text-orange-600' },
-                 { label: 'Ticket Médio', val: formatCurrency(promotionStats.avgTicket), color: 'text-emerald-600' },
-                 { label: 'Ações Realizadas', val: promotionStats.actions.toString(), color: 'text-gray-900' }
+                 { label: 'Faturamento Promo', val: formatCurrency(promotionStats.revenue), color: 'text-gray-900' },
+                 { label: 'Custo Recompensas', val: formatCurrency(promotionStats.totalInvestment), color: 'text-red-500' },
+                 { label: 'ROI Estimado', val: `${promotionStats.roi.toFixed(1)}%`, color: 'text-emerald-600' },
+                 { label: 'Participantes', val: `${promotionStats.participants}`, color: 'text-orange-600' },
+                 { label: 'Ticket Médio', val: formatCurrency(promotionStats.avgTicket), color: 'text-blue-600' },
+                 { label: 'Ganhadores', val: promotionStats.winnersCount.toString(), color: 'text-gray-900' }
               ].map((stat, i) => (
-                <Card key={i} className="p-6 bg-white border border-gray-100 rounded-[2rem] shadow-sm">
+                <Card key={i} className="p-4 bg-white border border-gray-100 rounded-3xl shadow-sm">
                    <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">{stat.label}</p>
-                   <p className={cn("text-xl font-black italic", stat.color)}>{stat.val}</p>
+                   <p className={cn("text-lg font-black italic", stat.color)}>{stat.val}</p>
                 </Card>
               ))}
            </div>
@@ -6870,7 +6863,6 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
               
               <div className="space-y-4">
                  {promotionStats.recent.map((p, i) => {
-                   // Calculate total actions for this specific customer in this campaign
                    const customerTotalActions = purchases
                      .filter(pur => pur.customerId === p.customerId && pur.promotionId === activePromotion?.id)
                      .reduce((acc, pur) => acc + (pur.actionsEarned || 0), 0);
@@ -6878,18 +6870,23 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                    return (
                      <div key={i} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 group hover:border-orange-200 transition-all">
                         <div className="flex items-center gap-4">
-                           <div className="w-10 h-10 bg-white rounded-xl border border-gray-100 flex items-center justify-center font-black text-orange-500">{(p.customerName || '?').charAt(0)}</div>
+                           <div className="w-10 h-10 bg-white rounded-xl border border-gray-100 flex items-center justify-center font-black text-orange-500 shadow-sm group-hover:scale-110 transition-transform">{(p.customerName || '?').charAt(0)}</div>
                            <div>
-                              <p className="text-xs font-black text-gray-900 uppercase">{p.customerName || 'Cliente sem nome'}{(p as any).prizeWon ? ' - Ganhou: ' + (p as any).prizeWon : ''}</p>
-                              <p className="text-[8px] text-gray-400 font-bold uppercase">{new Date(p.date).toLocaleString()} • Compra de {formatCurrency(p.amount)}</p>
+                              <p className="text-xs font-black text-gray-900 uppercase">
+                                {p.customerName || 'Cliente sem nome'}
+                                {p.prizeWon && <span className="ml-2 px-2 py-0.5 bg-orange-500 text-white rounded-md text-[8px] animate-pulse">GANHOU: {p.prizeWon}</span>}
+                              </p>
+                              <p className="text-[8px] text-gray-400 font-bold uppercase leading-relaxed mt-0.5">
+                                {new Date(p.date).toLocaleString()} • Compra de {formatCurrency(p.amount)}
+                              </p>
                            </div>
                         </div>
                         <div className="flex flex-col items-end gap-1">
                            <div className="flex flex-col items-end">
-                              <span className="text-[8px] font-black px-2 py-1 bg-orange-100 text-orange-700 rounded-lg uppercase tracking-widest">
+                              <span className="text-[8px] font-black px-2 py-1 bg-orange-100 text-orange-700 rounded-lg uppercase tracking-widest border border-orange-200">
                                 {p.actionsEarned || 1} {activePromotion.type === 'raffle' ? 'Cupom' : 'Ação'}
                               </span>
-                              <span className="text-[7px] font-black text-orange-500/60 uppercase mt-1">Total: {customerTotalActions} {activePromotion.type === 'raffle' ? 'Cupons' : 'Ações'}</span>
+                              <span className="text-[7px] font-black text-orange-500/60 uppercase mt-1">Acúmulo: {customerTotalActions}</span>
                               {activePromotion.type === 'birthday' && p.cashbackEarned > 0 && (
                                 <span className="text-[7px] font-black text-emerald-600 uppercase mt-0.5">Desconto: {formatCurrency(p.cashbackEarned)}</span>
                               )}
@@ -6899,7 +6896,9 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                      </div>
                    );
                  })}
-                 <button className="w-full py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest border-2 border-dashed border-gray-100 rounded-2xl hover:border-gray-200 transition-all">Ver Histórico Completo</button>
+                 <button className="w-full py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest border-2 border-dashed border-gray-100 rounded-2xl hover:border-gray-200 transition-all flex items-center justify-center gap-2">
+                   <ChevronRight size={12} /> Ver Lista Total de Participantes
+                 </button>
               </div>
            </Card>
         </div>
@@ -6913,123 +6912,154 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                     <Pointer size={12} className="text-orange-500" />
                     <span className="text-[8px] font-black uppercase tracking-widest text-orange-500">Interatividade ao Vivo</span>
                  </div>
-
                  {activePromotion.type === 'wheel' && (
-                   <div className="space-y-8 py-8">
-                      <div className="relative">
-                        <div className={cn(
-                          "w-64 h-64 rounded-full border-8 border-orange-500/20 bg-white/5 mx-auto relative flex items-center justify-center overflow-hidden transition-all"
-                        )}
-                        style={{ animationDuration: wheelSpinning ? '0.3s' : '0s' }}
-                        >
-                           <div className="absolute inset-0 flex items-center justify-center">
-                              <Disc size={180} className="text-white/10" />
-                            </div>
-                            <div className="absolute inset-0 z-20 pointer-events-none">
-                               <div className="w-full h-full rounded-full border-8 border-orange-500/20" />
-                            </div>
-                            <motion.div 
-                              animate={{ rotate: wheelRotation || 0 }}
-                              transition={wheelSpinning ? { 
-                                 duration: 0.2, 
-                                 repeat: Infinity, 
-                                 ease: "linear" 
-                               } : { 
-                                 duration: 4, 
-                                 ease: [0.12, 0, 0, 1] 
-                               }}
-                              className="w-full h-full rounded-full relative overflow-hidden bg-[#023047]"
-                            >
-                               {(activePromotion.wheelSegments || []).map((seg, i, arr) => {
-                                  const angle = 360 / arr.length;
-                                  const casinoColors = ['#023047', '#ffb703', '#fb8500', '#219ebc', '#8ecae6', '#fb8500'];
-                                  return (
-                                     <div 
-                                       key={i} 
-                                       className="absolute top-0 left-1/2 -ml-[128px] w-[256px] h-[128px] origin-bottom flex items-center justify-center"
-                                       style={{ 
-                                         transform: `rotate(${angle * i}deg)`,
-                                         backgroundColor: seg.color || casinoColors[i % casinoColors.length],
-                                         clipPath: `polygon(50% 100%, 0 0, 100% 0)`,
-                                         borderLeft: '1px solid white/10'
-                                       }}
-                                     >
-                                        <span className="text-[10px] font-black text-white uppercase transform -translate-y-6 tracking-tighter" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}>
-                                           {seg.label}
-                                        </span>
-                                     </div>
-                                  );
-                               })}
-                            </motion.div>
-
-                           {wheelResult && !wheelSpinning && (
-                             <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="absolute inset-0 flex items-center justify-center z-30">
-                                <div className="relative p-6 bg-orange-500 text-white rounded-[2rem] shadow-2xl ring-4 ring-orange-500/30 flex flex-col items-center">
-                                    <button onClick={() => setWheelResult(null)} className="absolute top-2 right-2 p-1 text-white/50 hover:text-white transition-colors">
-                                       <X size={14} />
-                                    </button>
-                                    <p className="text-[10px] font-black uppercase tracking-widest mb-1 opacity-80">Prêmio Ganho:</p>
-                                    <span className="text-2xl font-black italic">{wheelResult}</span>
+                    <div className="space-y-12 py-10">
+                       <div className="relative">
+                         {/* 3D Wheel Shadow & Depth */}
+                         <div className="absolute inset-0 bg-black/40 blur-3xl rounded-full translate-y-4" />
+                         
+                         <div className={cn(
+                           "w-72 h-72 rounded-full border-[10px] border-[#023047] bg-[#023047] mx-auto relative flex items-center justify-center overflow-hidden transition-all shadow-[0_0_50px_rgba(251,133,0,0.3)] ring-4 ring-orange-500/20"
+                         )}
+                         >
+                              <motion.div 
+                                animate={wheelSpinning ? { rotate: (wheelRotation || 0) + 720 } : { rotate: wheelRotation || 0 }}
+                                transition={wheelSpinning ? { 
+                                   duration: 0.4, 
+                                   repeat: Infinity, 
+                                   ease: "linear" 
+                                 } : { 
+                                   duration: 6, 
+                                   ease: [0.15, 0, 0, 1] 
+                                 }}
+                                className="w-full h-full rounded-full relative overflow-hidden"
+                                style={{ transformOrigin: 'center center' }}
+                              >
+                                 {(activePromotion.wheelSegments || []).map((seg, i, arr) => {
+                                    const angle = 360 / arr.length;
+                                    const casinoColors = ['#023047', '#ffb703', '#fb8500', '#219ebc', '#8ecae6', '#fb8500'];
+                                    return (
+                                       <div 
+                                         key={i} 
+                                         className="absolute top-0 left-1/2 -ml-[144px] w-[288px] h-[144px] origin-bottom flex items-center justify-center"
+                                         style={{ 
+                                           transform: `rotate(${angle * i}deg)`,
+                                           backgroundColor: seg.color || casinoColors[i % casinoColors.length],
+                                           clipPath: `polygon(50% 100%, 0 0, 100% 0)`,
+                                           borderLeft: '1px solid rgba(255,255,255,0.1)'
+                                         }}
+                                       >
+                                          <span className="text-[11px] font-black text-white uppercase transform -translate-y-9 tracking-tighter" style={{ textShadow: '0 2px 4px rgba(0,0,0,0.5)', writingMode: 'vertical-rl' }}>
+                                             {seg.label}
+                                          </span>
+                                       </div>
+                                    );
+                                 })}
+                                 {/* Center Bolt */}
+                                 <div className="absolute inset-0 flex items-center justify-center z-10">
+                                    <div className="w-12 h-12 bg-white rounded-full shadow-2xl flex items-center justify-center border-4 border-orange-500">
+                                       <div className="w-4 h-4 bg-orange-500 rounded-full animate-ping" />
+                                    </div>
                                  </div>
-                             </motion.div>
-                           )}
-                        </div>
-                        <div className="absolute top-0 left-1/2 -translate-x-1/2 -mt-6 w-8 h-10 bg-orange-500 rounded-b-xl z-20 shadow-lg flex items-center justify-center">
-                           <ChevronDown size={20} className="text-white" />
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                         {!wheelSpinning ? (
-                           <Button 
-                             onClick={spinWheel} disabled={promoUsedThisSession || !actionsEarned}                             className={cn("w-full h-16 rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-xl transition-all", promoUsedThisSession || !actionsEarned ? "bg-gray-400 cursor-not-allowed opacity-50" : "bg-orange-500 hover:bg-orange-600 shadow-orange-500/20")}
-                           >
-                             {promoUsedThisSession ? 'PRÊMIO GANHO' : !actionsEarned ? 'VALOR INSUFICIENTE' : 'GIRAR ROLETA DA SORTE'}
-                           </Button>
-                         ) : (
-                           <Button 
-                             onClick={stopWheel} 
-                             className="w-full bg-red-500 hover:bg-red-600 h-16 rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-xl shadow-red-500/20 animate-pulse"
-                           >
-                             PARAR ROLETA AGORA!
-                           </Button>
-                         )}
-                         <p className="text-[9px] text-white/50 font-bold uppercase tracking-widest italic font-black">
-                           Agulha mostrará o prêmio quando parar
-                         </p>
-                      </div>
-                   </div>
-                 )}
-
-                 {activePromotion.type === 'scratch' && (
-                   <div className="space-y-6 py-8">
-                       <div className="grid grid-cols-3 gap-2 p-4 bg-white/5 rounded-[2rem] border border-white/10 relative overflow-hidden">
-                         {!scratchDone ? (
-                            <div className="absolute inset-0 bg-gradient-to-br from-gray-400 to-gray-600 flex flex-col items-center justify-center p-8 text-center" 
-                              onMouseMove={handleScratchComplete} 
-                              onTouchMove={handleScratchComplete}
-                            >
-                               <MousePointer2 className="text-white mb-2 animate-bounce" size={24} />
-                               <p className="text-sm font-black text-white uppercase italic leading-tight tracking-tighter">RASPE AGORA E VEJA SEU DESCONTO!</p>
+                              </motion.div>
+                         </div>
+                         {/* Visual Pointer */}
+                         <div className="absolute top-0 left-1/2 -translate-x-1/2 -mt-8 flex flex-col items-center z-30">
+                            <div className="w-10 h-12 bg-white rounded-b-2xl shadow-xl border-x-4 border-b-4 border-orange-500 flex items-center justify-center">
+                               <ChevronDown size={24} className="text-orange-500 animate-bounce" />
                             </div>
-                         ) : (
-                            <motion.div initial={{ scale: 0.8, rotate: -5 }} animate={{ scale: 1, rotate: 0 }} className="text-center space-y-2">
-                               <div className="inline-flex p-3 bg-orange-500 rounded-full shadow-lg mb-2">
-                                  <Sparkles className="text-white" size={24} />
-                               </div>
-                               <p className="text-[10px] text-white/60 font-black uppercase tracking-widest">VOCÊ GANHOU:</p>
-                               <p className="text-5xl font-black italic text-orange-500 drop-shadow-lg">
-                                  {scratchResult || 'BRINDE!'}
-                               </p>
-                               <p className="text-[9px] text-white/40 font-bold uppercase tracking-[0.2em]">CÓDIGO VALIDADO NO SISTEMA</p>
-                            </motion.div>
-                         )}
-                      </div>
-                      <p className="text-[9px] text-white/50 font-bold uppercase tracking-widest italic font-black text-center">
-                         Arraste o mouse para descobrir o prêmio
-                      </p>
-                   </div>
-                 )}
+                         </div>
+                       </div>
+
+                       <div className="space-y-6">
+                          {!wheelSpinning ? (
+                            <Button 
+                              onClick={spinWheel} 
+                              disabled={promoUsedThisSession || !actionsEarned} 
+                              className={cn(
+                                "w-full h-20 rounded-[2.5rem] font-black uppercase tracking-[0.2em] text-sm shadow-2xl transition-all border-b-8 active:border-b-0 active:translate-y-1 mb-8", 
+                                promoUsedThisSession || !actionsEarned 
+                                  ? "bg-gray-700 border-gray-800 text-gray-500 cursor-not-allowed opacity-50" 
+                                  : "bg-orange-500 hover:bg-orange-600 border-orange-700 text-white shadow-orange-500/40"
+                              )}
+                            >
+                              <div className="flex flex-col items-center">
+                                <span>{promoUsedThisSession ? 'PRÊMIO GANHO' : !actionsEarned ? 'VALOR INSUFICIENTE' : 'GIRAR ROLETA MÁGICA'}</span>
+                                {!promoUsedThisSession && actionsEarned > 0 && <span className="text-[9px] opacity-70 mt-1">SORTEIO GARANTIDO</span>}
+                              </div>
+                            </Button>
+                          ) : (
+                            <Button 
+                              onClick={stopWheel} 
+                              className="w-full bg-red-500 hover:bg-red-600 border-red-700 border-b-8 active:border-b-0 active:translate-y-1 h-20 rounded-[2.5rem] font-black uppercase tracking-widest text-sm shadow-2xl shadow-red-500/40 animate-pulse text-white"
+                            >
+                              PARAR E GANHAR AGORA!
+                            </Button>
+                          )}
+
+                          {wheelResult && !wheelSpinning && (
+                             <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="p-6 bg-gradient-to-br from-orange-400 to-orange-600 rounded-[2.5rem] shadow-2xl border-4 border-white/20 text-center relative overflow-hidden">
+                                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10" />
+                                <Sparkles className="absolute top-4 left-4 text-white/40" size={24} />
+                                <Sparkles className="absolute bottom-4 right-4 text-white/40" size={24} />
+                                <p className="text-[10px] font-black uppercase tracking-widest text-white/80 mb-2">Parabéns! Você ganhou:</p>
+                                <span className="text-4xl font-black italic text-white drop-shadow-[0_4px_4px_rgba(0,0,0,0.5)]">{wheelResult}</span>
+                                <div className="mt-4 flex flex-col items-center">
+                                   <div className="w-12 h-1 bg-white/20 rounded-full mb-2" />
+                                   <p className="text-[8px] font-bold text-white/50 uppercase tracking-[0.3em]">RESGATE NA HORA</p>
+                                </div>
+                             </motion.div>
+                          )}
+                       </div>
+                    </div>
+                  )}
+
+                  {activePromotion.type === 'scratch' && (
+                    <div className="space-y-8 py-10">
+                        <div className="relative group">
+                           <div className="absolute inset-0 bg-orange-500/20 blur-3xl rounded-[3rem] group-hover:bg-orange-500/30 transition-all" />
+                           <div className="relative w-full aspect-video bg-white/5 rounded-[3rem] border-4 border-white/10 overflow-hidden flex items-center justify-center p-8">
+                             {!scratchDone ? (
+                                <motion.div 
+                                  className="absolute inset-0 bg-gradient-to-br from-gray-400 via-gray-500 to-gray-700 flex flex-col items-center justify-center p-8 text-center cursor-crosshair z-20" 
+                                  whileHover={{ scale: 1.02 }}
+                                  onMouseMove={handleScratchComplete} 
+                                  onTouchMove={handleScratchComplete}
+                                >
+                                   <div className="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/brushed-alum.png')]" />
+                                   <div className="p-4 bg-white/10 rounded-full mb-4 border border-white/20">
+                                      <Sparkles className="text-white animate-pulse" size={40} />
+                                   </div>
+                                   <h4 className="text-xl font-black text-white uppercase italic tracking-tighter drop-shadow-lg">Raspe & Ganha</h4>
+                                   <p className="text-[10px] font-bold text-white/60 uppercase tracking-[0.2em] mt-2">Passe o mouse ou dedo aqui</p>
+                                </motion.div>
+                             ) : (
+                                <motion.div initial={{ scale: 0.5, opacity: 0, rotate: -10 }} animate={{ scale: 1, opacity: 1, rotate: 0 }} className="text-center space-y-4">
+                                   <div className="inline-flex p-5 bg-gradient-to-t from-orange-600 to-orange-400 rounded-full shadow-2xl mb-2 border-4 border-white/20">
+                                      <Trophy className="text-white" size={48} />
+                                   </div>
+                                   <div>
+                                     <p className="text-[11px] text-white/60 font-black uppercase tracking-[0.4em] mb-2">GANHOU:</p>
+                                     <p className="text-6xl font-black italic text-transparent bg-clip-text bg-gradient-to-b from-white to-orange-400 drop-shadow-[0_10px_10px_rgba(0,0,0,0.5)]">
+                                        {scratchResult || 'PRÊMIO!'}
+                                     </p>
+                                   </div>
+                                   <div className="pt-4">
+                                     <div className="px-4 py-2 bg-white/10 rounded-xl inline-block border border-white/10">
+                                        <p className="text-[8px] text-white/40 font-bold uppercase tracking-widest">VALIDAÇÃO INSTANTÂNEA</p>
+                                     </div>
+                                   </div>
+                                </motion.div>
+                             )}
+                           </div>
+                        </div>
+                        <div className="flex items-center justify-center gap-4 text-white/30">
+                           <div className="h-px bg-white/10 flex-1" />
+                           <span className="text-[8px] font-black uppercase tracking-[0.3em]">Boa Sorte!</span>
+                           <div className="h-px bg-white/10 flex-1" />
+                        </div>
+                    </div>
+                  )}
 
                  {activePromotion.type === 'raffle' && (
                    <div className="space-y-8 py-8">
@@ -7110,14 +7140,18 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       </div>
 
       {/* Modal de Lançamento de Venda */}
-      <AnimatePresence>
+      <AnimatePresence mode="wait">
         {isMarking && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-gray-950/80 backdrop-blur-md">
+          <div 
+            className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-gray-950/80 backdrop-blur-md"
+            style={{ isolation: 'isolate' }}
+          >
             <motion.div 
-               initial={{ scale: 0.9, opacity: 0 }} 
-               animate={{ scale: 1, opacity: 1 }} 
-               exit={{ scale: 0.9, opacity: 0 }}
-               className="bg-white rounded-[3rem] p-8 w-full max-w-lg shadow-2xl relative overflow-hidden"
+               initial={{ scale: 0.95, opacity: 0, y: 10 }} 
+               animate={{ scale: 1, opacity: 1, y: 0 }} 
+               exit={{ scale: 0.95, opacity: 0, y: 10 }}
+               transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+               className="bg-white rounded-[3rem] p-8 w-full max-w-lg shadow-[0_0_100px_rgba(0,0,0,0.5)] relative overflow-hidden"
             >
               <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 blur-3xl -mr-16 -mt-16" />
               
