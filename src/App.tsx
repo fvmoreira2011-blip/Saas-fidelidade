@@ -1641,7 +1641,8 @@ function AppContent() {
       displayMonthsReport.sort();
 
       purchases.forEach(p => {
-        const c = custMap.get(p.customerId) || { name: p.customerName || 'Cliente sem nome', earned: 0, count: 0, last: new Date(0) };
+        const realCustomer = customers.find(cust => cust.id === p.customerId);
+        const c = custMap.get(p.customerId) || { name: realCustomer?.name || p.customerName || 'Cliente sem nome', earned: 0, count: 0, last: new Date(0) };
         c.earned += (p.amount || 0);
         c.count += 1;
         try {
@@ -1721,7 +1722,8 @@ function AppContent() {
         const d = parseISO(p.date);
         weekdayCounts[d.getDay()] += p.amount;
       });
-      const bestWeekday = weekdays[weekdayCounts.indexOf(Math.max(...weekdayCounts))];
+      const bestWeekdayIndex = weekdayCounts.indexOf(Math.max(...weekdayCounts));
+      const bestWeekday = bestWeekdayIndex !== -1 ? weekdays[bestWeekdayIndex] : 'N/A';
 
       // Weekday detailed stats for "Termomentro" section in report
       const ptDays = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
@@ -2862,7 +2864,7 @@ function AppContent() {
                 <div className="flex gap-1">
                   {[1,2,3,4,5].map((s, i) => {
                     const steps: typeof onboardingTour[] = ['profile', 'admins_query', 'campaign_config', 'goals_month_by_month', 'finished'];
-                    const currentIndex = steps.indexOf(onboardingTour);
+                    const currentIndex = onboardingTour ? steps.indexOf(onboardingTour) : -1;
                     const isActive = i <= currentIndex;
                     return (
                       <div key={i} className={cn("h-1.5 w-8 rounded-full transition-all", isActive ? "bg-amber-500" : "bg-gray-800")} />
@@ -5803,7 +5805,9 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
   const promotionStats = useMemo(() => {
     if (!activePromotion || !purchases) return { revenue: 0, participants: 0, actions: 0, recent: [] };
     
-    const promoPurchases = purchases.filter(p => p.promotionId === activePromotion.id);
+    const promoPurchases = (purchases || []).filter(p => 
+      p.promotionId && activePromotion.id && String(p.promotionId) === String(activePromotion.id)
+    );
 
     const uniqueParticipants = new Set(promoPurchases.map(p => p.customerId)).size;
     const revenue = promoPurchases.reduce((acc, p) => acc + p.amount, 0);
@@ -5817,7 +5821,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       : promoPurchases.filter(p => p.prizeWon).length;
 
     const totalPrizeCost = promoPurchases.reduce((acc, p) => acc + (p.prizeCost || 0), 0);
-    const totalInvestment = totalDiscounts + totalPrizeCost + (activePromotion.type === 'raffle' ? (activePromotion.totalCost || 0) : 0);
+    const totalInvestment = totalDiscounts + totalPrizeCost + (activePromotion.totalCost || 0);
     const roi = totalInvestment > 0 ? ((revenue - totalInvestment) / totalInvestment) * 100 : revenue > 0 ? 100 : 0;
 
     const numPurchases = promoPurchases.length;
@@ -5914,7 +5918,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       if (includeClients) {
          const promotionPurchases = (purchases || []).filter(p => p.promotionId === h.id);
          const clientData = promotionPurchases.map(p => [
-           p.customerName || 'N/A',
+           customers.find(c => c.id === p.customerId)?.name || p.customerName || 'N/A',
            new Date(p.date).toLocaleString(),
            formatCurrency(p.amount),
            p.actionsEarned || 0,
@@ -5968,6 +5972,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
            await deleteDoc(doc(db, 'promotion_history', hId));
            setHistory(prev => prev.filter(h => h.id !== hId));
            showToast("Campanha removida do histórico.", "success");
+           setActiveSubTab('history');
          } catch (e) {
            console.error(e);
            showToast("Erro ao excluir.", "error");
@@ -5980,8 +5985,15 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
   };
 
   const handleMarkPurchase = async (customerOverride?: Customer) => {
-    const targetCustomer = customerOverride || selectedCustomer;
-    if (!targetCustomer || !purchaseValue || !companyId || !activePromotion) return;
+    // Avoid passing Event objects as customer
+    const targetCustomer = (customerOverride && typeof customerOverride === 'object' && 'id' in customerOverride) 
+      ? customerOverride 
+      : selectedCustomer;
+
+    if (!targetCustomer || !targetCustomer.id || !purchaseValue || !companyId || !activePromotion) {
+      console.warn("Lançamento bloqueado: dados incompletos", { hasTarget: !!targetCustomer, hasId: targetCustomer?.id });
+      return;
+    }
     setIsProcessing(true);
 
     // Reset interactive states for the NEW purchase session immediately
@@ -5996,24 +6008,23 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       const val = parseFloat(purchaseValue);
       const now = new Date().toISOString();
 
+      // Ensure we have the most up-to-date name
+      const realCustomer = customers?.find(c => String(c.id) === String(targetCustomer.id));
+      const finalName = realCustomer?.name || targetCustomer.name || 'Cliente sem nome';
+
       // 0. Calculate Promotion Actions
       let actions = 0;
       let birthdayDiscount = 0;
 
-      if (activePromotion.type === 'raffle') {
-        const minVal = activePromotion.minPurchaseValue || activePromotion.minPurchaseForWheel || 1;
+      if (activePromotion.type === 'raffle' || activePromotion.type === 'wheel' || activePromotion.type === 'scratch') {
+        const minVal = Number(activePromotion.minPurchaseValue || activePromotion.minPurchaseForWheel || activePromotion.minPurchaseForScratch || 1);
         if (val >= minVal) {
-          actions = activePromotion.isCumulative ? Math.floor(val / minVal) : 1;
+          if (activePromotion.type === 'wheel' || activePromotion.type === 'scratch') {
+            actions = 1;
+          } else {
+            actions = activePromotion.isCumulative ? Math.floor(val / minVal) : 1;
+          }
         }
-      } else if (activePromotion.type === 'wheel') {
-        const minVal = Number(activePromotion.minPurchaseForWheel || activePromotion.minPurchaseValue || 1);
-        if (val >= minVal) {
-          actions = activePromotion.isSpinCumulative ? Math.floor(val / minVal) : 1;
-        }
-        setActionsEarned(actions);
-      } else if (activePromotion.type === 'scratch') {
-        const minVal = activePromotion.minPurchaseForScratch || activePromotion.minPurchaseValue || 1;
-        if (val >= minVal) actions = 1;
       } else if (activePromotion.type === 'birthday') {
         const currentYear = new Date().getFullYear();
         const alreadyParticipated = (purchases || []).some(p => 
@@ -6079,36 +6090,46 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       }
 
       // 2. Pre-determine interactive results if applicable
+      let determinedWheelResult = null;
+      let determinedScratchResult = null;
+      let determinedPrizeCost = 0;
+
       if (actions > 0) {
         if (activePromotion.type === 'wheel') {
           const segments = activePromotion.wheelSegments || [];
           if (segments.length > 0) {
             const result = weightedRandom(segments);
-            // Ensure result is set before the user even clicks spin
+            determinedWheelResult = result.label;
+            determinedPrizeCost = result.cost || 0;
             setWheelResult(result.label);
-            // Pre-calculate rotation for this result (cumulative)
-            const index = segments.indexOf(result);
+            const index = Array.isArray(segments) ? segments.indexOf(result) : -1;
             const segSize = 360 / segments.length;
-            const targetRotation = (360 * 10) + (360 - (index * segSize + segSize/2));
+            const targetRotation = (360 * 10) + (360 - (index !== -1 ? (index * segSize + segSize/2) : 0));
             setWheelRotation(prev => (prev || 0) + targetRotation);
           } else {
+            determinedWheelResult = "Sem prêmio";
             setWheelResult("Sem prêmio");
+            determinedPrizeCost = 0;
             setWheelRotation(prev => (prev || 0) + (360 * 5));
           }
         } else if (activePromotion.type === 'scratch') {
           const prizes = activePromotion.scratchPrizes || [];
           if (prizes.length > 0) {
             const result = weightedRandom(prizes);
+            determinedScratchResult = result.label;
+            determinedPrizeCost = result.cost || 0;
             setScratchResult(result.label);
           } else {
+            determinedScratchResult = "Tente novamente";
             setScratchResult("Tente novamente");
+            determinedPrizeCost = 0;
           }
         }
       }
 
       // 3. Save Purchase
       setActionsEarned(actions);
-      setLastCustomerId(targetCustomer.id);
+      setLastCustomerId(String(targetCustomer.id));
       
       // Reset interaction states for a fresh start
       setPromoUsedThisSession(false);
@@ -6117,21 +6138,23 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       
       const purchaseRef = await addDoc(collection(db, 'purchases'), {
         companyId,
-        customerId: targetCustomer.id,
-        customerName: targetCustomer.name,
+        customerId: String(targetCustomer.id),
+        customerName: String(finalName),
         amount: Number(val),
         date: now,
         pointsEarned: Number(pointsEarned),
         cashbackEarned: Number(cashbackEarned),
-        promotionId: activePromotion.id,
-        actionsEarned: Number(actions)
+        promotionId: String(activePromotion.id),
+        actionsEarned: Number(actions),
+        prizeWon: activePromotion.type === 'scratch' ? determinedScratchResult : null,
+        prizeCost: activePromotion.type === 'scratch' ? Number(determinedPrizeCost) : 0
       });
 
       setLastPurchaseId(purchaseRef.id);
 
       // 4. Update Customer
-      const currentCust = customers.find(c => c.id === targetCustomer.id) || targetCustomer;
-      await updateDoc(doc(db, 'customers', currentCust.id), {
+      const currentCust = customers?.find(c => String(c.id) === String(targetCustomer.id)) || targetCustomer;
+      await updateDoc(doc(db, 'customers', String(currentCust.id)), {
         points: (currentCust.points || 0) + pointsEarned,
         cashbackBalance: (currentCust.cashbackBalance || 0) + cashbackEarned,
         lastPurchaseDate: now,
@@ -6175,8 +6198,8 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
         setRaffleShuffling(true);
         setRaffleWinner(null);
 
-        // Shuffle effect for 3 seconds
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // Shuffle effect for 7 seconds
+        await new Promise(resolve => setTimeout(resolve, 7000));
         
         // Get all participants for this campaign - Use a more robust check
         const allPromoPurchases = (purchases || []).filter(p => p.promotionId === activePromotion?.id);
@@ -6231,9 +6254,34 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
 
   const spinWheel = () => {
     if (wheelSpinning || actionsEarned <= 0) return;
+    
+    // Check campaign validity
+    const now = new Date();
+    const isExpired = activePromotion.endDate ? isBefore(endOfDay(parseISO(activePromotion.endDate)), now) : false;
+    if (isExpired) {
+      showToast("Esta campanha já encerrou.", "warning");
+      return;
+    }
+
     setWheelSpinning(true);
     setWheelResult(null);
     setActionsEarned(prev => prev - 1);
+
+    // Determine result and rotation when spinning starts
+    const segments = activePromotion.wheelSegments || [];
+    if (segments.length > 0) {
+      const result = weightedRandom(segments);
+      setWheelResult(result.label);
+      const index = Array.isArray(segments) ? segments.indexOf(result) : -1;
+      const segSize = 360 / segments.length;
+      const targetRotation = (360 * 20) + (360 - (index !== -1 ? (index * segSize + segSize/2) : 0));
+      setWheelRotation(prev => (prev || 0) + targetRotation);
+    }
+
+    // Auto-stop after 12 seconds
+    setTimeout(() => {
+      stopWheel();
+    }, 12000);
   };
 
   const handleScratchComplete = async () => {
@@ -6279,12 +6327,15 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
   };
 
   const stopWheel = async () => {
-    if (!wheelSpinning || !wheelResult) return;
+    if (!wheelResult) return;
     setWheelSpinning(false);
     setPromoUsedThisSession(true);
     
-    // Rotation is already pre-set to the correct stop angle
-    // Just wait for the transition to finish
+    // Show winner overlay/popup
+    const currentCustomer = customers?.find(c => String(c.id) === String(lastCustomerId));
+    const winnerName = currentCustomer?.name || 'Cliente';
+    setRaffleWinner(`${winnerName} ganhou ${wheelResult}`); // Reuse raffleWinner for the overlay
+
     setTimeout(async () => {
       const items = activePromotion?.wheelSegments || [];
       const segment = items.find(s => s.label === wheelResult);
@@ -6760,14 +6811,35 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                            </div>
                         </div>
 
-                        <div className="space-y-3">
+                        <div className="space-y-4">
+                           <div className="grid grid-cols-12 gap-4">
+                              <div className="col-span-8 space-y-1.5">
+                                 <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Prêmio Principal da Campanha</label>
+                                 <input 
+                                   placeholder="Ex: Carro 0km" 
+                                   value={config.rafflePrize || ''} 
+                                   onChange={e => setConfig({...config, rafflePrize: e.target.value})}
+                                   className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold" 
+                                 />
+                              </div>
+                              <div className="col-span-4 space-y-1.5">
+                                 <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Valor do Prêmio (R$)</label>
+                                 <input 
+                                   type="number"
+                                   placeholder="0,00" 
+                                   value={config.totalCost || ''} 
+                                   onChange={e => setConfig({...config, totalCost: parseFloat(e.target.value) || 0})}
+                                   className="w-full bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold text-red-500" 
+                                 />
+                              </div>
+                           </div>
                            <div className="flex items-center justify-between">
-                              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Prêmios da Campanha</label>
+                              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Lista de Prêmios Detalhada</label>
                               <button 
-                                onClick={() => setConfig({...config, rafflePrizes: [...(config.rafflePrizes || []), { label: '', value: 0 }]})}
+                                onClick={() => setConfig({...config, rafflePrizes: [...(config.rafflePrizes || []), { label: '', value: 0, quantity: 1 }]})}
                                 className="text-orange-500 hover:text-orange-600 flex items-center gap-1 font-black text-[9px] uppercase tracking-tighter"
                               >
-                                <Plus size={14} /> ADICIONAR PRÊMIO
+                                <Plus size={14} /> ADICIONAR ITEM
                               </button>
                            </div>
                            
@@ -6882,7 +6954,9 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                      <div className="space-y-4">
                         <div className="space-y-1.5">
                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Valor Mínimo para Giro (R$)</label>
-                           <div className="flex gap-4"><input type="number" value={config.minPurchaseForWheel || ''} onChange={e => setConfig({...config, minPurchaseForWheel: parseFloat(e.target.value)})} className="flex-1 bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold" /><div className="flex items-center gap-2 bg-orange-50 px-3 rounded-xl"><input type="checkbox" id="wCum" checked={config.isSpinCumulative} onChange={e => setConfig({...config, isSpinCumulative: e.target.checked})} className="accent-orange-500"/><label htmlFor="wCum" className="text-[10px] font-bold text-orange-700 uppercase">Múltiplos</label></div></div>
+                           <div className="flex gap-4">
+                               <input type="number" placeholder="Valor Mínimo" value={config.minPurchaseForWheel || ''} onChange={e => setConfig({...config, minPurchaseForWheel: parseFloat(e.target.value)})} className="flex-1 bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold" />
+                            </div>
                         </div>
                         <div className="space-y-4">
                            <div className="flex items-center justify-between">
@@ -7187,7 +7261,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                  { label: 'Faturamento Promo', val: formatCurrency(promotionStats.revenue), color: 'text-gray-900' },
                  { label: 'Custo Recompensas', val: formatCurrency(promotionStats.totalInvestment), color: 'text-red-500' },
                  { label: 'ROI Estimado', val: `${promotionStats.roi.toFixed(1)}%`, color: 'text-emerald-600' },
-                 { label: 'Participantes', val: `${promotionStats.participants}`, color: 'text-orange-600' },
+                 { label: 'Participações Totais', val: `${promotionStats.participants}`, color: 'text-orange-600' },
                  { label: 'Ticket Médio', val: formatCurrency(promotionStats.avgTicket), color: 'text-blue-600' },
                  { label: 'Ganhadores', val: promotionStats.winnersCount.toString(), color: 'text-gray-900' }
               ].map((stat, i) => (
@@ -7215,10 +7289,10 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                    return (
                      <div key={i} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 group hover:border-orange-200 transition-all">
                         <div className="flex items-center gap-4">
-                           <div className="w-10 h-10 bg-white rounded-xl border border-gray-100 flex items-center justify-center font-black text-orange-500 shadow-sm group-hover:scale-110 transition-transform">{(p.customerName || '?').charAt(0)}</div>
+                           <div className="w-10 h-10 bg-white rounded-xl border border-gray-100 flex items-center justify-center font-black text-orange-500 shadow-sm group-hover:scale-110 transition-transform">{(customers.find(c => String(c.id) === String(p.customerId))?.name || p.customerName || 'C').charAt(0)}</div>
                            <div>
                               <p className="text-xs font-black text-gray-900 uppercase">
-                                {p.customerName || 'Cliente sem nome'}
+                                {customers.find(c => String(c.id) === String(p.customerId))?.name || p.customerName || 'Cliente sem nome'}
                                 {p.prizeWon && <span className="ml-2 px-2 py-0.5 bg-orange-500 text-white rounded-md text-[8px] animate-pulse">GANHOU: {p.prizeWon}</span>}
                               </p>
                               <p className="text-[8px] text-gray-400 font-bold uppercase leading-relaxed mt-0.5">
@@ -7252,11 +7326,11 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
            <Card className="bg-gray-900 border-orange-500/20 h-full p-8 text-white space-y-8 rounded-[3rem] shadow-2xl relative overflow-hidden flex flex-col justify-between">
               <div className="absolute top-0 right-0 w-48 h-48 bg-orange-500/5 blur-[80px] rounded-full -mr-24 -mt-24" />
               
-              <div className="relative z-10 space-y-6 text-center">
-                 <div className="inline-flex items-center gap-2 px-3 py-1 bg-orange-500/10 rounded-full border border-orange-500/20 mb-4">
-                    <Pointer size={12} className="text-orange-500" />
-                    <span className="text-[8px] font-black uppercase tracking-widest text-orange-500">Painel de Sorteio ao Vivo</span>
-                 </div>
+                        <div className="relative z-10 space-y-6 text-center py-4">
+                           <div className="inline-flex items-center gap-2 px-3 py-1 bg-orange-500/20 rounded-full border border-orange-500/40 mb-4 shadow-lg shadow-orange-500/10">
+                              <Pointer size={12} className="text-orange-400 animate-pulse" />
+                              <span className="text-[8px] font-black uppercase tracking-widest text-orange-400">Painel de Acompanhamento ao Vivo</span>
+                           </div>
                  
                  {activePromotion.type === 'wheel' && (
                     <div className="space-y-12 py-10">
@@ -7269,15 +7343,11 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                          )}
                          >
                               <motion.div 
-                                animate={wheelSpinning ? { rotate: (wheelRotation || 0) + 3600 } : { rotate: wheelRotation || 0 }}
-                                transition={wheelSpinning ? { 
-                                   duration: 1.5, 
-                                   repeat: Infinity, 
-                                   ease: "linear" 
-                                 } : { 
-                                   duration: 6, 
+                                animate={{ rotate: wheelRotation || 0 }}
+                                transition={{ 
+                                   duration: wheelSpinning ? 12 : 6, 
                                    ease: [0.15, 0, 0, 1] 
-                                 }}
+                                }}
                                 className="w-full h-full rounded-full relative overflow-hidden"
                                 style={{ transformOrigin: 'center center' }}
                               >
@@ -7373,26 +7443,30 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                           {!wheelSpinning ? (
                             <Button 
                               onClick={spinWheel} 
-                              disabled={promoUsedThisSession || actionsEarned <= 0} 
+                              disabled={promoUsedThisSession || (actionsEarned <= 0 && !promoUsedThisSession) || (activePromotion.endDate && isBefore(endOfDay(parseISO(activePromotion.endDate)), new Date()))} 
                               className={cn(
                                 "w-full h-20 rounded-[2.5rem] font-black uppercase tracking-[0.2em] text-sm shadow-2xl transition-all border-b-8 active:border-b-0 active:translate-y-1 mb-8", 
-                                promoUsedThisSession || actionsEarned <= 0 
+                                promoUsedThisSession || (actionsEarned <= 0 && !promoUsedThisSession) || (activePromotion.endDate && isBefore(endOfDay(parseISO(activePromotion.endDate)), new Date()))
                                   ? "bg-gray-700 border-gray-800 text-gray-500 cursor-not-allowed opacity-50" 
                                   : "bg-orange-500 hover:bg-orange-600 border-orange-700 text-white shadow-orange-500/40"
                               )}
                             >
-                              <div className="flex flex-col items-center">
-                                  <span>{promoUsedThisSession ? 'PRÊMIO JÁ RESGATADO' : actionsEarned <= 0 ? (activePromotion.type === 'birthday' ? 'FELIZ ANIVERSÁRIO!' : 'AGUARDANDO VENDA...') : 'GIRAR ROLETA AGORA'}</span>
-                                  {!promoUsedThisSession && actionsEarned > 0 && <span className="text-[10px] text-white font-black mt-1">DISPONÍVEL: {actionsEarned} {actionsEarned === 1 ? 'GIRO' : 'GIROS'}</span>}
+                               <div className="flex flex-col items-center">
+                                  <span>
+                                    {promoUsedThisSession 
+                                      ? 'SORTEIO REALIZADO' 
+                                      : (activePromotion.endDate && isBefore(endOfDay(parseISO(activePromotion.endDate)), new Date()))
+                                        ? 'CAMPANHA ENCERRADA'
+                                        : actionsEarned <= 0 
+                                          ? 'AGUARDANDO VENDA...' 
+                                          : 'GIRE AQUI'}
+                                  </span>
                                </div>
                              </Button>
                            ) : (
-                             <Button 
-                               onClick={stopWheel} 
-                               className="w-full bg-white text-orange-600 hover:bg-white/90 border-white border-b-8 active:border-b-0 active:translate-y-1 h-20 rounded-[2.5rem] font-black uppercase tracking-widest text-sm shadow-2xl animate-pulse"
-                             >
-                               PARAR ROLETA AGORA!
-                             </Button>
+                             <div className="w-full h-20 rounded-[2.5rem] bg-orange-600 flex items-center justify-center font-black text-white uppercase tracking-widest animate-pulse">
+                               SORTEANDO...
+                             </div>
                            )}
 
                           {wheelResult && !wheelSpinning && (
@@ -7493,7 +7567,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                             {(raffleWinner || activePromotion.raffleWinner) && !raffleShuffling && (
                                <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="mt-4 p-4 bg-orange-500/20 rounded-2xl border border-orange-500/30">
                                   <p className="text-[9px] font-black uppercase text-orange-300">🏆 Ganhador do Prêmio:</p>
-                                  <p className="text-xl font-black uppercase italic text-white">{raffleWinner || activePromotion.raffleWinner}</p>
+                                  <p className="text-4xl md:text-6xl font-black uppercase italic text-white drop-shadow-[0_10px_10px_rgba(0,0,0,0.5)] leading-tight">{raffleWinner || activePromotion.raffleWinner}</p>
                                </motion.div>
                             )}
                          </div>
@@ -7506,14 +7580,15 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                            <div className="space-y-4">
                              <Button 
                                onClick={handleDrawRaffle}
-                               disabled={raffleShuffling || !isTimeReached}
+                               disabled={raffleShuffling || !isTimeReached || !!(raffleWinner || activePromotion.raffleWinner)}
                                className={cn(
                                  "w-full h-16 rounded-2xl font-black uppercase tracking-widest text-xs transition-all flex items-center justify-center gap-3 relative z-10",
+                                 (raffleWinner || activePromotion.raffleWinner) ? "bg-gray-800 text-gray-500 border border-gray-700" :
                                  isTimeReached ? "bg-orange-500 text-white shadow-lg shadow-orange-500/10" : "bg-white/10 text-white/30 border border-white/5"
                                )}
                              >
                                 <RefreshCcw size={18} className={raffleShuffling ? "animate-spin" : ""} /> 
-                                {raffleShuffling ? "Sorteando..." : isTimeReached ? "SORTEAR AGORA" : "SORTEIO AGENDADO"}
+                                {raffleShuffling ? "Sorteando..." : (raffleWinner || activePromotion.raffleWinner) ? "SORTEIO FINALIZADO" : isTimeReached ? "SORTEAR AGORA" : "SORTEIO AGENDADO"}
                              </Button>
                            </div>
                          );
@@ -7708,6 +7783,12 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                                    showToast("Nome, celular e data de nascimento são obrigatórios.", "warning");
                                    return;
                                  }
+
+                                 const nameParts = newName.trim().split(/\s+/);
+                                 if (nameParts.length < 2) {
+                                   showToast("Insira nome e sobrenome para o registro completo.", "warning");
+                                   return;
+                                 }
                                  if (!purchaseValue || parseFloat(purchaseValue) <= 0) {
                                    showToast("Informe o valor da compra para cadastrar e já lançar a venda.", "warning");
                                    return;
@@ -7807,7 +7888,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                  </div>
 
                  <Button 
-                   onClick={handleMarkPurchase}
+                   onClick={() => handleMarkPurchase()}
                    disabled={isProcessing || !selectedCustomer || !purchaseValue}
                    className="w-full bg-emerald-600 hover:bg-emerald-700 py-6 rounded-[2rem] text-sm font-black uppercase tracking-widest shadow-xl shadow-emerald-500/20 text-white transition-all shadow-lg"
                  >
@@ -7827,6 +7908,48 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
           onClose={() => setShowConfigModal(false)} 
         />
       )}
+      {/* Promotion Result Overlay Portal */}
+      <AnimatePresence>
+        {raffleWinner && activePromotion?.type === 'wheel' && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.8 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+            onClick={() => setRaffleWinner(null)}
+          >
+            <motion.div 
+              className="bg-white rounded-[3rem] p-10 max-w-sm w-full text-center shadow-[0_0_80px_rgba(251,133,0,0.4)] border-8 border-orange-500 relative overflow-hidden"
+              onClick={e => e.stopPropagation()}
+            >
+               <div className="absolute inset-0 bg-gradient-to-b from-orange-50/50 to-transparent" />
+               <div className="relative z-10 space-y-6">
+                  <div className="w-24 h-24 bg-orange-500 rounded-full flex items-center justify-center mx-auto shadow-xl">
+                     <Trophy size={48} className="text-white animate-bounce" />
+                  </div>
+                  <div>
+                     <p className="text-[12px] font-black text-orange-500 uppercase tracking-widest mb-1">Resultado do Giro</p>
+                     <h2 className="text-3xl font-black uppercase italic tracking-tighter text-gray-900 leading-tight">
+                        {raffleWinner.includes(' ganhou ') ? raffleWinner.split(' ganhou ')[0] : 'Parabéns!'}
+                     </h2>
+                  </div>
+                  <div className="py-6 bg-gray-50 rounded-[2rem] border border-gray-100 flex flex-col items-center gap-1 shadow-inner italic">
+                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-2">VOCÊ GANHOU:</p>
+                     <p className="text-4xl font-black text-orange-600 uppercase tracking-tight leading-none drop-shadow-sm">
+                        {raffleWinner.includes(' ganhou ') ? raffleWinner.split(' ganhou ')[1] : raffleWinner}
+                     </p>
+                  </div>
+                  <Button 
+                    onClick={() => setRaffleWinner(null)} 
+                    className="w-full bg-[#023047] hover:bg-black text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest transition-all shadow-lg active:scale-95"
+                  >
+                     CONCLUIR RESGATE
+                  </Button>
+               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -7874,7 +7997,13 @@ function ConfigModal({ promotion, isOpen, onClose }: { promotion: any; isOpen: b
               </div>
               <div className="space-y-1">
                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Valor Mínimo Compra</p>
-                 <p className="text-lg font-black text-emerald-600">{formatCurrency(promotion.minPurchaseValue || promotion.minPurchaseForWheel || promotion.minPurchaseForScratch || 0)}</p>
+                 <div className="flex justify-between items-end">
+                    <p className="text-lg font-black text-emerald-600">{formatCurrency(promotion.minPurchaseValue || promotion.minPurchaseForWheel || promotion.minPurchaseForScratch || 0)}</p>
+                    <div className="text-right">
+                       <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest leading-none">Investimento Total</p>
+                       <p className="text-xs font-black text-rose-500">{formatCurrency(promotion.totalCost || 0)}</p>
+                    </div>
+                 </div>
               </div>
            </div>
 
@@ -7883,11 +8012,27 @@ function ConfigModal({ promotion, isOpen, onClose }: { promotion: any; isOpen: b
               
               {promotion.type === 'raffle' && (
                 <div className="space-y-4">
-                   <div className="flex items-center justify-between p-4 bg-orange-50 rounded-2xl border border-orange-100">
-                      <span className="text-sm font-bold text-orange-900 font-black italic">PRÊMIO PRINCIPAL:</span>
-                      <span className="text-lg font-black text-orange-600 uppercase">{promotion.rafflePrize}</span>
+                   <div className="flex flex-col gap-4 p-4 bg-orange-50 rounded-2xl border border-orange-100">
+                      <span className="text-xs font-black text-orange-900 uppercase italic">Prêmios da Campanha:</span>
+                      <div className="space-y-2">
+               {promotion.rafflePrizes && promotion.rafflePrizes.length > 0 ? (
+                  promotion.rafflePrizes.map((p: any, idx: number) => (
+                     <div key={idx} className="flex justify-between items-center bg-white p-3 rounded-xl border border-orange-200">
+                        <span className="text-sm font-black text-gray-900 uppercase">{p.label}</span>
+                        <div className="flex flex-col items-end">
+                           <span className="text-[9px] font-black text-orange-600 bg-orange-50 px-2 py-1 rounded-lg uppercase">Qtd: {p.quantity || 1}</span>
+                           {p.value > 0 && <span className="text-[7px] font-bold text-gray-400 mt-0.5">Unitário: {formatCurrency(p.value)}</span>}
+                        </div>
+                     </div>
+                  ))
+               ) : (
+                            <div className="bg-white p-3 rounded-xl border border-orange-200">
+                               <span className="text-sm font-black text-gray-900 uppercase">{promotion.rafflePrize || (promotion.rafflePrizes && promotion.rafflePrizes.length > 0 ? promotion.rafflePrizes[0].label : 'Nenhum prêmio configurado')}</span>
+                            </div>
+                         )}
+                      </div>
                    </div>
-                   <p className="text-xs text-gray-600 font-medium">Cada R$ {promotion.minPurchaseValue} em compras gera 1 cupom para o sorteio.</p>
+                   <p className="text-xs text-gray-600 font-medium">Cada {formatCurrency(promotion.minPurchaseValue || 0)} em compras gera 1 cupom para o sorteio.</p>
                 </div>
               )}
 
@@ -8152,14 +8297,26 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
 
     // Record purchase
     try {
+      const activePromotion = rules.promotionConfig?.isActive ? rules.promotionConfig : null;
+      let actionsEarned = 0;
+      if (activePromotion && val >= (activePromotion.minPurchaseValue || activePromotion.minPurchaseForWheel || activePromotion.minPurchaseForScratch || 1)) {
+        if (activePromotion.type === 'raffle') {
+          actionsEarned = activePromotion.isCumulative ? Math.floor(val / (activePromotion.minPurchaseValue || 1)) : 1;
+        } else if (activePromotion.type === 'wheel' || activePromotion.type === 'scratch') {
+          actionsEarned = 1;
+        }
+      }
+
       await addDoc(collection(db, 'purchases'), {
         companyId,
         customerId: foundCustomer.id,
         customerName: foundCustomer.name,
         amount: val,
         date: now,
-        pointsEarned,
-        cashbackEarned
+        pointsEarned: Number(pointsEarned),
+        cashbackEarned: Number(cashbackEarned),
+        promotionId: activePromotion ? String(activePromotion.id) : null,
+        actionsEarned: Number(actionsEarned)
       });
 
       // Update customer aggregates
@@ -8305,17 +8462,29 @@ function ScoreTab({ rules, customers, purchases, redemptions, appUser, companyId
       
       // 3. Create Purchase Tracking if numericAmount > 0
       if (numericAmount > 0) {
+        const activePromotion = rules.promotionConfig?.isActive ? rules.promotionConfig : null;
+        let actionsEarned = 0;
+        if (activePromotion && numericAmount >= (activePromotion.minPurchaseValue || activePromotion.minPurchaseForWheel || activePromotion.minPurchaseForScratch || 1)) {
+          if (activePromotion.type === 'raffle') {
+            actionsEarned = activePromotion.isCumulative ? Math.floor(numericAmount / (activePromotion.minPurchaseValue || 1)) : 1;
+          } else if (activePromotion.type === 'wheel' || activePromotion.type === 'scratch') {
+            actionsEarned = 1;
+          }
+        }
+
         await addDoc(collection(db, 'purchases'), {
           companyId,
           customerId: registrationDoc.id,
           customerName: newName,
           amount: numericAmount,
-          pointsEarned,
-          cashbackEarned,
+          pointsEarned: Number(pointsEarned),
+          cashbackEarned: Number(cashbackEarned),
           type: 'purchase',
           date: now,
           status: 'completed',
-          description: 'Cadastro + Pontuação Inicial'
+          description: 'Cadastro + Pontuação Inicial',
+          promotionId: activePromotion ? String(activePromotion.id) : null,
+          actionsEarned: Number(actionsEarned)
         });
       }
 
@@ -10981,8 +11150,8 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {filteredPurchases.map(p => {
-                        const customer = customers.find(c => c.id === p.customerId);
-                        const displayName = customer ? customer.name : p.customerName || 'Cliente';
+                        const customer = customers.find(c => String(c.id) === String(p.customerId));
+                        const displayName = customer ? customer.name : (p.customerName || 'Cliente sem nome');
                         return (
                           <tr key={p.id} className="text-sm hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-3 text-gray-500">{format(parseISO(p.date), "dd/MM/yy HH:mm")}</td>
@@ -11388,15 +11557,19 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
                         return selectedSlice === 'Vendas com Pontuação' ? p.amount >= ruleThreshold : p.amount < ruleThreshold;
                       })
                       .slice(0, 50)
-                      .map(p => (
-                        <div key={p.id} className="p-2 bg-gray-50 rounded-lg text-[10px] flex justify-between items-center border border-gray-100">
-                          <div className="flex flex-col">
-                            <span className="font-bold text-gray-900">{p.customerName}</span>
-                            <span className="text-[8px] text-gray-400 font-bold uppercase">{format(parseISO(p.date), 'dd/MM HH:mm')}</span>
+                      .map(p => {
+                        const customer = customers.find(c => String(c.id) === String(p.customerId));
+                        const displayName = customer?.name || p.customerName || 'Cliente sem nome';
+                        return (
+                          <div key={p.id} className="p-2 bg-gray-50 rounded-lg text-[10px] flex justify-between items-center border border-gray-100">
+                            <div className="flex flex-col">
+                              <span className="font-bold text-gray-900">{displayName}</span>
+                              <span className="text-[8px] text-gray-400 font-bold uppercase">{format(parseISO(p.date), 'dd/MM HH:mm')}</span>
+                            </div>
+                            <span className="font-black text-primary">R$ {formatCurrency(p.amount)}</span>
                           </div>
-                          <span className="font-black text-primary">R$ {formatCurrency(p.amount)}</span>
-                        </div>
-                      ))
+                        );
+                      })
                   )}
                 </div>
                 <p className="text-[8px] text-gray-400 italic text-center mt-2">Exibindo até 50 registros.</p>
@@ -11430,19 +11603,23 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
       <Card className="p-4 bg-white border-gray-100 shadow-sm overflow-hidden">
         <h4 className="text-xs font-bold text-gray-500 uppercase mb-4">Últimas Compras</h4>
         <div className="space-y-3 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
-          {filteredPurchases.slice(0, 20).map(p => (
-            <div key={p.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100">
-              <div>
-                <p className="text-sm font-bold text-gray-900">{p.customerName}</p>
-                <p className="text-[10px] text-gray-500">{format(parseISO(p.date), "dd/MM/yy HH:mm")}</p>
+          {filteredPurchases.slice(0, 20).map(p => {
+            const customer = customers.find(c => String(c.id) === String(p.customerId));
+            const displayName = customer?.name || p.customerName || 'Cliente sem nome';
+            return (
+              <div key={p.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100">
+                <div>
+                  <p className="text-sm font-bold text-gray-900">{displayName}</p>
+                  <p className="text-[10px] text-gray-500">{format(parseISO(p.date), "dd/MM/yy HH:mm")}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-bold text-primary">R$ {formatCurrency(p.amount)}</p>
+                  {p.pointsEarned > 0 && <p className="text-[10px] text-green-600">+{p.pointsEarned} ponto(s)</p>}
+                  {(p as any).cashbackEarned > 0 && <p className="text-[10px] text-green-600">+R$ {formatCurrency((p as any).cashbackEarned)} cashback</p>}
+                </div>
               </div>
-              <div className="text-right">
-                <p className="text-sm font-bold text-primary">R$ {formatCurrency(p.amount)}</p>
-                {p.pointsEarned > 0 && <p className="text-[10px] text-green-600">+{p.pointsEarned} ponto(s)</p>}
-                {(p as any).cashbackEarned > 0 && <p className="text-[10px] text-green-600">+R$ {formatCurrency((p as any).cashbackEarned)} cashback</p>}
-              </div>
-            </div>
-          ))}
+            );
+          })}
           {filteredPurchases.length === 0 && (
             <p className="text-center py-8 text-gray-500 text-sm">Nenhuma compra no período.</p>
           )}
@@ -14822,9 +14999,6 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
   );
 }
 
-
-
-
   return (
     <ConfirmContext.Provider value={{ askConfirmation }}>
       {renderContent()}
@@ -14841,6 +15015,7 @@ function CompanyProfileTab({ rules, isAdmin, appUser, onCancelContract, onUpgrad
     </ConfirmContext.Provider>
   );
 }
+
 
 function AIConfigTab({ rules, onUpdateRules }: { rules: LoyaltyRule; onUpdateRules: (rules: LoyaltyRule) => Promise<void> }) {
   const [prompt, setPrompt] = useState(rules.aiPrompt || 'Você é um consultor estratégico de negócios especializado em varejo e fidelização de clientes. Analise os dados fornecidos e forneça um diagnóstico detalhado, identificando riscos, oportunidades e recomendações práticas para aumentar o faturamento e a retenção de clientes.');

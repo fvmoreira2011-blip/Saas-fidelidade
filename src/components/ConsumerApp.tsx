@@ -602,8 +602,8 @@ export default function ConsumerApp() {
           rp: { name: "BuyPass" },
           user: {
             id: userID,
-            name: authUser.email || "Cliente BuyPass",
-            displayName: authUser.displayName || "Cliente BuyPass"
+            name: authUser.email || "Cliente sem nome",
+            displayName: authUser.displayName || "Cliente sem nome"
           },
           pubKeyCredParams: [{ alg: -7, type: "public-key" }, { alg: -257, type: "public-key" }],
           timeout: 60000,
@@ -844,7 +844,7 @@ export default function ConsumerApp() {
                 <div className="space-y-2">
                   <h2 className="text-2xl font-black text-gray-900 leading-tight">Este é você?</h2>
                   <p className="text-3xl font-black text-green-600 uppercase tracking-tighter truncate px-4">
-                    {customerRecords[0]?.name || 'Cliente'}
+                    {customerRecords[0]?.name || 'Cliente sem nome'}
                   </p>
                   <p className="text-sm text-gray-500 font-medium">Localizamos seu cadastro vinculado ao número {phone}.</p>
                 </div>
@@ -1011,7 +1011,7 @@ export default function ConsumerApp() {
             <div className="flex flex-col">
               <h2 className="text-lg font-black text-gray-900 tracking-tight leading-none uppercase italic">Fidelidade</h2>
               <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest leading-relaxed mt-1">
-                Olá, {customerRecords[0]?.name?.split(' ')[0] || 'Cliente'}
+                Olá, {customerRecords[0]?.name?.split(' ')[0] || 'Amigo(a)'}
               </p>
             </div>
           </div>
@@ -1385,7 +1385,7 @@ export default function ConsumerApp() {
                 </div>
                 <div>
                   <h3 className="text-2xl font-black text-gray-900 tracking-tight uppercase leading-none">
-                    {authUser?.displayName || customerRecords[0]?.name || 'Cliente BuyPass'}
+                    {authUser?.displayName || customerRecords[0]?.name || 'Cliente sem nome'}
                   </h3>
                   <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest mt-2">{authUser?.email}</p>
                 </div>
