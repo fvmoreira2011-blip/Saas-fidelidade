@@ -1809,40 +1809,43 @@ function AppContent() {
       };
 
       const checkPageOverflow = (needed: number) => {
-        if (currentY + needed > pageHeight - 25) {
+        if (currentY + needed > pageHeight - 35) {
           doc.addPage();
           addHeaderFooter(doc);
-          currentY = 40;
+          currentY = 50;
           return true;
         }
         return false;
       };
 
       addHeaderFooter(doc);
-      let currentY = 40;
+      let currentY = 50;
 
       // 1. DESEMPENHO GERAL & CURTO PRAZO
       doc.setFontSize(16);
       doc.setTextColor(...rgbTheme);
       doc.setFont('helvetica', 'bold');
-      doc.text('1. RESUMO EXECUTIVO & KPIS OPERACIONAIS', marginSide, 40);
+      doc.text('1. RESUMO EXECUTIVO & KPIS OPERACIONAIS', marginSide, currentY);
       
+      currentY += 5;
       doc.setFontSize(8);
       doc.setTextColor(150, 150, 150);
-      doc.text(`Análise consolidada: ${startDateStr || 'Toda a base'} até ${endDateStr || 'Hoje'}`, marginSide, 45);
+      doc.text(`Análise consolidada: ${startDateStr || 'Toda a base'} até ${endDateStr || 'Hoje'}`, marginSide, currentY);
 
+      currentY += 5;
       // Current Performance Cards
       const convRate = totalCustomers > 0 ? (cust30d / totalCustomers) * 100 : 0;
-      drawDataBox('Faturamento (30d)', `R$ ${formatCurrency(rev30d)}`, marginSide, 50, contentWidth / 5 - 1);
-      drawDataBox('Ticket Médio (30d)', `R$ ${formatCurrency(ticket30d)}`, marginSide + (contentWidth / 5), 50, contentWidth / 5 - 1);
-      drawDataBox('Clientes (30d)', `${cust30d}`, marginSide + (2 * contentWidth / 5), 50, contentWidth / 5 - 1);
-      drawDataBox('Conversão (30d)', `${convRate.toFixed(1)}%`, marginSide + (3 * contentWidth / 5), 50, contentWidth / 5 - 1);
-      drawDataBox('Ticket Ref.', `R$ ${formatCurrency(refAvgTicket)}`, marginSide + (4 * contentWidth / 5), 50, contentWidth / 5 - 1);
-
+      drawDataBox('Faturamento (30d)', `R$ ${formatCurrency(rev30d)}`, marginSide, currentY, contentWidth / 5 - 1);
+      drawDataBox('Ticket Médio (30d)', `R$ ${formatCurrency(ticket30d)}`, marginSide + (contentWidth / 5), currentY, contentWidth / 5 - 1);
+      drawDataBox('Clientes (30d)', `${cust30d}`, marginSide + (2 * contentWidth / 5), currentY, contentWidth / 5 - 1);
+      drawDataBox('Conversão (30d)', `${convRate.toFixed(1)}%`, marginSide + (3 * contentWidth / 5), currentY, contentWidth / 5 - 1);
+      drawDataBox('Ticket Ref.', `R$ ${formatCurrency(refAvgTicket)}`, marginSide + (4 * contentWidth / 5), currentY, contentWidth / 5 - 1);
+      
+      currentY += 30;
       // Comparative Table (7, 14, 30 days)
       if (typeof autoTable === 'function') {
         (autoTable as any)(doc, {
-          startY: 80,
+          startY: currentY,
           margin: { left: marginSide, right: marginSide },
           head: [['Período', 'Vendas (Qtd)', 'Faturamento', 'Ticket Médio', 'Novos Clientes']],
           body: [
@@ -2000,7 +2003,7 @@ function AppContent() {
       // 4. VIABILIDADE FINANCEIRA & ROI
       doc.addPage();
       addHeaderFooter(doc);
-      currentY = 40;
+      currentY = 50;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
       doc.text('4. MÉTRICAS DE VIABILIDADE E ROI DO PROGRAMA', marginSide, currentY);
@@ -2098,7 +2101,7 @@ function AppContent() {
       // 6. PERFORMANCE DE PROMOÇÕES
       doc.addPage();
       addHeaderFooter(doc);
-      currentY = 40;
+      currentY = 50;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
       doc.text('6. PERFORMANCE DE PROMOÇÕES & CAMPANHAS', marginSide, currentY);
@@ -2195,7 +2198,7 @@ function AppContent() {
       // 6. RANKING RFM & DIAGNÓSTICO IA
       doc.addPage();
       addHeaderFooter(doc);
-      currentY = 40;
+      currentY = 50;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
       doc.text('6. RANKINGS E SEGMENTAÇÃO DE CLIENTES', marginSide, currentY);
@@ -2225,7 +2228,11 @@ function AppContent() {
         currentY = (doc as any).lastAutoTable?.finalY + 15;
       }
 
-      if (currentY > pageHeight - 100) { doc.addPage(); addHeaderFooter(doc); currentY = 40; }
+      if (currentY > pageHeight - 50) { 
+        doc.addPage(); 
+        addHeaderFooter(doc); 
+        currentY = 50; 
+      }
 
       if (typeof autoTable === 'function') {
         doc.setFontSize(11);
@@ -2282,7 +2289,11 @@ function AppContent() {
         currentY = (doc as any).lastAutoTable?.finalY + 15;
       }
 
-      if (currentY > pageHeight - 100) { doc.addPage(); addHeaderFooter(doc); currentY = 40; }
+      if (currentY > pageHeight - 50) { 
+        doc.addPage(); 
+        addHeaderFooter(doc); 
+        currentY = 50; 
+      }
       
       currentY += 5;
       doc.setFontSize(14);
@@ -2320,10 +2331,10 @@ function AppContent() {
         const lines = doc.splitTextToSize(textToSplit, contentWidth - 10);
         
         lines.forEach((line: string) => {
-          if (currentY > pageHeight - 25) {
+          if (currentY > pageHeight - 35) {
             doc.addPage();
             addHeaderFooter(doc);
-            currentY = 40;
+            currentY = 50;
             
             doc.setFont('helvetica', 'bold');
             doc.setFontSize(7);
@@ -5843,7 +5854,9 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
   const [promoUsedThisSession, setPromoUsedThisSession] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [filterType, setFilterType] = useState<'all' | 'raffle' | 'wheel' | 'birthday' | 'scratch'>('all');
+  const [periodFilter, setPeriodFilter] = useState<'all' | 'month' | 'year' | 'range'>('all');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
+  const [spinningPurchaseId, setSpinningPurchaseId] = useState<string | null>(null);
   
   // Interactive States
   const [wheelSpinning, setWheelSpinning] = useState(false);
@@ -6080,10 +6093,35 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
            await deleteDoc(doc(db, 'promotion_history', hId));
            setHistory(prev => prev.filter(h => h.id !== hId));
            showToast("Campanha removida do histórico.", "success");
-           setActiveSubTab('history');
          } catch (e) {
            console.error(e);
            showToast("Erro ao excluir.", "error");
+         } finally {
+            setIsProcessing(false);
+         }
+      },
+      true
+    );
+  };
+
+  const handleDeleteAllHistory = async () => {
+    if (!companyId) return;
+    askConfirmation(
+      "Excluir Todo o Histórico",
+      "Deseja realmente remover TODAS as campanhas do seu histórico? Esta ação é irreversível.",
+      async () => {
+         setIsProcessing(true);
+         try {
+           const q = query(collection(db, 'promotion_history'), where('companyId', '==', companyId));
+           const snap = await getDocs(q);
+           const batch = writeBatch(db);
+           snap.forEach(d => batch.delete(d.ref));
+           await batch.commit();
+           setHistory([]);
+           showToast("Todo o histórico foi removido.", "success");
+         } catch (e) {
+           console.error(e);
+           showToast("Erro ao excluir histórico.", "error");
          } finally {
             setIsProcessing(false);
          }
@@ -6345,8 +6383,17 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
     );
   };
 
-   const spinWheel = () => {
-    if (wheelSpinning || actionsEarned <= 0 || promoUsedThisSession) return;
+   const spinWheel = (purchaseId?: string, customerId?: string) => {
+    if (wheelSpinning) return;
+    
+    // If targeted spin, check if that purchase already has a prize
+    if (purchaseId) {
+       const p = purchases.find(p => p.id === purchaseId);
+       if (p?.prizeWon) return;
+       setSpinningPurchaseId(purchaseId);
+    } else {
+       if (actionsEarned <= 0 || promoUsedThisSession) return;
+    }
     
     // Check campaign validity
     const now = new Date();
@@ -6356,26 +6403,31 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       return;
     }
 
-    setWheelSpinning(true);
-    setWheelResult(null);
-    setActionsEarned(prev => prev - 1);
-
     // Determine result and rotation when spinning starts
     const segments = activePromotion.wheelSegments || [];
     if (segments.length > 0) {
+      setWheelSpinning(true);
+      setWheelResult(null);
+      
+      if (!purchaseId) {
+        setActionsEarned(prev => prev - 1);
+      }
+
       const result = weightedRandom(segments);
       setWheelResult(result.label);
       const index = Array.isArray(segments) ? segments.indexOf(result) : -1;
       const segSize = 360 / segments.length;
-      // 10 full rotations + offset to the result
-      const targetRotation = (360 * 10) + (360 - (index !== -1 ? (index * segSize + segSize/2) : 0));
+      // 25 full rotations + offset to the result for extra speed
+      const targetRotation = (360 * 25) + (360 - (index !== -1 ? (index * segSize + segSize/2) : 0));
       setWheelRotation(prev => prev + targetRotation);
-    }
 
-    // Auto-stop after 12 seconds (matching transition duration)
-    setTimeout(() => {
-      stopWheel();
-    }, 12000);
+      // Auto-stop after 12 seconds
+      setTimeout(() => {
+        stopWheel(result.label, purchaseId, customerId);
+      }, 12000);
+    } else {
+      showToast("Roleta não configurada corretamente.", "error");
+    }
   };
 
    const [scratchPercent, setScratchPercent] = useState(0);
@@ -6423,73 +6475,118 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
         .filter(p => p.companyId === companyId && (lastCustomerId ? p.customerId === lastCustomerId : true))
         .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]?.id;
 
-      if (targetId) {
-        try {
-          await updateDoc(doc(db, 'purchases', targetId), {
+    if (targetId) {
+      try {
+        const purchaseRef = doc(db, 'purchases', targetId);
+        const snap = await getDoc(purchaseRef);
+        if (snap.exists()) {
+          const currentData = snap.data();
+          
+          // STRICT RULE: Customer never wins twice for the same purchase OR the same campaign
+          if (currentData?.prizeWon) {
+             showToast("Este cliente já recebeu um prêmio por esta compra.", "warning");
+             return;
+          }
+
+          const customerAlreadyWon = (purchases || []).some(p => 
+            p.customerId === currentData.customerId && 
+            p.promotionId === activePromotion?.id && 
+            p.prizeWon
+          );
+
+          if (customerAlreadyWon) {
+             showToast("Este cliente já foi premiado nesta campanha.", "warning");
+             return;
+          }
+
+          await updateDoc(purchaseRef, {
             prizeWon: scratchResult,
             prizeCost: Number(cost)
           });
           showToast(`Prêmio "${scratchResult}" registrado!`, "success");
-        } catch (err) {
-          console.error("Error updating scratch prize:", err);
+          
+          // Show overlay immediately like the wheel
+          const currentCustomer = customers?.find(c => String(c.id) === String(lastCustomerId));
+          const winnerName = currentCustomer?.name || 'Cliente';
+          setRaffleWinner(`${winnerName} ganhou ${scratchResult}`);
         }
+      } catch (err) {
+        console.error("Error updating scratch prize:", err);
       }
+    }
     }
   };
 
-  const stopWheel = async () => {
-    if (!wheelResult) return;
+  const stopWheel = async (overrideResult?: string, purchaseId?: string, customerId?: string) => {
+    const finalResult = overrideResult || wheelResult;
+    if (!finalResult) return;
     setWheelSpinning(false);
-    setPromoUsedThisSession(true);
+    setSpinningPurchaseId(null);
     
-    // Show winner overlay/popup
-    const currentCustomer = customers?.find(c => String(c.id) === String(lastCustomerId));
+    // Show winner overlay/popup IMMEDIATELY
+    const targetCustId = customerId || lastCustomerId;
+    const currentCustomer = customers?.find(c => String(c.id) === String(targetCustId));
     const winnerName = currentCustomer?.name || 'Cliente';
-    setRaffleWinner(`${winnerName} ganhou ${wheelResult}`); // Reuse raffleWinner for the overlay
+    setRaffleWinner(`${winnerName} ganhou ${finalResult}`); 
 
-    setTimeout(async () => {
-      const items = activePromotion?.wheelSegments || [];
-      const segment = items.find(s => s.label === wheelResult);
-      let cost = segment?.cost || 0;
-      
-      if (wheelResult.includes('%')) {
-         const match = wheelResult.match(/(\d+)%/);
-         if (match) {
-            const percent = parseInt(match[1]);
-            const lastPurchase = (purchases || [])
-              .filter(p => p.companyId === companyId && (lastCustomerId ? p.customerId === lastCustomerId : true))
-              .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
-            if (lastPurchase) cost = lastPurchase.amount * (percent / 100);
-         }
-      }
+    // Database update
+    const items = activePromotion?.wheelSegments || [];
+    const segment = items.find(s => s.label === finalResult);
+    let cost = segment?.cost || 0;
+    
+    if (finalResult.includes('%')) {
+       const match = finalResult.match(/(\d+)%/);
+       if (match) {
+          const percent = parseInt(match[1]);
+          const lastPurchase = (purchases || [])
+            .filter(p => p.id === (purchaseId || lastPurchaseId))
+            .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+          if (lastPurchase) cost = lastPurchase.amount * (percent / 100);
+       }
+    }
 
-      const targetId = lastPurchaseId || (purchases || [])
-        .filter(p => p.companyId === companyId && (lastCustomerId ? p.customerId === lastCustomerId : true))
-        .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]?.id;
+    const targetId = purchaseId || lastPurchaseId || (purchases || [])
+      .filter(p => p.companyId === companyId && (targetCustId ? p.customerId === targetCustId : true))
+      .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]?.id;
 
-      if (targetId && wheelResult) {
-        try {
-          const purchaseRef = doc(db, 'purchases', targetId);
-          const snap = await getDoc(purchaseRef);
+    if (targetId && finalResult) {
+      try {
+        const purchaseRef = doc(db, 'purchases', targetId);
+        const snap = await getDoc(purchaseRef);
+        if (snap.exists()) {
           const currentData = snap.data();
           
-          const newPrizeWon = currentData?.prizeWon ? `${currentData.prizeWon} + ${wheelResult}` : wheelResult;
-          const newPrizeCost = (currentData?.prizeCost || 0) + Number(cost);
+          // STRICT RULE: Customer never wins twice for the same purchase OR the same campaign
+          if (currentData?.prizeWon) {
+             showToast("Este cliente já ganhou um prêmio nesta transação.", "warning");
+             return;
+          }
+
+          const customerAlreadyWon = (purchases || []).some(p => 
+            p.customerId === currentData.customerId && 
+            p.promotionId === activePromotion?.id && 
+            p.prizeWon
+          );
+
+          if (customerAlreadyWon) {
+             showToast("Este cliente já foi premiado nesta campanha.", "warning");
+             return;
+          }
 
           await updateDoc(purchaseRef, {
-              prizeWon: newPrizeWon,
-              prizeCost: newPrizeCost
+              prizeWon: finalResult,
+              prizeCost: Number(cost)
           });
-          showToast(`Sorteado: ${wheelResult}`, "success");
+          showToast(`Sorteado: ${finalResult}`, "success");
           
-          if (actionsEarned <= 0) {
+          if (!purchaseId && actionsEarned <= 0) {
             setPromoUsedThisSession(true);
           }
-        } catch (err) {
-          console.error("Error updating prize:", err);
         }
+      } catch (err) {
+        console.error("Error updating prize:", err);
       }
-    }, 4000); 
+    }
   };
 
   const todayStr = new Date().toISOString().split('T')[0];
@@ -6651,10 +6748,23 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
   if (activeSubTab === 'history') {
     const filteredHistory = (history || []).filter(h => {
       const typeMatch = filterType === 'all' || h.type === filterType;
-      const date = h.endedAt ? new Date(h.endedAt) : new Date();
-      const startMatch = !dateRange.start || date >= new Date(dateRange.start);
-      const endMatch = !dateRange.end || date <= new Date(dateRange.end);
-      return typeMatch && startMatch && endMatch;
+      
+      const date = h.endedAt ? new Date(h.endedAt) : null;
+      if (!date) return typeMatch;
+
+      let timeMatch = true;
+      const now = new Date();
+      if (periodFilter === 'month') {
+        timeMatch = isSameMonth(date, now) && isSameYear(date, now);
+      } else if (periodFilter === 'year') {
+        timeMatch = isSameYear(date, now);
+      } else if (periodFilter === 'range') {
+        const startMatch = !dateRange.start || date >= startOfDay(new Date(dateRange.start));
+        const endMatch = !dateRange.end || date <= endOfDay(new Date(dateRange.end));
+        timeMatch = startMatch && endMatch;
+      }
+
+      return typeMatch && timeMatch;
     });
 
     const totalRevenue = filteredHistory.reduce((acc, h) => acc + (h.totalRevenue || 0), 0);
@@ -6684,12 +6794,35 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                  </select>
               </div>
 
-              <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-xl border border-gray-100 shadow-sm font-black text-[10px] uppercase">
+              <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-xl border border-gray-100 shadow-sm">
                  <Calendar size={14} className="text-gray-400" />
-                 <input type="date" value={dateRange.start} onChange={e => setDateRange({...dateRange, start: e.target.value})} className="bg-transparent outline-none text-[8px]" />
-                 <span className="text-gray-300">até</span>
-                 <input type="date" value={dateRange.end} onChange={e => setDateRange({...dateRange, end: e.target.value})} className="bg-transparent outline-none text-[8px]" />
+                 <select 
+                   value={periodFilter} 
+                   onChange={(e: any) => setPeriodFilter(e.target.value)}
+                   className="text-[10px] font-black uppercase tracking-widest bg-transparent outline-none cursor-pointer"
+                 >
+                    <option value="all">TODO O PERÍODO</option>
+                    <option value="month">ESTE MÊS</option>
+                    <option value="year">ESTE ANO</option>
+                    <option value="range">PERSONALIZADO</option>
+                 </select>
               </div>
+
+              {periodFilter === 'range' && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-xl border border-gray-100 shadow-sm font-black text-[10px] uppercase">
+                   <input type="date" value={dateRange.start} onChange={e => setDateRange({...dateRange, start: e.target.value})} className="bg-transparent outline-none text-[8px]" />
+                   <span className="text-gray-300">até</span>
+                   <input type="date" value={dateRange.end} onChange={e => setDateRange({...dateRange, end: e.target.value})} className="bg-transparent outline-none text-[8px]" />
+                </div>
+              )}
+
+              <Button 
+                onClick={handleDeleteAllHistory} 
+                variant="outline" 
+                className="rounded-xl font-bold uppercase text-[10px] tracking-widest px-4 h-10 border-red-100 text-red-500 hover:bg-red-50 flex items-center gap-2"
+              >
+                <Trash2 size={14} /> Deletar Tudo
+              </Button>
 
               <Button onClick={() => setActiveSubTab('dashboard')} variant="outline" className="rounded-xl font-bold uppercase text-[10px] tracking-widest px-6 h-10 border-gray-200 hover:bg-gray-50 flex items-center gap-2">
                 <ChevronLeft size={14} /> Voltar
@@ -7412,6 +7545,23 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                            </div>
                         </div>
                         <div className="flex flex-col items-end gap-1">
+                           {activePromotion.type === 'wheel' && !p.prizeWon && (p.actionsEarned || 0) > 0 && (
+                              <Button 
+                                size="sm"
+                                disabled={wheelSpinning}
+                                onClick={() => {
+                                  spinWheel(p.id, p.customerId);
+                                }}
+                                className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white font-black text-[9px] uppercase tracking-widest rounded-xl shadow-lg shadow-orange-500/20 whitespace-nowrap min-w-[100px]"
+                              >
+                                {spinningPurchaseId === p.id ? 'SORTEANDO...' : 'GIRAR ROLETA'}
+                              </Button>
+                           )}
+                           {activePromotion.type === 'wheel' && p.prizeWon && (
+                              <div className="px-4 py-2 bg-gray-100 text-gray-400 font-black text-[9px] uppercase tracking-widest rounded-xl border border-gray-200 truncate max-w-[150px]" title={p.prizeWon}>
+                                {p.prizeWon}
+                              </div>
+                           )}
                            <div className="flex flex-col items-end">
                               <span className="text-[8px] font-black px-2 py-1 bg-orange-100 text-orange-700 rounded-lg uppercase tracking-widest border border-orange-200">
                                 {p.actionsEarned || 1} {activePromotion.type === 'raffle' ? 'Cupom' : 'Ação'}
@@ -8034,7 +8184,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       )}
       {/* Promotion Result Overlay Portal */}
       <AnimatePresence>
-        {raffleWinner && activePromotion?.type === 'wheel' && (
+        {raffleWinner && (
           <motion.div 
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -8052,9 +8202,13 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                      <Trophy size={48} className="text-white animate-bounce" />
                   </div>
                   <div>
-                     <p className="text-[12px] font-black text-orange-500 uppercase tracking-widest mb-1">Resultado do Giro</p>
+                     <p className="text-[12px] font-black text-orange-500 uppercase tracking-widest mb-1">
+                        {activePromotion?.type === 'wheel' ? 'Resultado do Giro' : 
+                         activePromotion?.type === 'scratch' ? 'Resultado da Raspadinha' : 
+                         'Parabéns Campeão!'}
+                     </p>
                      <h2 className="text-3xl font-black uppercase italic tracking-tighter text-gray-900 leading-tight">
-                        {raffleWinner.includes(' ganhou ') ? raffleWinner.split(' ganhou ')[0] : 'Parabéns!'}
+                        {raffleWinner.includes(' ganhou ') ? raffleWinner.split(' ganhou ')[0] : 'Vencedor(a)'}
                      </h2>
                   </div>
                   <div className="py-6 bg-gray-50 rounded-[2rem] border border-gray-100 flex flex-col items-center gap-1 shadow-inner italic">
