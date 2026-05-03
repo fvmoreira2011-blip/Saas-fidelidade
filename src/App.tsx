@@ -1105,6 +1105,7 @@ function AppContent() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [redemptions, setRedemptions] = useState<Redemption[]>([]);
+  const [promotionHistory, setPromotionHistory] = useState<PromotionHistory[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -1483,18 +1484,30 @@ function AppContent() {
       }
     );
 
+    // Promotion History
+    const unsubPromoHistory = onSnapshot(
+      query(collection(db, 'promotion_history'), where('companyId', '==', companyId)),
+      (snapshot) => {
+        const history = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as PromotionHistory));
+        setPromotionHistory(history);
+      },
+      (error) => handleFirestoreError(error, OperationType.GET, 'promotion_history')
+    );
+
     return () => {
       unsubRules();
       unsubCustomers();
       unsubPurchases();
       unsubRedemptions();
       unsubGoals();
+      unsubPromoHistory();
       // Reset states to prevent data leakage between clients
       setRules(DEFAULT_RULES);
       setCustomers([]);
       setPurchases([]);
       setRedemptions([]);
       setGoals([]);
+      setPromotionHistory([]);
       setIsRulesPreloaded(false);
       setIsGoalsPreloaded(false);
     };
@@ -1580,8 +1593,14 @@ function AppContent() {
       const doc = new jsPDF('p', 'mm', 'a4');
       
       const marginSide = 15;
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const contentWidth = pageWidth - (marginSide * 2);
+      
       const now = new Date();
       const custMap = new Map<string, any>();
+      
+      const themeColor = rules.themeColor || '#16a34a';
       
       // Data preparation
       const filterByDays = (days: number) => {
@@ -1656,11 +1675,6 @@ function AppContent() {
         custMap.set(p.customerId, c);
       });
 
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const contentWidth = pageWidth - (marginSide * 2);
-      const themeColor = rules.themeColor || '#16a34a';
-      
       const logoUrl = rules.companyProfile?.logoURL || rules.companyProfile?.photoURL || FALLBACK_LOGO;
       const companyName = rules.companyProfile?.companyName || 'Empresa';
       
@@ -1794,6 +1808,19 @@ function AppContent() {
         doc.text(value, x + 5, y + 15);
       };
 
+      const checkPageOverflow = (needed: number) => {
+        if (currentY + needed > pageHeight - 25) {
+          doc.addPage();
+          addHeaderFooter(doc);
+          currentY = 40;
+          return true;
+        }
+        return false;
+      };
+
+      addHeaderFooter(doc);
+      let currentY = 40;
+
       // 1. DESEMPENHO GERAL & CURTO PRAZO
       doc.setFontSize(16);
       doc.setTextColor(...rgbTheme);
@@ -1815,7 +1842,7 @@ function AppContent() {
       // Comparative Table (7, 14, 30 days)
       if (typeof autoTable === 'function') {
         (autoTable as any)(doc, {
-          startY: 75,
+          startY: 80,
           margin: { left: marginSide, right: marginSide },
           head: [['Período', 'Vendas (Qtd)', 'Faturamento', 'Ticket Médio', 'Novos Clientes']],
           body: [
@@ -1829,8 +1856,9 @@ function AppContent() {
         });
       }
 
-      let currentY = (doc as any).lastAutoTable?.finalY || 100;
-      currentY += 10;
+      currentY = (doc as any).lastAutoTable?.finalY || 110;
+      currentY += 15;
+      checkPageOverflow(30);
 
       // Metas Gerais
       const currentMonth = format(now, 'yyyy-MM');
@@ -1844,23 +1872,24 @@ function AppContent() {
          doc.text(`Projeção de Metas (${format(now, 'MMMM', { locale: ptBR })}): ${goalPercent.toFixed(1)}% atingido`, marginSide, currentY);
          
          doc.setFillColor(240, 240, 240);
-         doc.roundedRect(marginSide, currentY + 3, contentWidth, 4, 2, 2, 'F');
+         doc.roundedRect(marginSide, currentY + 3, contentWidth, 4, 1.5, 1.5, 'F');
          doc.setFillColor(...rgbTheme);
-         doc.roundedRect(marginSide, currentY + 3, (contentWidth * goalPercent) / 100, 4, 2, 2, 'F');
+         doc.roundedRect(marginSide, currentY + 3, (contentWidth * goalPercent) / 100, 4, 1.5, 1.5, 'F');
          
          doc.setFontSize(7);
          doc.setTextColor(120, 120, 120);
          doc.text(`Realizado: R$ ${formatCurrency(currentMonthRev)} / Planejado: R$ ${formatCurrency(currentGoal.value)}`, marginSide, currentY + 11);
-         currentY += 18;
+         currentY += 20;
       }
 
+      checkPageOverflow(40);
       // 2. CRESCIMENTO VS REFERÊNCIA (ONBOARDING)
       doc.setFontSize(12);
       doc.setTextColor(...rgbTheme);
       doc.setFont('helvetica', 'bold');
       doc.text('2. EVOLUÇÃO ESTRATÉGICA VS DADOS DE REFERÊNCIA', marginSide, currentY);
       
-      currentY += 8;
+      currentY += 10;
       doc.setFontSize(9);
       doc.setTextColor(80, 80, 80);
       doc.text('Comparação entre os dados informados no início do projeto e a performance atual:', marginSide, currentY);
@@ -1908,21 +1937,19 @@ function AppContent() {
       drawGrowthCard('Ticket Médio', refAvgTicket, ticket30d, marginSide, currentY, contentWidth / 2 - 2);
       drawGrowthCard('Faturamento Mensal', refMonthlyRev, rev30d, marginSide + contentWidth / 2 + 2, currentY, contentWidth / 2 - 2);
 
-      currentY += 35;
-
-      // 3. BASE DE CLIENTES E METAS
-      doc.setFontSize(12);
+      checkPageOverflow(40);
+      doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
-      doc.setFont('helvetica', 'bold');
       doc.text('3. BASE DE CLIENTES E PERFORMANCE DE CAPTAÇÃO', marginSide, currentY);
       
-      currentY += 8;
+      currentY += 10;
       drawDataBox('Base Total', `${totalCurrentCust} Ativos`, marginSide, currentY, contentWidth / 4 - 1.5);
       drawDataBox('Meta Clientes', `${custGoal || '---'} Alvo`, marginSide + (contentWidth / 4), currentY, contentWidth / 4 - 1.5);
       drawDataBox('Cresc. Mês (%)', `${growthPct.toFixed(1)}%`, marginSide + (2 * contentWidth / 4), currentY, contentWidth / 4 - 1.5);
       drawDataBox('Novos Filtro', `${periodNewCust}`, marginSide + (3 * contentWidth / 4), currentY, contentWidth / 4 - 1.5);
       
-      currentY += 25;
+      currentY += 28;
+      checkPageOverflow(30);
 
       if (custGoal > 0) {
         const goalProgress = Math.min((totalCurrentCust / custGoal) * 100, 100);
@@ -1933,9 +1960,10 @@ function AppContent() {
         doc.roundedRect(marginSide, currentY + 2, contentWidth, 3, 1.5, 1.5, 'F');
         doc.setFillColor(...rgbTheme);
         doc.roundedRect(marginSide, currentY + 2, (contentWidth * goalProgress) / 100, 3, 1.5, 1.5, 'F');
-        currentY += 12;
+        currentY += 15;
       }
       
+      checkPageOverflow(50);
       // Evolução do Ticket Médio - Mini Chart
       doc.setFontSize(10);
       doc.setTextColor(...rgbTheme);
@@ -1971,7 +1999,8 @@ function AppContent() {
 
       // 4. VIABILIDADE FINANCEIRA & ROI
       doc.addPage();
-      currentY = 30;
+      addHeaderFooter(doc);
+      currentY = 40;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
       doc.text('4. MÉTRICAS DE VIABILIDADE E ROI DO PROGRAMA', marginSide, currentY);
@@ -1997,11 +2026,12 @@ function AppContent() {
       ];
       doc.text(roiDescription, marginSide, currentY + 6);
 
-      currentY += 25;
-      doc.setFontSize(11);
+      currentY += 10;
+      doc.setFontSize(10);
       doc.setTextColor(...rgbTheme);
       doc.text('Evolução do Churn & Retenção', marginSide, currentY);
 
+      checkPageOverflow(50);
       if (typeof autoTable === 'function') {
         (autoTable as any)(doc, {
           startY: currentY + 5,
@@ -2010,12 +2040,12 @@ function AppContent() {
           body: [
             ['0-30 dias (Ativos)', activeCustomers, 'Saudável', 'Baixo'],
             ['31-60 dias (Atenção)', churn30, 'Vulnerável', 'Médio'],
-            ['61-90 dias (Suspensos)', Array.from(custMap.values()).filter(c => {
-               const r = (now.getTime() - c.last.getTime()) / (1000 * 60 * 60 * 24);
+            ['61-90 dias (Suspensos)', Array.from(custMap.values()).filter((c: any) => {
+               const r = (now.getTime() - (c.last instanceof Date ? c.last.getTime() : 0)) / (1000 * 60 * 60 * 24);
                return r > 60 && r <= 90;
             }).length, 'Risco de Churn', 'Alto'],
-            ['+90 dias (Dormitórios)', Array.from(custMap.values()).filter(c => {
-               const r = (now.getTime() - c.last.getTime()) / (1000 * 60 * 60 * 24);
+            ['+90 dias (Dormitórios)', Array.from(custMap.values()).filter((c: any) => {
+               const r = (now.getTime() - (c.last instanceof Date ? c.last.getTime() : 0)) / (1000 * 60 * 60 * 24);
                return r > 90;
             }).length, 'Inativo', 'Crítico']
           ],
@@ -2027,20 +2057,97 @@ function AppContent() {
 
       currentY = (doc as any).lastAutoTable?.finalY || (currentY + 60);
       currentY += 15;
+      checkPageOverflow(40);
 
       // 5. PARTICIPAÇÃO E ENGAJAMENTO (RULES)
-      doc.setFontSize(12);
+      doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
       doc.text('5. DISTRIBUIÇÃO POR REGRA E SEGMENTO', marginSide, currentY);
       
-      const totalP = purchases.length || 1;
+      const totalP = reportPurchases.length || 1;
       const partRatio = (participantPurchases.length / totalP) * 100;
       
       doc.setFontSize(9);
       doc.setTextColor(100, 100, 100);
-      doc.text(`Participação no Programa: ${participantPurchases.length} vendas (${partRatio.toFixed(1)}%) vs Casuais: ${nonParticipantPurchases.length} (${(100 - partRatio).toFixed(1)}%)`, marginSide, currentY + 6);
+      doc.text(`Participação no Programa: ${participantPurchases.length} vendas (${partRatio.toFixed(1)}%) vs Casuais: ${participantPurchases.length < reportPurchases.length ? reportPurchases.length - participantPurchases.length : 0} (${(100 - partRatio).toFixed(1)}%)`, marginSide, currentY + 6);
 
       currentY += 15;
+      
+      // Calculate Promotion Stats for PDF
+      const promoPurchases = reportPurchases.filter(p => p.promotionId);
+      const startD = startDateStr ? parseISO(startDateStr) : new Date(0);
+      const endD = endDateStr ? parseISO(endDateStr) : new Date();
+      
+      const countPromos = promotionHistory.filter(h => {
+         const s = parseISO(h.startDate);
+         const e = parseISO(h.endedAt || h.endDate || h.startDate);
+         return (s <= endD && e >= startD);
+      }).length + (rules.promotionConfig?.isActive ? 1 : 0);
+
+      const promoRev = promoPurchases.reduce((acc, p) => acc + (p.amount || 0), 0);
+      const promoParticipants = new Set(promoPurchases.map(p => p.customerId)).size;
+      const promoAvgTicket = promoPurchases.length > 0 ? promoRev / promoPurchases.length : 0;
+      const promoFreq = promoParticipants > 0 ? promoPurchases.length / promoParticipants : 0;
+      const promoValuePerCust = promoParticipants > 0 ? promoRev / promoParticipants : 0;
+      const promoNewClients = Array.from(new Set(promoPurchases.map(p => p.customerId))).filter(cid => {
+         const custPurchases = purchases.filter(p => p.customerId === cid).sort((a,b) => a.date.localeCompare(b.date));
+         const firstPurchase = custPurchases[0];
+         return firstPurchase && firstPurchase.promotionId && (parseISO(firstPurchase.date) >= startD && parseISO(firstPurchase.date) <= endD);
+      }).length;
+
+      // 6. PERFORMANCE DE PROMOÇÕES
+      doc.addPage();
+      addHeaderFooter(doc);
+      currentY = 40;
+      doc.setFontSize(14);
+      doc.setTextColor(...rgbTheme);
+      doc.text('6. PERFORMANCE DE PROMOÇÕES & CAMPANHAS', marginSide, currentY);
+      
+      currentY += 10;
+      drawDataBox('Promoções Período', `${countPromos}`, marginSide, currentY, contentWidth / 4 - 2);
+      drawDataBox('Participantes', `${promoParticipants}`, marginSide + (contentWidth / 4), currentY, contentWidth / 4 - 2);
+      drawDataBox('Ticket Médio', `R$ ${formatCurrency(promoAvgTicket)}`, marginSide + (2 * contentWidth / 4), currentY, contentWidth / 4 - 2);
+      drawDataBox('Faturamento Promo', `R$ ${formatCurrency(promoRev)}`, marginSide + (3 * contentWidth / 4), currentY, contentWidth / 4 - 2);
+
+      currentY += 25;
+      drawDataBox('Frequência Média', `${promoFreq.toFixed(1)}x`, marginSide, currentY, contentWidth / 3 - 2);
+      drawDataBox('RFV (V. Médio)', `R$ ${formatCurrency(promoValuePerCust)}`, marginSide + (contentWidth / 3), currentY, contentWidth / 3 - 2);
+      drawDataBox('Clientes Novos', `${promoNewClients}`, marginSide + (2 * contentWidth / 3), currentY, contentWidth / 3 - 2);
+
+      currentY += 30;
+      doc.setFontSize(10);
+      doc.setTextColor(60, 60, 60);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Detalhamento de Campanhas no Período:', marginSide, currentY);
+      
+      const periodPromos = promotionHistory.filter(h => {
+         const s = parseISO(h.startDate);
+         const e = parseISO(h.endedAt || h.endDate || h.startDate);
+         return (s <= endD && e >= startD);
+      });
+
+      if (typeof autoTable === 'function') {
+         (autoTable as any)(doc, {
+            startY: currentY + 5,
+            margin: { left: marginSide, right: marginSide },
+            head: [['Campanha', 'Tipo', 'Início', 'Término', 'Faturamento', 'ROI']],
+            body: periodPromos.map(h => [
+               h.campaignName,
+               h.type.toUpperCase(),
+               format(parseISO(h.startDate), 'dd/MM/yy'),
+               format(parseISO(h.endedAt || h.endDate), 'dd/MM/yy'),
+               `R$ ${formatCurrency(h.totalRevenue)}`,
+               `${(h.roi || 0).toFixed(1)}%`
+            ]),
+            theme: 'grid',
+            headStyles: { fillColor: [80, 80, 80] },
+            styles: { fontSize: 7 }
+         });
+      }
+
+      currentY = (doc as any).lastAutoTable?.finalY || (currentY + 40);
+      currentY += 15;
+
       const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
       const distribution = Array(7).fill(0);
       const hourlyDist = Array(24).fill(0);
@@ -2883,6 +2990,7 @@ function AppContent() {
                   rules={rules} 
                   goals={goals} 
                   appUser={appUser} 
+                  promotionHistory={promotionHistory}
                   onExportReport={handleExportManagementReport}
                 />
               </div>
@@ -6096,22 +6204,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
 
       if (actions > 0) {
         if (activePromotion.type === 'wheel') {
-          const segments = activePromotion.wheelSegments || [];
-          if (segments.length > 0) {
-            const result = weightedRandom(segments);
-            determinedWheelResult = result.label;
-            determinedPrizeCost = result.cost || 0;
-            setWheelResult(result.label);
-            const index = Array.isArray(segments) ? segments.indexOf(result) : -1;
-            const segSize = 360 / segments.length;
-            const targetRotation = (360 * 10) + (360 - (index !== -1 ? (index * segSize + segSize/2) : 0));
-            setWheelRotation(prev => (prev || 0) + targetRotation);
-          } else {
-            determinedWheelResult = "Sem prêmio";
-            setWheelResult("Sem prêmio");
-            determinedPrizeCost = 0;
-            setWheelRotation(prev => (prev || 0) + (360 * 5));
-          }
+          // We don't pre-set the rotation here to let the spin animation handle it
         } else if (activePromotion.type === 'scratch') {
           const prizes = activePromotion.scratchPrizes || [];
           if (prizes.length > 0) {
@@ -6252,8 +6345,8 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
     );
   };
 
-  const spinWheel = () => {
-    if (wheelSpinning || actionsEarned <= 0) return;
+   const spinWheel = () => {
+    if (wheelSpinning || actionsEarned <= 0 || promoUsedThisSession) return;
     
     // Check campaign validity
     const now = new Date();
@@ -6274,20 +6367,38 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       setWheelResult(result.label);
       const index = Array.isArray(segments) ? segments.indexOf(result) : -1;
       const segSize = 360 / segments.length;
-      const targetRotation = (360 * 20) + (360 - (index !== -1 ? (index * segSize + segSize/2) : 0));
-      setWheelRotation(prev => (prev || 0) + targetRotation);
+      // 10 full rotations + offset to the result
+      const targetRotation = (360 * 10) + (360 - (index !== -1 ? (index * segSize + segSize/2) : 0));
+      setWheelRotation(prev => prev + targetRotation);
     }
 
-    // Auto-stop after 12 seconds
+    // Auto-stop after 12 seconds (matching transition duration)
     setTimeout(() => {
       stopWheel();
     }, 12000);
   };
 
+   const [scratchPercent, setScratchPercent] = useState(0);
+
+   const handleScratchMove = (e: React.MouseEvent | React.TouchEvent) => {
+     if (scratchDone || promoUsedThisSession || actionsEarned <= 0) return;
+     
+     // Increment scratching progress
+     setScratchPercent(prev => {
+        const next = prev + 1.5; // Each move adds 1.5% progress
+        if (next >= 100) {
+           handleScratchComplete();
+           return 100;
+        }
+        return next;
+     });
+   };
+
   const handleScratchComplete = async () => {
     if (scratchDone || promoUsedThisSession) return;
     setPromoUsedThisSession(true);
     setScratchDone(true);
+    setScratchPercent(100);
     
     if (scratchResult) {
       // Find the prize config to get the cost
@@ -7343,14 +7454,15 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                          )}
                          >
                               <motion.div 
-                                animate={{ rotate: wheelRotation || 0 }}
+                                animate={{ rotate: wheelRotation }}
                                 transition={{ 
-                                   duration: wheelSpinning ? 12 : 6, 
+                                   duration: wheelSpinning ? 12 : 0, 
                                    ease: [0.15, 0, 0, 1] 
                                 }}
-                                className="w-full h-full rounded-full relative overflow-hidden"
+                                className="w-full h-full rounded-full relative overflow-hidden shadow-[inset_0_0_40px_rgba(0,0,0,0.4)]"
                                 style={{ transformOrigin: 'center center' }}
                               >
+                                 <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-5" />
                                  {(activePromotion.wheelSegments || []).map((seg, i, arr) => {
                                     const angle = 360 / arr.length;
                                     const casinoColors = ['#023047', '#ffb703', '#fb8500', '#219ebc', '#8ecae6', '#fb8500'];
@@ -7462,46 +7574,58 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                                           : 'GIRE AQUI'}
                                   </span>
                                </div>
-                             </Button>
-                           ) : (
-                             <div className="w-full h-20 rounded-[2.5rem] bg-orange-600 flex items-center justify-center font-black text-white uppercase tracking-widest animate-pulse">
-                               SORTEANDO...
-                             </div>
-                           )}
-
-                          {wheelResult && !wheelSpinning && (
-                             <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="p-6 bg-gradient-to-br from-orange-400 to-orange-600 rounded-[2.5rem] shadow-2xl border-4 border-white/20 text-center relative overflow-hidden">
-                                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10" />
-                                <Sparkles className="absolute top-4 left-4 text-white/40" size={24} />
-                                <Sparkles className="absolute bottom-4 right-4 text-white/40" size={24} />
-                                <p className="text-[10px] font-black uppercase tracking-widest text-white/80 mb-2">Parabéns! Você ganhou:</p>
-                                <span className="text-4xl font-black italic text-white drop-shadow-[0_4px_4px_rgba(0,0,0,0.5)]">{wheelResult}</span>
-                                <div className="mt-4 flex flex-col items-center">
-                                   <div className="w-12 h-1 bg-white/20 rounded-full mb-2" />
-                                   <p className="text-[8px] font-bold text-white/50 uppercase tracking-[0.3em]">RESGATE NA HORA</p>
-                                </div>
-                             </motion.div>
+                            </Button>
+                          ) : (
+                            <div className="w-full h-20 rounded-[2.5rem] bg-orange-600 flex items-center justify-center font-black text-white uppercase tracking-widest animate-pulse">
+                              SORTEANDO...
+                            </div>
                           )}
-                       </div>
+                          {wheelResult && !wheelSpinning && (
+                              <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="p-6 bg-gradient-to-br from-orange-400 to-orange-600 rounded-[2.5rem] shadow-2xl border-4 border-white/20 text-center relative overflow-hidden">
+                                 <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10" />
+                                 <Sparkles className="absolute top-4 left-4 text-white/40" size={24} />
+                                 <Sparkles className="absolute bottom-4 right-4 text-white/40" size={24} />
+                                 <p className="text-[10px] font-black uppercase tracking-widest text-white/80 mb-2">Parabéns! Você ganhou:</p>
+                                 <span className="text-4xl font-black italic text-white drop-shadow-[0_4px_4px_rgba(0,0,0,0.5)]">{wheelResult}</span>
+                                 <div className="mt-4 flex flex-col items-center">
+                                    <div className="w-12 h-1 bg-white/20 rounded-full mb-2" />
+                                    <p className="text-[8px] font-bold text-white/50 uppercase tracking-[0.3em]">RESGATE NA HORA</p>
+                                 </div>
+                              </motion.div>
+                           )}
+                        </div>
 
-                  {activePromotion.type === 'scratch' && (
+                   {activePromotion.type === 'scratch' && (
                     <div className="space-y-8 py-10">
                         <div className="relative group">
                            <div className="absolute inset-0 bg-orange-500/20 blur-3xl rounded-[3rem] group-hover:bg-orange-500/30 transition-all" />
-                           <div className="relative w-full aspect-video bg-white/5 rounded-[3rem] border-4 border-white/10 overflow-hidden flex items-center justify-center p-8">
+                           <div className="relative w-full aspect-video bg-white/5 rounded-[3rem] border-4 border-white/10 overflow-hidden flex items-center justify-center p-8 select-none">
                              {!scratchDone ? (
                                 <motion.div 
-                                  className="absolute inset-0 bg-gradient-to-br from-gray-400 via-gray-500 to-gray-700 flex flex-col items-center justify-center p-8 text-center cursor-crosshair z-20" 
-                                  whileHover={{ scale: 1.02 }}
-                                  onMouseMove={handleScratchComplete} 
-                                  onTouchMove={handleScratchComplete}
+                                  className="absolute inset-0 bg-gradient-to-br from-gray-400 via-gray-500 to-gray-700 flex flex-col items-center justify-center p-8 text-center cursor-crosshair z-20 overflow-hidden" 
+                                  whileHover={{ scale: 1.01 }}
+                                  onMouseMove={handleScratchMove} 
+                                  onTouchMove={handleScratchMove}
                                 >
+                                   <motion.div 
+                                      className="absolute inset-0 bg-orange-500/10 transform origin-left"
+                                      style={{ scaleX: scratchPercent / 100 }}
+                                   />
                                    <div className="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/brushed-alum.png')]" />
-                                   <div className="p-4 bg-white/10 rounded-full mb-4 border border-white/20">
-                                      <Sparkles className="text-white animate-pulse" size={40} />
+                                   <div className="relative z-10 flex flex-col items-center">
+                                      <div className="p-4 bg-white/10 rounded-full mb-4 border border-white/20">
+                                         <Sparkles className="text-white animate-pulse" size={40} />
+                                      </div>
+                                      <h4 className="text-xl font-black text-white uppercase italic tracking-tighter drop-shadow-lg">Raspe & Ganha</h4>
+                                      <p className="text-[10px] font-bold text-white/60 uppercase tracking-[0.2em] mt-2">Passe o mouse ou dedo para raspar</p>
+                                      
+                                      <div className="mt-6 w-48 h-2 bg-black/20 rounded-full overflow-hidden border border-white/10">
+                                         <motion.div 
+                                            className="h-full bg-orange-500"
+                                            animate={{ width: `${scratchPercent}%` }}
+                                         />
+                                      </div>
                                    </div>
-                                   <h4 className="text-xl font-black text-white uppercase italic tracking-tighter drop-shadow-lg">Raspe & Ganha</h4>
-                                   <p className="text-[10px] font-bold text-white/60 uppercase tracking-[0.2em] mt-2">Passe o mouse ou dedo aqui</p>
                                 </motion.div>
                              ) : (
                                 <motion.div initial={{ scale: 0.5, opacity: 0, rotate: -10 }} animate={{ scale: 1, opacity: 1, rotate: 0 }} className="text-center space-y-4">
@@ -10447,7 +10571,7 @@ function NotifyTab({ customers, rules, companyId }: { customers: Customer[]; rul
   );
 }
 
-function DashboardTab({ purchases, customers, rules, goals, appUser, onExportReport }: { purchases: Purchase[]; customers: Customer[]; rules: LoyaltyRule; goals: Goal[]; appUser: AppUser | null; onExportReport?: (start?: string, end?: string) => Promise<void> }) {
+function DashboardTab({ purchases, customers, rules, goals, appUser, promotionHistory, onExportReport }: { purchases: Purchase[]; customers: Customer[]; rules: LoyaltyRule; goals: Goal[]; appUser: AppUser | null; promotionHistory: PromotionHistory[]; onExportReport?: (startDate?: string, endDate?: string) => Promise<void> }) {
   const [period, setPeriod] = useState<'all' | 'today' | 'week' | 'month' | 'custom'>('all');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
@@ -10827,6 +10951,67 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
     ];
   }, [stats]);
 
+  const promotionStats = useMemo(() => {
+    // Current period filter
+    const now = new Date();
+    let start: Date;
+    let end: Date = now;
+
+    if (period === 'today') {
+      start = new Date();
+      start.setHours(0, 0, 0, 0);
+    } else if (period === 'week') {
+      start = subDays(now, 7);
+    } else if (period === 'month') {
+      start = subDays(now, 30);
+    } else if (period === 'custom' && startDate && endDate) {
+      start = parseISO(startDate);
+      end = parseISO(endDate);
+      end.setHours(23, 59, 59, 999);
+    } else {
+      start = new Date(0); // All time
+    }
+
+    const periodPurchases = purchases.filter(p => {
+      const d = parseISO(p.date);
+      return d >= start && d <= end;
+    });
+
+    const promoPurchases = periodPurchases.filter(p => p.promotionId);
+    
+    // Count promotions active in this period
+    const countPromos = promotionHistory.filter(h => {
+       const s = parseISO(h.startDate);
+       const e = parseISO(h.endedAt || h.endDate || h.startDate);
+       return (s <= end && e >= start);
+    }).length + (rules.promotionConfig?.isActive ? 1 : 0);
+
+    const revenue = promoPurchases.reduce((acc, p) => acc + (p.amount || 0), 0);
+    const participants = new Set(promoPurchases.map(p => p.customerId)).size;
+    const avgTicket = promoPurchases.length > 0 ? revenue / promoPurchases.length : 0;
+    
+    // RFV of the promotion
+    const frequency = participants > 0 ? promoPurchases.length / participants : 0;
+    const valuePerParticipant = participants > 0 ? revenue / participants : 0;
+    
+    // New clients (first purchase ever was in a promotion during this period)
+    const newClients = Array.from(new Set(promoPurchases.map(p => p.customerId))).filter(cid => {
+       const custPurchases = purchases.filter(p => p.customerId === cid).sort((a,b) => a.date.localeCompare(b.date));
+       const firstPurchase = custPurchases[0];
+       return firstPurchase && firstPurchase.promotionId && (parseISO(firstPurchase.date) >= start && parseISO(firstPurchase.date) <= end);
+    }).length;
+
+    return {
+      count: countPromos,
+      avgTicket,
+      participants,
+      revenue,
+      newClients,
+      frequency,
+      valuePerParticipant
+    };
+  }, [purchases, promotionHistory, rules.promotionConfig, period, startDate, endDate]);
+
   const COLORS = ['#22C55E', '#F97316', '#9CA3AF']; // Green, Orange, Gray
 
   const todayFormatted = format(new Date(), "'Hoje é dia' dd 'de' MMMM 'de' yyyy", { locale: ptBR });
@@ -11084,6 +11269,75 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, onExportRep
           <p className="text-[8px] font-bold text-gray-500 uppercase mt-1">Ganhos no período selecionado</p>
         </Card>
       </div>
+
+      {/* Promoções Realizadas no Período Analysis */}
+      <Card className="p-6 bg-white border-gray-100 shadow-sm relative overflow-hidden group hover:border-orange-200 transition-all border-t-4 border-t-orange-500">
+        <div className="absolute top-0 right-0 p-8 opacity-5">
+           <Gift size={120} className="text-orange-500" />
+        </div>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+           <div>
+              <h4 className="text-xs font-black text-orange-500 uppercase tracking-widest mb-1">Performance de Campanhas</h4>
+              <p className="text-xl font-black text-gray-900">Promoções Realizadas no Período</p>
+           </div>
+           <div className="px-4 py-2 bg-orange-50 rounded-xl border border-orange-100">
+              <p className="text-[10px] font-bold text-orange-600 uppercase">Promoções Ativas/Encerradas</p>
+              <p className="text-lg font-black text-orange-700">{promotionStats.count}</p>
+           </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+           <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:bg-orange-50/50 transition-colors">
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Participantes</p>
+              <div className="flex items-center gap-2">
+                 <div className="w-8 h-8 rounded-full bg-orange-500/10 flex items-center justify-center">
+                    <Users size={14} className="text-orange-600" />
+                 </div>
+                 <p className="text-lg font-black text-gray-900">{promotionStats.participants}</p>
+              </div>
+           </div>
+
+           <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:bg-orange-50/50 transition-colors">
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Ticket Médio</p>
+              <div className="flex items-center gap-2">
+                 <div className="w-8 h-8 rounded-full bg-orange-500/10 flex items-center justify-center">
+                    <DollarSign size={14} className="text-orange-600" />
+                 </div>
+                 <p className="text-lg font-black text-gray-900">R$ {formatCurrency(promotionStats.avgTicket)}</p>
+              </div>
+           </div>
+
+           <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:bg-orange-50/50 transition-colors">
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Freq. Média</p>
+              <div className="flex items-center gap-2">
+                 <div className="w-8 h-8 rounded-full bg-orange-500/10 flex items-center justify-center">
+                    <TrendingUp size={14} className="text-orange-600" />
+                 </div>
+                 <p className="text-lg font-black text-gray-900">{promotionStats.frequency.toFixed(1)}x</p>
+              </div>
+           </div>
+
+           <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:bg-orange-50/50 transition-colors">
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Valor/Cliente</p>
+              <div className="flex items-center gap-2">
+                 <div className="w-8 h-8 rounded-full bg-orange-500/10 flex items-center justify-center">
+                    <BarChart3 size={14} className="text-orange-600" />
+                 </div>
+                 <p className="text-lg font-black text-gray-900">R$ {formatCurrency(promotionStats.valuePerParticipant)}</p>
+              </div>
+           </div>
+
+           <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:bg-orange-50/50 transition-colors">
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Novos Clientes</p>
+              <div className="flex items-center gap-2">
+                 <div className="w-8 h-8 rounded-full bg-orange-500/10 flex items-center justify-center">
+                    <UserPlus size={14} className="text-orange-600" />
+                 </div>
+                 <p className="text-lg font-black text-gray-900">{promotionStats.newClients}</p>
+              </div>
+           </div>
+        </div>
+      </Card>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard 
