@@ -153,7 +153,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import 'react-phone-number-input/style.css';
 import { GoogleGenAI } from "@google/genai";
-import { format, isToday, subDays, differenceInDays, differenceInYears, parseISO, isWithinInterval, startOfDay, endOfDay, subWeeks, subMonths, isBefore, addMonths, parse, startOfMonth, endOfMonth } from 'date-fns';
+import { format, isToday, subDays, differenceInDays, differenceInYears, parseISO, isWithinInterval, startOfDay, endOfDay, subWeeks, subMonths, isBefore, addMonths, parse, startOfMonth, endOfMonth, isSameMonth, isSameYear } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -283,6 +283,7 @@ interface PromotionConfig {
   isDrawn?: boolean; // Track if drawing happened
   winner?: string;
   raffleWinner?: string;
+  winnersList?: { name: string; prize: string; purchaseId: string }[];
   // Wheel specific
   minPurchaseForWheel?: number;
   isSpinCumulative?: boolean;
@@ -1885,19 +1886,20 @@ function AppContent() {
          currentY += 20;
       }
 
-      checkPageOverflow(40);
+      checkPageOverflow(45);
       // 2. CRESCIMENTO VS REFERÊNCIA (ONBOARDING)
       doc.setFontSize(12);
       doc.setTextColor(...rgbTheme);
       doc.setFont('helvetica', 'bold');
       doc.text('2. EVOLUÇÃO ESTRATÉGICA VS DADOS DE REFERÊNCIA', marginSide, currentY);
       
-      currentY += 10;
+      currentY += 12;
       doc.setFontSize(9);
       doc.setTextColor(80, 80, 80);
+      doc.setFont('helvetica', 'normal');
       doc.text('Comparação entre os dados informados no início do projeto e a performance atual:', marginSide, currentY);
 
-      currentY += 5;
+      currentY += 8;
 
       // Calculate Customer Analysis for PDF
       const currentMonthStr = format(now, 'yyyy-MM');
@@ -1940,18 +1942,21 @@ function AppContent() {
       drawGrowthCard('Ticket Médio', refAvgTicket, ticket30d, marginSide, currentY, contentWidth / 2 - 2);
       drawGrowthCard('Faturamento Mensal', refMonthlyRev, rev30d, marginSide + contentWidth / 2 + 2, currentY, contentWidth / 2 - 2);
 
-      checkPageOverflow(40);
+      currentY += 30; // Shift past Section 2 cards
+
+      checkPageOverflow(50);
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
+      doc.setFont('helvetica', 'bold');
       doc.text('3. BASE DE CLIENTES E PERFORMANCE DE CAPTAÇÃO', marginSide, currentY);
       
-      currentY += 10;
+      currentY += 12;
       drawDataBox('Base Total', `${totalCurrentCust} Ativos`, marginSide, currentY, contentWidth / 4 - 1.5);
       drawDataBox('Meta Clientes', `${custGoal || '---'} Alvo`, marginSide + (contentWidth / 4), currentY, contentWidth / 4 - 1.5);
       drawDataBox('Cresc. Mês (%)', `${growthPct.toFixed(1)}%`, marginSide + (2 * contentWidth / 4), currentY, contentWidth / 4 - 1.5);
       drawDataBox('Novos Filtro', `${periodNewCust}`, marginSide + (3 * contentWidth / 4), currentY, contentWidth / 4 - 1.5);
       
-      currentY += 28;
+      currentY += 32;
       checkPageOverflow(30);
 
       if (custGoal > 0) {
@@ -1966,13 +1971,14 @@ function AppContent() {
         currentY += 15;
       }
       
-      checkPageOverflow(50);
+      checkPageOverflow(60);
       // Evolução do Ticket Médio - Mini Chart
       doc.setFontSize(10);
       doc.setTextColor(...rgbTheme);
+      doc.setFont('helvetica', 'bold');
       doc.text('Tendência de Evolução: Ticket Médio Mensal', marginSide, currentY);
       
-      currentY += 5;
+      currentY += 8;
       const historyMonths = displayMonthsReport.map(m => {
         const pM = purchases.filter(p => p.date && p.date.startsWith(m));
         return { m, ticket: pM.length > 0 ? pM.reduce((a, b) => a + (b.amount || 0), 0) / pM.length : 0 };
@@ -1999,6 +2005,8 @@ function AppContent() {
         doc.setTextColor(150, 150, 150);
         try { doc.text(format(parseISO(h.m + '-01'), 'MMM', { locale: ptBR }), x - 2, currentY + chartH + 5); } catch(e){}
       });
+
+      currentY += chartH + 15; // Shift past chart and its labels
 
       // 4. VIABILIDADE FINANCEIRA & ROI
       doc.addPage();
@@ -2228,7 +2236,7 @@ function AppContent() {
         currentY = (doc as any).lastAutoTable?.finalY + 15;
       }
 
-      if (currentY > pageHeight - 50) { 
+      if (currentY > pageHeight - 65) { 
         doc.addPage(); 
         addHeaderFooter(doc); 
         currentY = 50; 
@@ -2255,6 +2263,12 @@ function AppContent() {
           styles: { fontSize: 7 }
         });
         currentY = (doc as any).lastAutoTable?.finalY + 15;
+      }
+
+      if (currentY > pageHeight - 65) { 
+        doc.addPage(); 
+        addHeaderFooter(doc); 
+        currentY = 50; 
       }
       
       currentY += 5;
@@ -2289,7 +2303,7 @@ function AppContent() {
         currentY = (doc as any).lastAutoTable?.finalY + 15;
       }
 
-      if (currentY > pageHeight - 50) { 
+      if (currentY > pageHeight - 65) { 
         doc.addPage(); 
         addHeaderFooter(doc); 
         currentY = 50; 
@@ -5864,6 +5878,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
   const [scratchDone, setScratchDone] = useState(false);
   const [scratchResult, setScratchResult] = useState<string | null>(null);
   const [raffleShuffling, setRaffleShuffling] = useState(false);
+  const [raffleWinners, setRaffleWinners] = useState<{name: string, prize: string}[]>([]);
   const [raffleWinner, setRaffleWinner] = useState<string | null>(null);
   const [formErrors, setFormErrors] = useState<string[]>([]);
   const [includeClientsInReport, setIncludeClientsInReport] = useState(true);
@@ -6332,11 +6347,10 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
         // Shuffle effect for 7 seconds
         await new Promise(resolve => setTimeout(resolve, 7000));
         
-        // Get all participants for this campaign - Use a more robust check
+        // Get all participants
         const allPromoPurchases = (purchases || []).filter(p => p.promotionId === activePromotion?.id);
         const pool: {name: string, id: string}[] = [];
         allPromoPurchases.forEach(p => {
-          // Add multiple entries if they earned multiple coupons
           const count = Number(p.actionsEarned || 1);
           for(let i = 0; i < count; i++) {
             pool.push({ name: p.customerName || 'Cliente sem Nome', id: p.id });
@@ -6350,28 +6364,52 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
           return;
         }
 
-        const winnerObj = pool[Math.floor(Math.random() * pool.length)];
-        const winner = winnerObj.name;
+        // Draw multiple winners if multiple prizes exist
+        const prizes = activePromotion.rafflePrizes || [{ label: activePromotion.rafflePrize || 'Prêmio do Sorteio', quantity: 1, value: activePromotion.totalCost || 0 }];
+        const winners: {name: string, prize: string, purchaseId: string}[] = [];
+        setRaffleWinners([]);
+        setRaffleWinner(null);
+        setRaffleShuffling(true);
         
-        // Update local state and remote config to persist winner
-        setRaffleWinner(winner);
+        let tempPool = [...pool];
+        prizes.forEach(pGroup => {
+           const qty = pGroup.quantity || 1;
+           for(let i = 0; i < qty; i++) {
+              if (tempPool.length === 0) break;
+              const idx = Math.floor(Math.random() * tempPool.length);
+              const winnerObj = tempPool[idx];
+              winners.push({ name: winnerObj.name, prize: pGroup.label, purchaseId: winnerObj.id });
+              
+              // Remove ALL tickets of this winner to prevent one person winning twice in the same campaign
+              // (Common ethical rule in retail draws)
+              const winnerName = winnerObj.name;
+              tempPool = tempPool.filter(item => item.name !== winnerName);
+           }
+        });
+
+        setRaffleWinners(winners);
         
         try {
-          // Mark the winner's purchase record
-          await updateDoc(doc(db, 'purchases', winnerObj.id), {
-            prizeWon: activePromotion.rafflePrize || 'Prêmio do Sorteio',
-            prizeCost: activePromotion.totalCost || 0
+          const batch = writeBatch(db);
+          winners.forEach(w => {
+            batch.update(doc(db, 'purchases', w.purchaseId), {
+              prizeWon: w.prize,
+              prizeCost: activePromotion.totalCost || 0
+            });
           });
+
+          await batch.commit();
 
           await onUpdateRules({
             ...rules,
             promotionConfig: {
               ...rules.promotionConfig!,
-              winner: winner,
-              isDrawn: true
+              winner: winners.map(w => `${w.name} (${w.prize})`).join(' | '),
+              isDrawn: true,
+              winnersList: winners // Save the actual objects for better retrieval if needed
             }
           });
-          showToast(`SORTEIO REALIZADO! O ganhador é: ${winner}`, "success");
+          showToast(`${winners.length} ganhadores sorteados com sucesso!`, "success");
         } catch (err) {
           console.error("Error saving raffle result:", err);
           showToast("Sorteio feito, mas erro ao salvar resultado permanente.", "warning");
@@ -6389,7 +6427,10 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
     // If targeted spin, check if that purchase already has a prize
     if (purchaseId) {
        const p = purchases.find(p => p.id === purchaseId);
-       if (p?.prizeWon) return;
+       if (p?.prizeWon) {
+          showToast("Esta compra já foi premiada.", "warning");
+          return;
+       }
        setSpinningPurchaseId(purchaseId);
     } else {
        if (actionsEarned <= 0 || promoUsedThisSession) return;
@@ -6417,8 +6458,8 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       setWheelResult(result.label);
       const index = Array.isArray(segments) ? segments.indexOf(result) : -1;
       const segSize = 360 / segments.length;
-      // 25 full rotations + offset to the result for extra speed
-      const targetRotation = (360 * 25) + (360 - (index !== -1 ? (index * segSize + segSize/2) : 0));
+      // 40 full rotations for high speed + offset to the result
+      const targetRotation = (360 * 40) + (360 - (index !== -1 ? (index * segSize + segSize/2) : 0));
       setWheelRotation(prev => prev + targetRotation);
 
       // Auto-stop after 12 seconds
@@ -6482,20 +6523,10 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
         if (snap.exists()) {
           const currentData = snap.data();
           
-          // STRICT RULE: Customer never wins twice for the same purchase OR the same campaign
+          // Only block if this SPECIFIC purchase has won.
+          // The user specifically requested that clients can win multiple times via different purchases.
           if (currentData?.prizeWon) {
              showToast("Este cliente já recebeu um prêmio por esta compra.", "warning");
-             return;
-          }
-
-          const customerAlreadyWon = (purchases || []).some(p => 
-            p.customerId === currentData.customerId && 
-            p.promotionId === activePromotion?.id && 
-            p.prizeWon
-          );
-
-          if (customerAlreadyWon) {
-             showToast("Este cliente já foi premiado nesta campanha.", "warning");
              return;
           }
 
@@ -6556,20 +6587,9 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
         if (snap.exists()) {
           const currentData = snap.data();
           
-          // STRICT RULE: Customer never wins twice for the same purchase OR the same campaign
+          // Only block if this SPECIFIC purchase has won.
           if (currentData?.prizeWon) {
              showToast("Este cliente já ganhou um prêmio nesta transação.", "warning");
-             return;
-          }
-
-          const customerAlreadyWon = (purchases || []).some(p => 
-            p.customerId === currentData.customerId && 
-            p.promotionId === activePromotion?.id && 
-            p.prizeWon
-          );
-
-          if (customerAlreadyWon) {
-             showToast("Este cliente já foi premiado nesta campanha.", "warning");
              return;
           }
 
@@ -7854,15 +7874,15 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                            <div className="space-y-4">
                              <Button 
                                onClick={handleDrawRaffle}
-                               disabled={raffleShuffling || !isTimeReached || !!(raffleWinner || activePromotion.raffleWinner)}
+                               disabled={raffleShuffling || !isTimeReached || !!(raffleWinner || activePromotion.raffleWinner || raffleWinners.length > 0)}
                                className={cn(
                                  "w-full h-16 rounded-2xl font-black uppercase tracking-widest text-xs transition-all flex items-center justify-center gap-3 relative z-10",
-                                 (raffleWinner || activePromotion.raffleWinner) ? "bg-gray-800 text-gray-500 border border-gray-700" :
+                                 (raffleWinner || activePromotion.raffleWinner || raffleWinners.length > 0) ? "bg-gray-800 text-gray-500 border border-gray-700" :
                                  isTimeReached ? "bg-orange-500 text-white shadow-lg shadow-orange-500/10" : "bg-white/10 text-white/30 border border-white/5"
                                )}
                              >
                                 <RefreshCcw size={18} className={raffleShuffling ? "animate-spin" : ""} /> 
-                                {raffleShuffling ? "Sorteando..." : (raffleWinner || activePromotion.raffleWinner) ? "SORTEIO FINALIZADO" : isTimeReached ? "SORTEAR AGORA" : "SORTEIO AGENDADO"}
+                                {raffleShuffling ? "Sorteando..." : (raffleWinner || activePromotion.raffleWinner || raffleWinners.length > 0) ? "SORTEIO FINALIZADO" : isTimeReached ? "SORTEAR AGORA" : "SORTEIO AGENDADO"}
                              </Button>
                            </div>
                          );
@@ -8182,46 +8202,77 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
           onClose={() => setShowConfigModal(false)} 
         />
       )}
-      {/* Promotion Result Overlay Portal */}
+       {/* Promotion Result Overlay Portal */}
       <AnimatePresence>
-        {raffleWinner && (
+        {(raffleWinners.length > 0 || raffleWinner) && (
           <motion.div 
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.8 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
-            onClick={() => setRaffleWinner(null)}
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-gray-950/95 backdrop-blur-2xl"
+            onClick={() => { setRaffleWinner(null); setRaffleWinners([]); }}
           >
             <motion.div 
-              className="bg-white rounded-[3rem] p-10 max-w-sm w-full text-center shadow-[0_0_80px_rgba(251,133,0,0.4)] border-8 border-orange-500 relative overflow-hidden"
+              className="bg-white rounded-[3rem] p-8 max-w-lg w-full text-center shadow-[0_0_100px_rgba(251,133,0,0.5)] border-8 border-orange-500 relative overflow-hidden"
               onClick={e => e.stopPropagation()}
             >
                <div className="absolute inset-0 bg-gradient-to-b from-orange-50/50 to-transparent" />
                <div className="relative z-10 space-y-6">
-                  <div className="w-24 h-24 bg-orange-500 rounded-full flex items-center justify-center mx-auto shadow-xl">
-                     <Trophy size={48} className="text-white animate-bounce" />
+                  <div className="w-20 h-20 bg-orange-500 rounded-full flex items-center justify-center mx-auto shadow-xl">
+                     <Trophy size={40} className="text-white animate-bounce" />
                   </div>
+                  
                   <div>
-                     <p className="text-[12px] font-black text-orange-500 uppercase tracking-widest mb-1">
+                     <p className="text-[10px] font-black text-orange-500 uppercase tracking-[0.3em] mb-1">
                         {activePromotion?.type === 'wheel' ? 'Resultado do Giro' : 
                          activePromotion?.type === 'scratch' ? 'Resultado da Raspadinha' : 
-                         'Parabéns Campeão!'}
+                         'Resultado do Sorteio'}
                      </p>
                      <h2 className="text-3xl font-black uppercase italic tracking-tighter text-gray-900 leading-tight">
-                        {raffleWinner.includes(' ganhou ') ? raffleWinner.split(' ganhou ')[0] : 'Vencedor(a)'}
+                        PARABÉNS!
                      </h2>
                   </div>
-                  <div className="py-6 bg-gray-50 rounded-[2rem] border border-gray-100 flex flex-col items-center gap-1 shadow-inner italic">
-                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-2">VOCÊ GANHOU:</p>
-                     <p className="text-4xl font-black text-orange-600 uppercase tracking-tight leading-none drop-shadow-sm">
-                        {raffleWinner.includes(' ganhou ') ? raffleWinner.split(' ganhou ')[1] : raffleWinner}
-                     </p>
+
+                  <div className="max-h-[300px] overflow-y-auto space-y-3 px-2 py-4">
+                     {raffleWinners.length > 0 ? (
+                        raffleWinners.map((w, idx) => (
+                           <motion.div 
+                             initial={{ x: -20, opacity: 0 }}
+                             animate={{ x: 0, opacity: 1 }}
+                             transition={{ delay: idx * 0.1 }}
+                             key={idx} 
+                             className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex items-center justify-between group hover:border-orange-200 transition-all"
+                           >
+                              <div className="text-left">
+                                 <p className="text-[9px] font-black text-gray-400 uppercase">Ganhador(a)</p>
+                                 <p className="text-sm font-black text-gray-900 uppercase">{w.name}</p>
+                              </div>
+                              <div className="text-right">
+                                 <p className="text-[9px] font-black text-orange-400 uppercase">Prêmio</p>
+                                 <p className="text-xs font-black text-orange-600 uppercase italic">{w.prize}</p>
+                              </div>
+                           </motion.div>
+                        ))
+                     ) : raffleWinner ? (
+                        <div className="p-6 bg-gray-50 rounded-[2.5rem] border border-gray-100 flex flex-col items-center gap-1 shadow-inner italic">
+                           <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-3">VENCEDOR(A) IDENTIFICADO(A):</p>
+                           <h3 className="text-2xl font-black text-gray-900 uppercase mb-2">
+                              {raffleWinner.includes(' ganhou ') ? raffleWinner.split(' ganhou ')[0] : 'Vencedor(a)'}
+                           </h3>
+                           <div className="w-full h-[1px] bg-gray-200 my-2" />
+                           <p className="text-[9px] font-bold text-orange-400 uppercase mb-1">PRÊMIO:</p>
+                           <p className="text-3xl font-black text-orange-600 uppercase tracking-tight leading-none drop-shadow-sm">
+                              {raffleWinner.includes(' ganhou ') ? raffleWinner.split(' ganhou ')[1] : raffleWinner}
+                           </p>
+                        </div>
+                     ) : null}
                   </div>
+
                   <Button 
-                    onClick={() => setRaffleWinner(null)} 
+                    onClick={() => { setRaffleWinner(null); setRaffleWinners([]); }} 
                     className="w-full bg-[#023047] hover:bg-black text-white py-5 rounded-2xl font-black uppercase text-xs tracking-widest transition-all shadow-lg active:scale-95"
                   >
-                     CONCLUIR RESGATE
+                     {activePromotion?.type === 'raffle' ? 'FECHAR E REGISTRAR' : 'CONCLUIR RESGATE'}
                   </Button>
                </div>
             </motion.div>
