@@ -1885,8 +1885,11 @@ function AppContent() {
          currentY += 25;
       }
 
-      checkPageOverflow(80);
       // 2. CRESCIMENTO VS REFERÊNCIA (ONBOARDING)
+      doc.addPage();
+      addHeaderFooter(doc);
+      currentY = 50; 
+
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
       doc.setFont('helvetica', 'bold');
@@ -6464,15 +6467,14 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
         setWheelResult(result.label);
         const segSize = 360 / segments.length;
         
-        // Exact rotation calculation: 
-        // Segment 0 is at 0 degrees (top). 
-        // We want the NEEDLE (at top) to point at Segment 'index'.
-        // So we rotate clockwise by (360 - (index * segSize + segSize/2))
-        const extraRotations = 60; 
-        const targetRotation = (360 * extraRotations) + (360 - (index * segSize + (segSize / 2)));
+        // REFINED ROTATION:
+        // Index 0 starts at Top (0 deg).
+        // To make the NEEDLE (at 0 deg) point to index 'index', 
+        // we rotate the wheel clockwise by (360 - index * segSize - segSize/2).
+        const extraRotations = 60;
+        const targetRotation = (360 * extraRotations) + (360 - (index * segSize + segSize / 2));
         setWheelRotation(prev => prev + targetRotation);
 
-        // Auto-stop after 12 seconds - matching CSS transition
         setTimeout(() => {
           setSpinningPurchaseId(null);
           stopWheel(result.label, purchaseId, customerId);
@@ -8265,12 +8267,16 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       <AnimatePresence>
         {(raffleWinners.length > 0 || raffleWinner) && (
           <motion.div 
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.8 }}
-            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-gray-950/95 backdrop-blur-2xl"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-gray-950/98 backdrop-blur-3xl"
+            onPointerDown={e => e.stopPropagation()} // Block all background interactions
           >
             <motion.div 
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: "spring", damping: 15 }}
               className="bg-white rounded-[3rem] p-8 max-w-lg w-full text-center shadow-[0_0_100px_rgba(251,133,0,0.5)] border-8 border-orange-500 relative overflow-hidden"
               onClick={e => e.stopPropagation()}
             >
