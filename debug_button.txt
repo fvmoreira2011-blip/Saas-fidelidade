@@ -1,0 +1,5 @@
+                 })}
+                 <button className="w-full py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest border-2 border-dashed border-gray-100 rounded-2xl hover:border-gray-200 transition-all flex items-center justify-center gap-2">
+                   <ChevronRight size={12} /> Ver Lista Total de Participantes
+                 </button>
+              </div>

@@ -1938,11 +1938,16 @@ function AppContent() {
         doc.text(`${growth >= 0 ? '+' : ''}${Math.round(growth)}%`, x + w - 11, y + 12.5, { align: 'center' });
       };
 
+      currentY += 25;
       drawGrowthCard('Ticket Médio', refAvgTicket, ticket30d, marginSide, currentY, contentWidth / 2 - 2);
       drawGrowthCard('Faturamento Mensal', refMonthlyRev, rev30d, marginSide + contentWidth / 2 + 2, currentY, contentWidth / 2 - 2);
 
-      currentY += 50; // Extra padding to clear cards from Section 2
-      if (checkPageOverflow(70)) { currentY = 50; }
+      currentY += 50; 
+      // Force page break for Section 3 to prevent any overlap
+      doc.addPage();
+      addHeaderFooter(doc);
+      currentY = 50;
+      
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
       doc.setFont('helvetica', 'bold');
@@ -1954,8 +1959,8 @@ function AppContent() {
       drawDataBox('Cresc. Mês (%)', `${growthPct.toFixed(1)}%`, marginSide + (2 * contentWidth / 4), currentY, contentWidth / 4 - 1.5);
       drawDataBox('Novos Filtro', `${periodNewCust}`, marginSide + (3 * contentWidth / 4), currentY, contentWidth / 4 - 1.5);
       
-      currentY += 35;
-      checkPageOverflow(40);
+      currentY += 40; // Spacing before next section
+      if (checkPageOverflow(60)) { currentY = 50; }
 
       if (custGoal > 0) {
         const goalProgress = Math.min((totalCurrentCust / custGoal) * 100, 100);
@@ -5878,19 +5883,21 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
   const [raffleShuffling, setRaffleShuffling] = useState(false);
   const [raffleWinners, setRaffleWinners] = useState<{name: string, prize: string}[]>([]);
   const [raffleWinner, setRaffleWinner] = useState<string | null>(null);
+  const [showRaffleParticipants, setShowRaffleParticipants] = useState(false);
   const [formErrors, setFormErrors] = useState<string[]>([]);
   const [includeClientsInReport, setIncludeClientsInReport] = useState(true);
 
-  const weightedRandom = <T extends { label: string; probability: number }>(items: T[]): T => {
+  const weightedRandom = <T extends { label: string; probability: number }>(items: T[]): { item: T; index: number } => {
     const totalWeight = items.reduce((acc, item) => acc + item.probability, 0);
-    if (totalWeight === 0 && items.length > 0) return items[0];
-    if (items.length === 0) return { label: 'ERRO', probability: 0 } as T;
+    if (totalWeight === 0 && items.length > 0) return { item: items[0], index: 0 };
+    if (items.length === 0) return { item: { label: 'ERRO', probability: 0 } as T, index: -1 };
     let random = Math.random() * totalWeight;
-    for (const item of items) {
-      if (random < item.probability) return item;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (random < item.probability) return { item, index: i };
       random -= item.probability;
     }
-    return items[0];
+    return { item: items[0], index: 0 };
   };
 
   const [config, setConfig] = useState<Partial<PromotionConfig>>({
@@ -6447,29 +6454,27 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       if (segments.length > 0) {
         setWheelSpinning(true);
         setWheelResult(null);
-        setRaffleWinner(null); // Clear previous result to trigger clean re-entry of overlay
+        setRaffleWinner(null); 
         
         if (!purchaseId) {
           setActionsEarned(prev => prev - 1);
         }
 
-        const result = weightedRandom(segments);
+        const { item: result, index } = weightedRandom(segments);
         setWheelResult(result.label);
-        const index = Array.isArray(segments) ? segments.indexOf(result) : -1;
         const segSize = 360 / segments.length;
         
-        // ACCURATE ROTATION: index 0 is at Top (0 deg). 
-        // Clockwise rotation of wheel moves segment i away from top.
-        // To bring index i to Top, we rotate by 360 - (i * segSize).
-        const extraRotations = 50; 
-        const targetRotation = (360 * extraRotations) + (360 - (index !== -1 ? (index * segSize) : 0));
+        // Exact rotation calculation: 
+        // Segment 0 is at 0 degrees (top). 
+        // We want the NEEDLE (at top) to point at Segment 'index'.
+        // So we rotate clockwise by (360 - (index * segSize + segSize/2))
+        const extraRotations = 60; 
+        const targetRotation = (360 * extraRotations) + (360 - (index * segSize + (segSize / 2)));
         setWheelRotation(prev => prev + targetRotation);
-
-        // Clear spinning purchase ID immediately to update the table state quickly
-        setSpinningPurchaseId(null);
 
         // Auto-stop after 12 seconds - matching CSS transition
         setTimeout(() => {
+          setSpinningPurchaseId(null);
           stopWheel(result.label, purchaseId, customerId);
         }, 12000);
     } else {
@@ -7602,7 +7607,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                      </div>
                    );
                  })}
-                 <button className="w-full py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest border-2 border-dashed border-gray-100 rounded-2xl hover:border-gray-200 transition-all flex items-center justify-center gap-2">
+                 <button className="w-full py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest border-2 border-dashed border-gray-100 rounded-2xl hover:border-gray-200 transition-all flex items-center justify-center gap-2" onClick={() => setShowRaffleParticipants(true)}>
                    <ChevronRight size={12} /> Ver Lista Total de Participantes
                  </button>
               </div>
@@ -8208,6 +8213,54 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
           onClose={() => setShowConfigModal(false)} 
         />
       )}
+      {/* Participants Modal */}
+      {showRaffleParticipants && activePromotion && (
+        <div className="fixed inset-0 z-[250] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+           <motion.div 
+             initial={{ opacity: 0, y: 100 }}
+             animate={{ opacity: 1, y: 0 }}
+             className="bg-white rounded-[2rem] w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col shadow-2xl"
+           >
+              <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+                 <div>
+                    <h3 className="text-xl font-black text-gray-900 uppercase">Lista de Participantes</h3>
+                    <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Campanha: {activePromotion.title}</p>
+                 </div>
+                 <Button variant="ghost" onClick={() => setShowRaffleParticipants(false)} className="rounded-full w-10 h-10 p-0 text-gray-400 hover:text-gray-900">
+                    <X size={20} />
+                 </Button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-6 scrollbar-hide">
+                 <div className="space-y-2">
+                    {(purchases || []).filter(p => p.promotionId === activePromotion.id).map((p, idx) => (
+                       <div key={idx} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100">
+                          <div>
+                             <p className="text-xs font-black text-gray-900 uppercase">{p.customerName}</p>
+                             <p className="text-[9px] font-bold text-gray-400 uppercase">{p.date ? format(parseISO(p.date), 'dd/MM/yyyy HH:mm') : '---'}</p>
+                          </div>
+                          <div className="text-right">
+                             <p className="text-[10px] font-black text-orange-500 uppercase">{p.actionsEarned || 1} {activePromotion.type === 'raffle' ? 'Cupons' : 'Ações'}</p>
+                             <p className="text-[9px] font-bold text-gray-400">ID: {p.id.slice(-6)}</p>
+                          </div>
+                       </div>
+                    ))}
+                    {(purchases || []).filter(p => p.promotionId === activePromotion.id).length === 0 && (
+                       <div className="text-center py-20 flex flex-col items-center gap-2">
+                          <Users size={32} className="text-gray-200" />
+                          <p className="text-gray-400 font-black uppercase text-xs">Nenhum participante ainda</p>
+                       </div>
+                    )}
+                 </div>
+              </div>
+              
+              <div className="p-6 bg-gray-50 border-t border-gray-100">
+                 <Button onClick={() => setShowRaffleParticipants(false)} className="w-full bg-gray-900 text-white font-black uppercase text-[10px] py-4 rounded-xl shadow-xl">Fechar Lista</Button>
+              </div>
+           </motion.div>
+        </div>
+      )}
+
        {/* Promotion Result Overlay Portal */}
       <AnimatePresence>
         {(raffleWinners.length > 0 || raffleWinner) && (
@@ -8216,7 +8269,6 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.8 }}
             className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-gray-950/95 backdrop-blur-2xl"
-            onClick={() => { setRaffleWinner(null); setRaffleWinners([]); }}
           >
             <motion.div 
               className="bg-white rounded-[3rem] p-8 max-w-lg w-full text-center shadow-[0_0_100px_rgba(251,133,0,0.5)] border-8 border-orange-500 relative overflow-hidden"
