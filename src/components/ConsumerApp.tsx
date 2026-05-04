@@ -236,8 +236,10 @@ export default function ConsumerApp() {
 
     const savedPhone = localStorage.getItem('consumer_phone');
     if (savedPhone) {
-      setPhone(savedPhone);
-      handleLogin(savedPhone);
+      // Normalize: if it's numeric only and starts with '55' (or just is long enough), ensure +
+      const normalized = (savedPhone.startsWith('+') || !/^\d+$/.test(savedPhone)) ? savedPhone : '+' + savedPhone;
+      setPhone(normalized);
+      handleLogin(normalized);
     }
 
     // PWA Install logic
