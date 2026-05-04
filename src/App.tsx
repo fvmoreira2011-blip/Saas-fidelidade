@@ -1828,12 +1828,12 @@ function AppContent() {
       doc.setFont('helvetica', 'bold');
       doc.text('1. RESUMO EXECUTIVO & KPIS OPERACIONAIS', marginSide, currentY);
       
-      currentY += 5;
+      currentY += 8;
       doc.setFontSize(8);
       doc.setTextColor(150, 150, 150);
       doc.text(`Análise consolidada: ${startDateStr || 'Toda a base'} até ${endDateStr || 'Hoje'}`, marginSide, currentY);
 
-      currentY += 5;
+      currentY += 10;
       // Current Performance Cards
       const convRate = totalCustomers > 0 ? (cust30d / totalCustomers) * 100 : 0;
       drawDataBox('Faturamento (30d)', `R$ ${formatCurrency(rev30d)}`, marginSide, currentY, contentWidth / 5 - 1);
@@ -1860,9 +1860,8 @@ function AppContent() {
         });
       }
 
-      currentY = (doc as any).lastAutoTable?.finalY || 110;
-      currentY += 15;
-      checkPageOverflow(30);
+      currentY = ((doc as any).lastAutoTable?.finalY || 110) + 15;
+      checkPageOverflow(60);
 
       // Metas Gerais
       const currentMonth = format(now, 'yyyy-MM');
@@ -1876,19 +1875,19 @@ function AppContent() {
          doc.text(`Projeção de Metas (${format(now, 'MMMM', { locale: ptBR })}): ${goalPercent.toFixed(1)}% atingido`, marginSide, currentY);
          
          doc.setFillColor(240, 240, 240);
-         doc.roundedRect(marginSide, currentY + 3, contentWidth, 4, 1.5, 1.5, 'F');
+         doc.roundedRect(marginSide, currentY + 4, contentWidth, 5, 2, 2, 'F');
          doc.setFillColor(...rgbTheme);
-         doc.roundedRect(marginSide, currentY + 3, (contentWidth * goalPercent) / 100, 4, 1.5, 1.5, 'F');
+         doc.roundedRect(marginSide, currentY + 4, (contentWidth * goalPercent) / 100, 5, 2, 2, 'F');
          
-         doc.setFontSize(7);
+         doc.setFontSize(8);
          doc.setTextColor(120, 120, 120);
-         doc.text(`Realizado: R$ ${formatCurrency(currentMonthRev)} / Planejado: R$ ${formatCurrency(currentGoal.value)}`, marginSide, currentY + 11);
-         currentY += 20;
+         doc.text(`Realizado: R$ ${formatCurrency(currentMonthRev)} / Planejado: R$ ${formatCurrency(currentGoal.value)}`, marginSide, currentY + 13);
+         currentY += 25;
       }
 
-      checkPageOverflow(45);
+      checkPageOverflow(80);
       // 2. CRESCIMENTO VS REFERÊNCIA (ONBOARDING)
-      doc.setFontSize(12);
+      doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
       doc.setFont('helvetica', 'bold');
       doc.text('2. EVOLUÇÃO ESTRATÉGICA VS DADOS DE REFERÊNCIA', marginSide, currentY);
@@ -1899,7 +1898,7 @@ function AppContent() {
       doc.setFont('helvetica', 'normal');
       doc.text('Comparação entre os dados informados no início do projeto e a performance atual:', marginSide, currentY);
 
-      currentY += 8;
+      currentY += 10;
 
       // Calculate Customer Analysis for PDF
       const currentMonthStr = format(now, 'yyyy-MM');
@@ -1942,22 +1941,21 @@ function AppContent() {
       drawGrowthCard('Ticket Médio', refAvgTicket, ticket30d, marginSide, currentY, contentWidth / 2 - 2);
       drawGrowthCard('Faturamento Mensal', refMonthlyRev, rev30d, marginSide + contentWidth / 2 + 2, currentY, contentWidth / 2 - 2);
 
-      currentY += 30; // Shift past Section 2 cards
-
-      checkPageOverflow(50);
+      currentY += 50; // Extra padding to clear cards from Section 2
+      if (checkPageOverflow(70)) { currentY = 50; }
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
       doc.setFont('helvetica', 'bold');
       doc.text('3. BASE DE CLIENTES E PERFORMANCE DE CAPTAÇÃO', marginSide, currentY);
       
-      currentY += 12;
+      currentY += 15;
       drawDataBox('Base Total', `${totalCurrentCust} Ativos`, marginSide, currentY, contentWidth / 4 - 1.5);
       drawDataBox('Meta Clientes', `${custGoal || '---'} Alvo`, marginSide + (contentWidth / 4), currentY, contentWidth / 4 - 1.5);
       drawDataBox('Cresc. Mês (%)', `${growthPct.toFixed(1)}%`, marginSide + (2 * contentWidth / 4), currentY, contentWidth / 4 - 1.5);
       drawDataBox('Novos Filtro', `${periodNewCust}`, marginSide + (3 * contentWidth / 4), currentY, contentWidth / 4 - 1.5);
       
-      currentY += 32;
-      checkPageOverflow(30);
+      currentY += 35;
+      checkPageOverflow(40);
 
       if (custGoal > 0) {
         const goalProgress = Math.min((totalCurrentCust / custGoal) * 100, 100);
@@ -6445,27 +6443,35 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
     }
 
     // Determine result and rotation when spinning starts
-    const segments = activePromotion.wheelSegments || [];
-    if (segments.length > 0) {
-      setWheelSpinning(true);
-      setWheelResult(null);
-      
-      if (!purchaseId) {
-        setActionsEarned(prev => prev - 1);
-      }
+      const segments = activePromotion.wheelSegments || [];
+      if (segments.length > 0) {
+        setWheelSpinning(true);
+        setWheelResult(null);
+        setRaffleWinner(null); // Clear previous result to trigger clean re-entry of overlay
+        
+        if (!purchaseId) {
+          setActionsEarned(prev => prev - 1);
+        }
 
-      const result = weightedRandom(segments);
-      setWheelResult(result.label);
-      const index = Array.isArray(segments) ? segments.indexOf(result) : -1;
-      const segSize = 360 / segments.length;
-      // 40 full rotations for high speed + offset to the result
-      const targetRotation = (360 * 40) + (360 - (index !== -1 ? (index * segSize + segSize/2) : 0));
-      setWheelRotation(prev => prev + targetRotation);
+        const result = weightedRandom(segments);
+        setWheelResult(result.label);
+        const index = Array.isArray(segments) ? segments.indexOf(result) : -1;
+        const segSize = 360 / segments.length;
+        
+        // ACCURATE ROTATION: index 0 is at Top (0 deg). 
+        // Clockwise rotation of wheel moves segment i away from top.
+        // To bring index i to Top, we rotate by 360 - (i * segSize).
+        const extraRotations = 50; 
+        const targetRotation = (360 * extraRotations) + (360 - (index !== -1 ? (index * segSize) : 0));
+        setWheelRotation(prev => prev + targetRotation);
 
-      // Auto-stop after 12 seconds
-      setTimeout(() => {
-        stopWheel(result.label, purchaseId, customerId);
-      }, 12000);
+        // Clear spinning purchase ID immediately to update the table state quickly
+        setSpinningPurchaseId(null);
+
+        // Auto-stop after 12 seconds - matching CSS transition
+        setTimeout(() => {
+          stopWheel(result.label, purchaseId, customerId);
+        }, 12000);
     } else {
       showToast("Roleta não configurada corretamente.", "error");
     }
@@ -7874,15 +7880,15 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                            <div className="space-y-4">
                              <Button 
                                onClick={handleDrawRaffle}
-                               disabled={raffleShuffling || !isTimeReached || !!(raffleWinner || activePromotion.raffleWinner || raffleWinners.length > 0)}
+                               disabled={raffleShuffling || !isTimeReached || !!(raffleWinner || activePromotion.raffleWinner || raffleWinners.length > 0 || activePromotion.isDrawn)}
                                className={cn(
                                  "w-full h-16 rounded-2xl font-black uppercase tracking-widest text-xs transition-all flex items-center justify-center gap-3 relative z-10",
-                                 (raffleWinner || activePromotion.raffleWinner || raffleWinners.length > 0) ? "bg-gray-800 text-gray-500 border border-gray-700" :
+                                 (raffleWinner || activePromotion.raffleWinner || raffleWinners.length > 0 || activePromotion.isDrawn) ? "bg-gray-800 text-gray-500 border border-gray-700" :
                                  isTimeReached ? "bg-orange-500 text-white shadow-lg shadow-orange-500/10" : "bg-white/10 text-white/30 border border-white/5"
                                )}
                              >
                                 <RefreshCcw size={18} className={raffleShuffling ? "animate-spin" : ""} /> 
-                                {raffleShuffling ? "Sorteando..." : (raffleWinner || activePromotion.raffleWinner || raffleWinners.length > 0) ? "SORTEIO FINALIZADO" : isTimeReached ? "SORTEAR AGORA" : "SORTEIO AGENDADO"}
+                                {raffleShuffling ? "Sorteando..." : (raffleWinner || activePromotion.raffleWinner || raffleWinners.length > 0 || activePromotion.isDrawn) ? "SORTEIO FINALIZADO" : isTimeReached ? "SORTEAR AGORA" : "SORTEIO AGENDADO"}
                              </Button>
                            </div>
                          );
