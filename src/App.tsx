@@ -2020,20 +2020,22 @@ function AppContent() {
       currentY = 50;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
+      doc.setFont('helvetica', 'bold');
       doc.text('4. MÉTRICAS DE VIABILIDADE E ROI DO PROGRAMA', marginSide, currentY);
       
-      currentY += 10;
+      currentY += 15;
       // Investment vs Returns
       drawDataBox('Custo Acumulado', `R$ ${formatCurrency(actualCost)}`, marginSide, currentY, contentWidth / 3 - 2);
       drawDataBox('Passivo Projetado', `R$ ${formatCurrency(projectedCost)}`, marginSide + (contentWidth / 3) + 1, currentY, contentWidth / 3 - 2);
       drawDataBox('ROI Estimado', `${estimatedROI.toFixed(1)}%`, marginSide + (2 * contentWidth / 3) + 2, currentY, contentWidth / 3 - 2);
 
-      currentY += 30;
+      currentY += 40;
       doc.setFontSize(10);
       doc.setTextColor(60, 60, 60);
       doc.setFont('helvetica', 'bold');
       doc.text('Análise de Eficiência:', marginSide, currentY);
       
+      currentY += 8;
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
       const roiDescription = [
@@ -2041,14 +2043,15 @@ function AppContent() {
         `Com um custo de distribuição de R$ ${formatCurrency(actualCost)}, o retorno sobre investimento (ROI) é de ${estimatedROI.toFixed(1)}%.`,
         `O tempo estimado de Payback (recuperação do investimento via lucro incremental) é de ${actualCost > 0 && incrementalTicket > 0 ? Math.ceil(actualCost / (incrementalTicket * (participantPurchases.length / (purchases.length / 30 || 1)) / 30)) : '--'} dias.`
       ];
-      doc.text(roiDescription, marginSide, currentY + 6);
+      doc.text(roiDescription, marginSide, currentY);
 
-      currentY += 10;
-      doc.setFontSize(10);
+      currentY += (roiDescription.length * 6) + 15; // Dynamic spacing to prevent overlap with Churn/Retenção
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
       doc.setTextColor(...rgbTheme);
       doc.text('Evolução do Churn & Retenção', marginSide, currentY);
 
-      checkPageOverflow(50);
+      if (checkPageOverflow(70)) { currentY = 50; }
       if (typeof autoTable === 'function') {
         (autoTable as any)(doc, {
           startY: currentY + 5,
@@ -2073,22 +2076,32 @@ function AppContent() {
       }
 
       currentY = (doc as any).lastAutoTable?.finalY || (currentY + 60);
-      currentY += 15;
-      checkPageOverflow(40);
+      currentY += 25;
+      
+      // 5. DISTRIBUIÇÃO POR REGRA E SEGMENTO
+      doc.addPage();
+      addHeaderFooter(doc);
+      currentY = 50;
 
-      // 5. PARTICIPAÇÃO E ENGAJAMENTO (RULES)
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
+      doc.setFont('helvetica', 'bold');
       doc.text('5. DISTRIBUIÇÃO POR REGRA E SEGMENTO', marginSide, currentY);
       
       const totalP = reportPurchases.length || 1;
       const partRatio = (participantPurchases.length / totalP) * 100;
       
+      doc.setFontSize(10);
+      doc.setTextColor(30,30,30);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Performance de Engajamento:', marginSide, currentY + 8);
+      
       doc.setFontSize(9);
-      doc.setTextColor(100, 100, 100);
-      doc.text(`Participação no Programa: ${participantPurchases.length} vendas (${partRatio.toFixed(1)}%) vs Casuais: ${participantPurchases.length < reportPurchases.length ? reportPurchases.length - participantPurchases.length : 0} (${(100 - partRatio).toFixed(1)}%)`, marginSide, currentY + 6);
+      doc.setTextColor(80, 80, 80);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Participação no Programa: ${participantPurchases.length} vendas (${partRatio.toFixed(1)}%) vs Casuais: ${participantPurchases.length < reportPurchases.length ? reportPurchases.length - participantPurchases.length : 0} (${(100 - partRatio).toFixed(1)}%)`, marginSide, currentY + 16);
 
-      currentY += 15;
+      currentY += 25;
       
       // Calculate Promotion Stats for PDF
       const promoPurchases = reportPurchases.filter(p => p.promotionId);
@@ -2118,22 +2131,23 @@ function AppContent() {
       currentY = 50;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
+      doc.setFont('helvetica', 'bold');
       doc.text('6. PERFORMANCE DE PROMOÇÕES & CAMPANHAS', marginSide, currentY);
       
-      currentY += 10;
+      currentY += 15;
       drawDataBox('Promoções Período', `${countPromos}`, marginSide, currentY, contentWidth / 4 - 2);
       drawDataBox('Participantes', `${promoParticipants}`, marginSide + (contentWidth / 4), currentY, contentWidth / 4 - 2);
       drawDataBox('Ticket Médio', `R$ ${formatCurrency(promoAvgTicket)}`, marginSide + (2 * contentWidth / 4), currentY, contentWidth / 4 - 2);
       drawDataBox('Faturamento Promo', `R$ ${formatCurrency(promoRev)}`, marginSide + (3 * contentWidth / 4), currentY, contentWidth / 4 - 2);
 
-      currentY += 25;
+      currentY += 35;
       drawDataBox('Frequência Média', `${promoFreq.toFixed(1)}x`, marginSide, currentY, contentWidth / 3 - 2);
       drawDataBox('RFV (V. Médio)', `R$ ${formatCurrency(promoValuePerCust)}`, marginSide + (contentWidth / 3), currentY, contentWidth / 3 - 2);
       drawDataBox('Clientes Novos', `${promoNewClients}`, marginSide + (2 * contentWidth / 3), currentY, contentWidth / 3 - 2);
 
-      currentY += 30;
-      doc.setFontSize(10);
-      doc.setTextColor(60, 60, 60);
+      currentY += 40;
+      doc.setFontSize(11);
+      doc.setTextColor(30, 30, 30);
       doc.setFont('helvetica', 'bold');
       doc.text('Detalhamento de Campanhas no Período:', marginSide, currentY);
       
@@ -2209,13 +2223,14 @@ function AppContent() {
          }
       });
 
-      // 6. RANKING RFM & DIAGNÓSTICO IA
+      // 7. RANKINGS E SEGMENTAÇÃO DE CLIENTES
       doc.addPage();
       addHeaderFooter(doc);
       currentY = 50;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
-      doc.text('6. RANKINGS E SEGMENTAÇÃO DE CLIENTES', marginSide, currentY);
+      doc.setFont('helvetica', 'bold');
+      doc.text('7. RANKINGS E SEGMENTAÇÃO DE CLIENTES', marginSide, currentY);
       
       currentY += 10;
       if (typeof autoTable === 'function') {
@@ -2277,20 +2292,22 @@ function AppContent() {
         currentY = 50; 
       }
       
-      currentY += 5;
+      currentY += 25;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
-      doc.text('7. ANÁLISE TEMPORAL E TERMÔMETRO SEMANAL', marginSide, currentY);
+      doc.setFont('helvetica', 'bold');
+      doc.text('8. ANÁLISE TEMPORAL E TERMÔMETRO SEMANAL', marginSide, currentY);
       
-      currentY += 10;
+      currentY += 15;
       doc.setFontSize(10);
       doc.setTextColor(80, 80, 80);
+      doc.setFont('helvetica', 'normal');
       doc.text(`Dia de maior faturamento: ${reportWeekdayStats.bestDay}`, marginSide, currentY);
-      doc.text(`Dia de maior ticket médio: ${reportWeekdayStats.bestTicketDay}`, marginSide + 80, currentY);
-      currentY += 5;
+      doc.text(`Dia de maior ticket médio: ${reportWeekdayStats.bestTicketDay}`, marginSide + 85, currentY);
+      currentY += 8;
       doc.text(`Horário de pico: ${reportWeekdayStats.peakHour}`, marginSide, currentY);
-      currentY += 10;
- 
+      
+      currentY += 15;
       if (typeof autoTable === 'function') {
         (autoTable as any)(doc, {
           startY: currentY,
@@ -2303,22 +2320,20 @@ function AppContent() {
             `R$ ${formatCurrency(d.avgTicket)}`
           ]),
           theme: 'grid',
-          headStyles: { fillColor: [70, 70, 70] },
+          headStyles: { fillColor: [50, 50, 50] },
           styles: { fontSize: 8 }
         });
-        currentY = (doc as any).lastAutoTable?.finalY + 15;
+        currentY = (doc as any).lastAutoTable?.finalY + 30;
       }
 
-      if (currentY > pageHeight - 65) { 
-        doc.addPage(); 
-        addHeaderFooter(doc); 
-        currentY = 50; 
-      }
-      
-      currentY += 5;
+      // 9. PARECER TÉCNICO & IA STRATEGIC INSIGHTS
+      doc.addPage();
+      addHeaderFooter(doc);
+      currentY = 50;
       doc.setFontSize(14);
       doc.setTextColor(...rgbTheme);
-      doc.text('8. PARECER TÉCNICO & IA STRATEGIC INSIGHTS', marginSide, currentY);
+      doc.setFont('helvetica', 'bold');
+      doc.text('9. PARECER TÉCNICO & IA STRATEGIC INSIGHTS', marginSide, currentY);
 
       const cacheKey = `analysis_cache_${selectedCompanyId}`;
       const cached = localStorage.getItem(cacheKey);
@@ -6269,10 +6284,10 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
         } else if (activePromotion.type === 'scratch') {
           const prizes = activePromotion.scratchPrizes || [];
           if (prizes.length > 0) {
-            const result = weightedRandom(prizes);
-            determinedScratchResult = result.label;
-            determinedPrizeCost = result.cost || 0;
-            setScratchResult(result.label);
+          const result = weightedRandom(prizes);
+          determinedScratchResult = result.item.label;
+          determinedPrizeCost = result.item.cost || 0;
+          setScratchResult(result.item.label);
           } else {
             determinedScratchResult = "Tente novamente";
             setScratchResult("Tente novamente");
@@ -6467,13 +6482,14 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
         setWheelResult(result.label);
         const segSize = 360 / segments.length;
         
-        // REFINED ROTATION:
-        // Index 0 starts at Top (0 deg).
-        // To make the NEEDLE (at 0 deg) point to index 'index', 
-        // we rotate the wheel clockwise by (360 - index * segSize - segSize/2).
-        const extraRotations = 60;
-        const targetRotation = (360 * extraRotations) + (360 - (index * segSize + segSize / 2));
-        setWheelRotation(prev => prev + targetRotation);
+        // MATHEMATICALLY PRECISE ROTATION: LANDS CENTERED
+        const revolutions = 80; 
+        const currentMod = wheelRotation % 360;
+        const targetPos = 360 - (index * segSize);
+        const delta = (targetPos - currentMod + 360) % 360;
+        
+        const finalTarget = wheelRotation + (revolutions * 360) + delta;
+        setWheelRotation(finalTarget);
 
         setTimeout(() => {
           setSpinningPurchaseId(null);
@@ -6594,6 +6610,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
       .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]?.id;
 
     if (targetId && finalResult) {
+      console.log("Stopping wheel, setting winner popup:", finalResult);
       try {
         const purchaseRef = doc(db, 'purchases', targetId);
         const snap = await getDoc(purchaseRef);
@@ -7648,7 +7665,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
                                  <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-5" />
                                  {(activePromotion.wheelSegments || []).map((seg, i, arr) => {
                                     const angle = 360 / arr.length;
-                                    const casinoColors = ['#023047', '#ffb703', '#fb8500', '#219ebc', '#8ecae6', '#fb8500'];
+                                    const casinoColors = ['#023047', '#ffb703', '#fb8500', '#219ebc', '#8ecae6', '#e63946', '#2a9d8f', '#e9c46a', '#f4a261', '#e76f51'];
                                     const bgColor = seg.color || casinoColors[i % casinoColors.length];
                                     
                                     const isLight = (color: string) => {
@@ -8226,7 +8243,7 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
               <div className="p-6 border-b border-gray-100 flex items-center justify-between">
                  <div>
                     <h3 className="text-xl font-black text-gray-900 uppercase">Lista de Participantes</h3>
-                    <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Campanha: {activePromotion.title}</p>
+                    <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Campanha: {activePromotion.name}</p>
                  </div>
                  <Button variant="ghost" onClick={() => setShowRaffleParticipants(false)} className="rounded-full w-10 h-10 p-0 text-gray-400 hover:text-gray-900">
                     <X size={20} />
@@ -8270,8 +8287,8 @@ function PromotionAreaTab({ rules, companyId, isAdmin, onUpdateRules, customers,
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-gray-950/98 backdrop-blur-3xl"
-            onPointerDown={e => e.stopPropagation()} // Block all background interactions
+            className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-gray-950/98 backdrop-blur-3xl"
+            onPointerDown={e => e.stopPropagation()} 
           >
             <motion.div 
               initial={{ scale: 0.8, opacity: 0 }}
