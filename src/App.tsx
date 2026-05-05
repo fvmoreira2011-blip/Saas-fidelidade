@@ -6797,7 +6797,6 @@ function PromotionAreaTab({
         }
 
         setRaffleShuffling(false);
-        setIsProcessing(false);
       }
     );
   };
@@ -8790,18 +8789,22 @@ function PromotionAreaTab({
                        isSpinning={wheelSpinning} 
                        onSpinEnd={async () => {
                          if (pendingWheelResult) {
-                            setWheelResult(pendingWheelResult.label);
+                            const resultLabel = pendingWheelResult.label;
+                            const resultCost = pendingWheelResult.cost || 0;
+                            
+                            setWheelResult(resultLabel);
                             setWheelSpinning(false);
+                            setPendingWheelResult(null); // Clear pending
                             
                             const targetId = spinningPurchaseId || lastPurchaseId;
                             if (targetId) {
                                try {
                                   await updateDoc(doc(db, 'purchases', targetId), {
-                                     prizeWon: pendingWheelResult.label,
-                                     prizeCost: pendingWheelResult.cost || 0
+                                     prizeWon: resultLabel,
+                                     prizeCost: resultCost
                                   });
-                                  setLocalPrizeUpdates(prev => ({ ...prev, [targetId]: pendingWheelResult.label }));
-                                  setLiveCountdownData(prev => prev ? { ...prev, prize: pendingWheelResult.label } : null);
+                                  setLocalPrizeUpdates(prev => ({ ...prev, [targetId]: resultLabel }));
+                                  setLiveCountdownData(prev => prev ? { ...prev, prize: resultLabel } : null);
                                } catch (err) {
                                   console.error("Error saving wheel prize:", err);
                                }
