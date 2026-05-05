@@ -11,10 +11,22 @@ export default defineConfig(({mode}) => {
       tailwindcss()
     ],
     build: {
+      chunkSizeWarningLimit: 1000,
       rollupOptions: {
         input: {
           main: path.resolve(__dirname, 'index.html'),
           consumer: path.resolve(__dirname, 'consumer.html'),
+        },
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('firebase')) return 'vendor-firebase';
+              if (id.includes('lucide-react')) return 'vendor-lucide';
+              if (id.includes('jspdf') || id.includes('html2canvas')) return 'vendor-pdf';
+              if (id.includes('recharts') || id.includes('d3')) return 'vendor-charts';
+              return 'vendor';
+            }
+          },
         },
       },
     },

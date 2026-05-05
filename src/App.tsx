@@ -158,8 +158,6 @@ import { ptBR } from 'date-fns/locale';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { QRCodeSVG } from 'qrcode.react';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -1643,8 +1641,7 @@ function AppContent() {
     try {
       showToast("Gerando relatório... Isso pode levar alguns segundos.", "info");
       const { jsPDF } = await import('jspdf');
-      const autoTableModule = await import('jspdf-autotable');
-      const autoTable = autoTableModule.default || autoTableModule;
+      const autoTable = (await import('jspdf-autotable')).default as any;
       
       const doc = new jsPDF('p', 'mm', 'a4');
       
@@ -6348,6 +6345,8 @@ function PromotionAreaTab({
 
   const handleDownloadPDF = async (h: PromotionHistory, includeClients: boolean = true) => {
     try {
+      const { jsPDF } = await import('jspdf');
+      const autoTable = (await import('jspdf-autotable')).default as any;
       const doc = new jsPDF();
       
       // Header
@@ -11669,8 +11668,7 @@ function DashboardTab({ purchases, customers, rules, goals, appUser, promotionHi
     try {
       showToast("Gerando exportação...", "info");
       const { jsPDF } = await import('jspdf');
-      const autoTableModule = await import('jspdf-autotable');
-      const autoTable = autoTableModule.default || autoTableModule;
+      const autoTable = (await import('jspdf-autotable')).default as any;
       
       const doc = new jsPDF('p', 'mm', 'a4');
       const pageWidth = doc.internal.pageSize.getWidth();
